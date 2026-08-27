@@ -3,11 +3,11 @@
 Each item is a thin, independently verifiable product slice. Requirements and
 architecture live under `docs/`; this file records sequence only.
 
-- [ ] **AFK — Host starts and reads its configuration:** `tts-host --headless`
+- [x] **AFK — Host starts and reads its configuration:** `tts-host --headless`
   launches from a native Windows build with no external runtime, loads and
   schema-validates `config.json`, reloads it on save, and reports configuration
   errors by JSON path while keeping the last valid document.
-- [ ] **AFK — Registry discovers a model package:** scan configured directories,
+- [x] **AFK — Registry discovers a model package:** scan configured directories,
   validate `model.json` against the schema, reject escaping paths, and list
   discovered and unsupported packages through the CLI with actionable reasons.
 - [ ] **AFK — First audio through the runner protocol:** implement the JSON-RPC

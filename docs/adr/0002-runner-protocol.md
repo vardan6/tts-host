@@ -6,11 +6,31 @@
 ## Decision
 
 Inference runs in separate runner processes, one per loaded model. The host
-speaks to a runner over two channels on its standard streams:
+speaks to a runner over a control channel and a dedicated audio pipe:
 
-- **Control:** JSON-RPC 2.0 with LSP-style `Content-Length` framing.
-- **Audio:** a separate length-prefixed binary stream. Each chunk carries a
-  header with sequence number, sample count, and flags.
+- **Control:** JSON-RPC 2.0 with LSP-style `Content-Length` framing over the
+  runner's stdin (host to runner) and stdout (runner to host).
+- **Audio:** a unidirectional, host-created OS pipe. The runner inherits only
+  its write end and the host retains the read end. The inherited endpoint is
+  passed as `TTS_HOST_AUDIO_FD` on POSIX and `TTS_HOST_AUDIO_HANDLE` on Windows.
+  The runner writes length-prefixed binary frames to it.
+- **Diagnostics:** stderr is reserved for runner diagnostics and is never part
+  of either protocol channel.
+
+Audio frames use a fixed 20-byte, big-endian header: unsigned 32-bit payload
+length, unsigned 64-bit sequence number, unsigned 32-bit sample count, and
+unsigned 32-bit flags, followed by the payload bytes. The maximum payload is
+16 MiB. Big-endian encoding makes the stream independent of host CPU byte
+order; the payload format is negotiated separately by the synthesis protocol.
+
+`synthesize` is a JSON-RPC request with a non-empty string `params.text`. Its
+response identifies the PCM stream with `sampleRateHz`, `channels`,
+`sampleFormat`, and `totalSampleFrames`. Protocol version 1 uses interleaved
+signed 16-bit little-endian PCM (`pcm_s16le`); an audio-frame `sample_count` is
+the number of sample frames (one frame contains one sample per channel). Frames
+for a synthesis request are emitted in sequence-number order, and the final
+frame sets flag bit 0 (`endOfStream`). The first implementation accepts one
+synthesis request at a time, so the audio stream needs no request identifier.
 
 The first call is `initialize`, which exchanges protocol version and engine
 capabilities. Capabilities include `load`, `unload`, `synthesize`, `cancel`, and
@@ -32,9 +52,10 @@ use of effort than designing a control protocol. It does **not** solve binary
 audio — base64 inside JSON messages would cost roughly a third in size and force
 the whole payload through a JSON parser — hence the separate binary channel.
 
-Stdio rather than a loopback socket per runner: no port allocation, no
+Pipes rather than a loopback socket per runner: no port allocation, no
 host-to-runner authentication question, and process death closes the channel for
-free.
+free. Splitting the audio pipe from stdin/stdout preserves ordinary JSON-RPC
+request/response semantics and leaves stderr usable for diagnostics.
 
 `stats` is specified in the first protocol version, before it is needed, because
 the model bake-off (roadmap slice 2) has to measure VRAM, RSS, and

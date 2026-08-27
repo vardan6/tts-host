@@ -51,11 +51,19 @@ what keeps the later ports a port rather than a rewrite.
 
 ## Runner protocol
 
-Two channels over the runner's standard streams: JSON-RPC 2.0 with LSP-style
-`Content-Length` framing for control, and a separate length-prefixed binary
-stream for audio, each chunk headed by sequence number, sample count, and flags.
+Control uses JSON-RPC 2.0 with LSP-style `Content-Length` framing over runner
+stdin/stdout. Audio uses a distinct host-created, one-way inherited pipe: the
+runner receives its write endpoint through `TTS_HOST_AUDIO_FD` on POSIX or
+`TTS_HOST_AUDIO_HANDLE` on Windows, while the host retains the read endpoint.
+The audio stream is length-prefixed binary; each chunk is headed by sequence
+number, sample count, and flags. Runner stderr remains diagnostic output.
 `initialize` exchanges protocol version and engine capabilities. Methods:
 `load`, `unload`, `synthesize`, `cancel`, `stats`.
+
+Version 1 synthesis payloads are interleaved `pcm_s16le`. `synthesize` accepts
+non-empty `params.text`, returns stream metadata and total sample frames, and
+marks its final audio frame with the end-of-stream flag. One request is active
+per runner initially. The protocol ADR defines the exact wire contract.
 
 `stats` reports peak RSS, VRAM, time-to-first-chunk, and sample count. It exists
 in the first protocol version because the model bake-off must measure those
