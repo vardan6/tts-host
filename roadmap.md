@@ -30,7 +30,7 @@ architecture live under `docs/`; this file records sequence only.
 
 ## Open decisions
 
-- Product name and public repository license.
+- Public repository license (name decided: TTS Host).
 - Final acceptance of the recommended C++ host, desktop UI toolkit, and exact
   host/runner protocol.
 - Qt open-source licensing compliance and the project's own public license.

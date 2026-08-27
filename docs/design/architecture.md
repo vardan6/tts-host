@@ -61,8 +61,8 @@ Proposed host stack:
 Proposed Windows layout:
 
 ```text
-tts-app/
-  tts-app.exe
+tts-host/
+  tts-host.exe
   runtimes/
   runners/
   schemas/

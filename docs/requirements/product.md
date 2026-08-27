@@ -1,4 +1,11 @@
-# Local TTS product requirements
+# TTS Host — product requirements
+
+## Name
+
+The product is **TTS Host**. The repository, the installed directory, and the
+host executable use `tts-host`. "Host" names the long-lived desktop process that
+owns configuration, discovery, and the local API; it does not mean self-hosting.
+Inference processes are "runners" — see `docs/design/architecture.md`.
 
 ## Product goal
 
