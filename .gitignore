@@ -1,0 +1,84 @@
+# Build output
+build/
+out/
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+compile_commands.json
+install_manifest.txt
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.so.*
+*.dylib
+*.dll
+*.exe
+*.pdb
+*.ilk
+*.exp
+
+# Distribution artifacts
+dist/
+tts-app/
+*.zip
+*.tar.gz
+*.msi
+
+# Model weights and voice packs (data, not source)
+models/
+*.gguf
+*.onnx
+*.safetensors
+*.bin
+*.pt
+*.pth
+*.ckpt
+
+# Generated audio
+*.wav
+*.mp3
+*.flac
+*.ogg
+*.opus
+
+# Runtime and user state
+config.json
+portable.marker
+runtimes/
+logs/
+*.log
+cache/
+
+# Python runner tooling
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.nuitka-build/
+
+# Secrets and credentials
+.env
+.env.*
+*.key
+*.pem
+credentials.json
+
+# Trackline workflow tooling (symlinks to workflow-hub, machine-specific)
+.agents/
+.claude/
+.codex/
+AGENTS.md
+CLAUDE.md
+
+# Editor and OS
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
