@@ -38,6 +38,8 @@ add_executable(
   src/config_loader.cpp
   src/model_registry.cpp
   src/runner_protocol.cpp
+  src/runner_launcher.cpp
+  src/wav_writer.cpp
   src/main.cpp
 )
 
@@ -132,5 +134,16 @@ if(BUILD_TESTING)
       "-Dneedles=Discovered model packages: 2;OK  alternate-package (kokoro-onnx, en);OK  demo-package (kokoro-onnx, en);Unsupported registry entries: 5;missing model.json;registry entry is not a directory;registry directory does not exist;schema validation failed at /: required property 'displayName' not found in object;manifest file path /files/model escapes the package root"
       "-Dordered_needles=OK  alternate-package (kokoro-onnx, en);OK  demo-package (kokoro-onnx, en);escaping-file-path;invalid-manifest"
       -P ${CMAKE_SOURCE_DIR}/tests/assert_success_contains.cmake
+  )
+
+  add_test(
+    NAME tts_host_end_to_end_stub_synthesis
+    COMMAND
+      ${CMAKE_COMMAND}
+      -Dexe=$<TARGET_FILE:tts-host>
+      -Dconfig=${CMAKE_SOURCE_DIR}/config.example.json
+      -Drunner=$<TARGET_FILE:tts-host-stub-runner>
+      -Dout=${CMAKE_CURRENT_BINARY_DIR}/e2e-synthesis.wav
+      -P ${CMAKE_SOURCE_DIR}/tests/assert_wav_synthesis.cmake
   )
 endif()

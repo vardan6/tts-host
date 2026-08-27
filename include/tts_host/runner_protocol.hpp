@@ -51,6 +51,7 @@ struct RunnerSynthesizeResponse {
 };
 
 RunnerSynthesizeRequest parse_runner_synthesize_request(const nlohmann::json &message);
+nlohmann::json make_runner_synthesize_request(nlohmann::json id, std::string text);
 nlohmann::json make_runner_synthesize_response(const RunnerSynthesizeRequest &request,
                                                std::uint32_t sample_rate_hz,
                                                std::uint32_t channels,

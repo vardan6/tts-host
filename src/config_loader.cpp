@@ -186,13 +186,44 @@ std::optional<CliOptions> parse_cli(int argc, char **argv, std::string &error_me
       continue;
     }
 
+    if (argument == "--synthesize") {
+      if (index + 1 >= argc) {
+        error_message = "--synthesize requires text";
+        return std::nullopt;
+      }
+      options.synthesize_text = argv[++index];
+      continue;
+    }
+
+    if (argument == "--out") {
+      if (index + 1 >= argc) {
+        error_message = "--out requires a path";
+        return std::nullopt;
+      }
+      options.output_path = argv[++index];
+      continue;
+    }
+
+    if (argument == "--runner") {
+      if (index + 1 >= argc) {
+        error_message = "--runner requires a path";
+        return std::nullopt;
+      }
+      options.runner_path_override = argv[++index];
+      continue;
+    }
+
     if (argument == "--help" || argument == "-h") {
       error_message =
           "Usage: tts-host --headless [--list-models] [--config <path>] [--data-dir <path>]\n"
+          "                 [--synthesize <text> --out <path.wav> [--runner <path>]]\n"
           "  --headless          start without UI\n"
           "  --list-models       print discovered and unsupported model packages\n"
           "  --config <path>     load a specific config.json\n"
-          "  --data-dir <path>   override the portable or installed data directory";
+          "  --data-dir <path>   override the portable or installed data directory\n"
+          "  --synthesize <text> synthesize text through a runner process\n"
+          "  --out <path>        WAV file to write the synthesized audio to\n"
+          "  --runner <path>     runner executable to launch (default: the in-repo stub runner)";
       return std::nullopt;
     }
 
@@ -202,6 +233,11 @@ std::optional<CliOptions> parse_cli(int argc, char **argv, std::string &error_me
 
   if (!options.headless) {
     error_message = "Only --headless is implemented in this slice";
+    return std::nullopt;
+  }
+
+  if (options.synthesize_text.has_value() != options.output_path.has_value()) {
+    error_message = "--synthesize and --out must be used together";
     return std::nullopt;
   }
 

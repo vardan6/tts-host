@@ -13,6 +13,9 @@ struct CliOptions {
   bool list_models = false;
   std::optional<std::filesystem::path> config_path_override;
   std::optional<std::filesystem::path> data_dir_override;
+  std::optional<std::string> synthesize_text;
+  std::optional<std::filesystem::path> output_path;
+  std::optional<std::filesystem::path> runner_path_override;
 };
 
 struct ResolvedPaths {
