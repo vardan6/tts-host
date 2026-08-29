@@ -104,6 +104,22 @@ Language for a request: explicit parameter, else script detection (Latin,
 Cyrillic, and Armenian scripts are mutually unambiguous for the supported
 languages), else the configured default.
 
+### Text-to-phoneme (espeak-ng)
+
+espeak-ng converts request text to phonemes for the Kokoro engine. It runs as
+an isolated subprocess, never linked (`docs/adr/0005-espeak-ng-licensing.md`),
+invoked once per synthesis request — `espeak-ng -q --ipa=3 -v <voice> --
+"<text>"` — with its stdout captured as the IPA phoneme string; no persistent
+daemon or custom IPC framing. Kokoro's ONNX model consumes a custom, sparse
+phoneme vocabulary rather than raw IPA, so the runner maps espeak-ng's output
+through a static translation table ported from `hexgrad/misaki` (Apache-2.0).
+Vendoring is asymmetric by platform: Windows fetches the official
+`espeak-ng.msi` release asset via CMake `FetchContent` and extracts it with
+7-Zip (no Windows Installer service involved), reassembling its flat file
+list into an `espeak-ng-data/` layout `--path` expects; Linux, not yet a
+release target, relies on a system-installed `espeak-ng`. Full rationale and
+rejected alternatives: `docs/adr/0006-espeak-ng-vendoring-and-phoneme-mapping.md`.
+
 ## Local API
 
 Two surfaces:
@@ -344,6 +360,15 @@ tts-host/
   config.json
   portable.marker
 ```
+
+Producing the zip is implemented today via CMake's `package` target (CPack,
+`ZIP` generator; see `CMakeLists.txt`) — run it after a normal build. Its
+current output is flatter than the tree above: the runner and its private
+runtime library sit directly beside `tts-host`, matching the flat
+`tts-host-<engine>-runner` naming convention `src/main.cpp` resolves against,
+not yet the separate `runtimes/`/`runners/` split shown here. Reconciling the
+two is pending a decision on per-engine runner isolation (raised but not yet
+confirmed) — do not silently pick one shape when next touching this area.
 
 The first release ships the zip only. An installer — shortcuts, start-at-login,
 uninstall entry — comes with the cross-platform release work. Unzip-and-run

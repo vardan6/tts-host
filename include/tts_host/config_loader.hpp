@@ -16,6 +16,7 @@ struct CliOptions {
   std::optional<std::string> synthesize_text;
   std::optional<std::filesystem::path> output_path;
   std::optional<std::filesystem::path> runner_path_override;
+  std::optional<std::string> model_id;
 };
 
 struct ResolvedPaths {

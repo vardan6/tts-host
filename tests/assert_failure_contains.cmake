@@ -3,7 +3,7 @@ if(NOT DEFINED exe OR NOT DEFINED config OR NOT DEFINED needle)
 endif()
 
 execute_process(
-  COMMAND "${exe}" --headless --config "${config}"
+  COMMAND "${exe}" --headless --config "${config}" ${args}
   RESULT_VARIABLE exit_code
   OUTPUT_VARIABLE stdout_text
   ERROR_VARIABLE stderr_text

@@ -25,6 +25,52 @@ FetchContent_Declare(
 
 FetchContent_MakeAvailable(nlohmann_json json_schema_validator)
 
+# ONNX Runtime ships prebuilt release archives with no top-level CMakeLists.txt
+# (its lib/cmake/onnxruntime config package assumes an installed layout with
+# lib64/ and include/onnxruntime/, which does not match the release archive's
+# lib/ and include/ layout), so FetchContent_MakeAvailable's add_subdirectory
+# step cannot be used. Populate the archive and define the IMPORTED target by
+# hand instead.
+set(ONNXRUNTIME_VERSION 1.29.0)
+
+if(WIN32)
+  FetchContent_Declare(
+    onnxruntime
+    URL https://github.com/microsoft/onnxruntime/releases/download/v${ONNXRUNTIME_VERSION}/onnxruntime-win-x64-${ONNXRUNTIME_VERSION}.zip
+    URL_HASH SHA256=c9b4b7086b529ad814f428c1bad028e20a25d7dc0699836775faace4ab5b78b2
+  )
+else()
+  FetchContent_Declare(
+    onnxruntime
+    URL https://github.com/microsoft/onnxruntime/releases/download/v${ONNXRUNTIME_VERSION}/onnxruntime-linux-x64-${ONNXRUNTIME_VERSION}.tgz
+    URL_HASH SHA256=c3fddc4f139a045b0c4902c57410f0694f1c2fdf9b6939fbe38b1aeae7cd14ba
+  )
+endif()
+
+FetchContent_Populate(onnxruntime)
+
+add_library(onnxruntime::onnxruntime SHARED IMPORTED)
+target_include_directories(
+  onnxruntime::onnxruntime
+  INTERFACE ${onnxruntime_SOURCE_DIR}/include
+)
+
+if(WIN32)
+  set_target_properties(
+    onnxruntime::onnxruntime PROPERTIES
+    IMPORTED_LOCATION ${onnxruntime_SOURCE_DIR}/lib/onnxruntime.dll
+    IMPORTED_IMPLIB ${onnxruntime_SOURCE_DIR}/lib/onnxruntime.lib
+  )
+  set(ONNXRUNTIME_RUNTIME_FILE ${onnxruntime_SOURCE_DIR}/lib/onnxruntime.dll)
+else()
+  set_target_properties(
+    onnxruntime::onnxruntime PROPERTIES
+    IMPORTED_LOCATION ${onnxruntime_SOURCE_DIR}/lib/libonnxruntime.so.${ONNXRUNTIME_VERSION}
+    IMPORTED_SONAME libonnxruntime.so.1
+  )
+  set(ONNXRUNTIME_RUNTIME_FILE ${onnxruntime_SOURCE_DIR}/lib/libonnxruntime.so.${ONNXRUNTIME_VERSION})
+endif()
+
 if(TARGET nlohmann_json_schema_validator::validator)
   set(JSON_SCHEMA_VALIDATOR_TARGET nlohmann_json_schema_validator::validator)
 elseif(TARGET nlohmann_json_schema_validator)
@@ -46,6 +92,7 @@ add_executable(
 add_executable(
   tts-host-stub-runner
   src/runner_audio_output.cpp
+  src/runner_control_io.cpp
   src/runner_protocol.cpp
   src/stub_runner.cpp
   src/stub_runner_main.cpp
@@ -53,6 +100,41 @@ add_executable(
 
 target_include_directories(tts-host-stub-runner PRIVATE include)
 target_link_libraries(tts-host-stub-runner PRIVATE nlohmann_json::nlohmann_json)
+
+# The real engine runner for the tts-host-<engine>-runner naming convention
+# (src/main.cpp's runner_path_for_engine()). Speaks the same protocol as the
+# stub runner but backed by an actual ONNX Runtime session, currently running
+# the vendored placeholder identity model in place of real Kokoro-82M weights
+# (not yet vendored, see roadmap.md).
+add_executable(
+  tts-host-kokoro-onnx-runner
+  src/kokoro_runner.cpp
+  src/kokoro_runner_main.cpp
+  src/runner_audio_output.cpp
+  src/runner_control_io.cpp
+  src/runner_protocol.cpp
+)
+
+target_include_directories(tts-host-kokoro-onnx-runner PRIVATE include)
+target_link_libraries(
+  tts-host-kokoro-onnx-runner
+  PRIVATE
+    nlohmann_json::nlohmann_json
+    onnxruntime::onnxruntime
+)
+if(NOT WIN32)
+  set_target_properties(
+    tts-host-kokoro-onnx-runner PROPERTIES
+    BUILD_RPATH "$ORIGIN"
+  )
+endif()
+add_custom_command(
+  TARGET tts-host-kokoro-onnx-runner POST_BUILD
+  COMMAND
+    ${CMAKE_COMMAND} -E copy
+    ${ONNXRUNTIME_RUNTIME_FILE}
+    $<TARGET_FILE_DIR:tts-host-kokoro-onnx-runner>/$<IF:$<BOOL:${WIN32}>,onnxruntime.dll,libonnxruntime.so.1>
+)
 
 target_include_directories(tts-host PRIVATE include)
 
@@ -66,10 +148,53 @@ target_link_libraries(
 if(MSVC)
   target_compile_options(tts-host PRIVATE /W4 /permissive-)
   target_compile_options(tts-host-stub-runner PRIVATE /W4 /permissive-)
+  target_compile_options(tts-host-kokoro-onnx-runner PRIVATE /W4 /permissive-)
 else()
   target_compile_options(tts-host PRIVATE -Wall -Wextra -Wpedantic)
   target_compile_options(tts-host-stub-runner PRIVATE -Wall -Wextra -Wpedantic)
+  target_compile_options(tts-host-kokoro-onnx-runner PRIVATE -Wall -Wextra -Wpedantic)
 endif()
+
+# Convenience target for the manual edit/build/run loop: `cmake --build
+# build --config Debug --target list-models` rebuilds only what changed and
+# runs the host against the registry fixture, without a full clean rebuild or
+# the CTest suite (see compile-win.ps1 for the from-scratch verification run).
+add_custom_target(
+  list-models
+  COMMAND $<TARGET_FILE:tts-host> --headless --list-models
+          --config ${CMAKE_SOURCE_DIR}/tests/fixtures/registry/config.json
+  DEPENDS tts-host
+  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+  USES_TERMINAL
+)
+
+# Packaging: assembles the self-contained, zip distribution described in
+# docs/design/architecture.md's "Distribution" section (host, its runner(s),
+# schemas, an example config, and a portable.marker) and lets CPack zip it via
+# the conventional `package` target. Reuses the exact runtime-file name/path
+# the post-build copy commands above already produce next to each runner, so
+# the installed layout matches what the host actually looks for at runtime.
+# Currently mirrors today's flat "runner beside tts-host" convention
+# (src/main.cpp's runner_path_for_engine()) rather than a per-engine
+# subdirectory — revisit together if/when that convention changes.
+install(TARGETS tts-host tts-host-kokoro-onnx-runner RUNTIME DESTINATION .)
+install(
+  FILES $<TARGET_FILE_DIR:tts-host-kokoro-onnx-runner>/$<IF:$<BOOL:${WIN32}>,onnxruntime.dll,libonnxruntime.so.1>
+  DESTINATION .
+)
+install(DIRECTORY schemas DESTINATION .)
+install(FILES config.example.json DESTINATION . RENAME config.json)
+install(CODE "file(TOUCH \"\${CMAKE_INSTALL_PREFIX}/portable.marker\")")
+if(EXISTS ${CMAKE_SOURCE_DIR}/models/kokoro-en-v1)
+  install(DIRECTORY ${CMAKE_SOURCE_DIR}/models/kokoro-en-v1 DESTINATION models)
+endif()
+
+set(CPACK_PACKAGE_NAME "tts-host")
+set(CPACK_PACKAGE_VERSION ${PROJECT_VERSION})
+set(CPACK_GENERATOR "ZIP")
+set(CPACK_PACKAGE_FILE_NAME "tts-host-${PROJECT_VERSION}-${CMAKE_SYSTEM_NAME}-${CMAKE_SYSTEM_PROCESSOR}")
+set(CPACK_PACKAGE_DIRECTORY "${CMAKE_BINARY_DIR}/dist")
+include(CPack)
 
 if(BUILD_TESTING)
   add_executable(
@@ -88,6 +213,39 @@ if(BUILD_TESTING)
   endif()
 
   add_test(NAME tts_host_runner_control_framing COMMAND tts-host-runner-protocol-tests)
+
+  # Proves the vendored ONNX Runtime toolchain (see the onnxruntime::onnxruntime
+  # target above) with a standalone, non-protocol executable. Named distinctly
+  # from tts-host-kokoro-onnx-runner (defined above), which speaks the runner
+  # protocol.
+  add_executable(tts-host-onnxruntime-smoketest tests/onnxruntime_smoketest_main.cpp)
+  target_link_libraries(tts-host-onnxruntime-smoketest PRIVATE onnxruntime::onnxruntime)
+  if(MSVC)
+    target_compile_options(tts-host-onnxruntime-smoketest PRIVATE /W4 /permissive-)
+  else()
+    target_compile_options(tts-host-onnxruntime-smoketest PRIVATE -Wall -Wextra -Wpedantic)
+  endif()
+  if(NOT WIN32)
+    set_target_properties(
+      tts-host-onnxruntime-smoketest PROPERTIES
+      BUILD_RPATH "$ORIGIN"
+    )
+  endif()
+
+  add_custom_command(
+    TARGET tts-host-onnxruntime-smoketest POST_BUILD
+    COMMAND
+      ${CMAKE_COMMAND} -E copy
+      ${ONNXRUNTIME_RUNTIME_FILE}
+      $<TARGET_FILE_DIR:tts-host-onnxruntime-smoketest>/$<IF:$<BOOL:${WIN32}>,onnxruntime.dll,libonnxruntime.so.1>
+  )
+
+  add_test(
+    NAME tts_host_onnxruntime_toolchain_smoketest
+    COMMAND
+      tts-host-onnxruntime-smoketest
+      ${CMAKE_SOURCE_DIR}/tests/fixtures/kokoro_runner/placeholder.onnx
+  )
 
   add_test(
     NAME tts_host_valid_config
@@ -145,5 +303,38 @@ if(BUILD_TESTING)
       -Drunner=$<TARGET_FILE:tts-host-stub-runner>
       -Dout=${CMAKE_CURRENT_BINARY_DIR}/e2e-synthesis.wav
       -P ${CMAKE_SOURCE_DIR}/tests/assert_wav_synthesis.cmake
+  )
+
+  add_test(
+    NAME tts_host_synthesis_selects_runner_by_engine
+    COMMAND
+      ${CMAKE_COMMAND}
+      -Dexe=$<TARGET_FILE:tts-host>
+      -Dconfig=${CMAKE_SOURCE_DIR}/tests/fixtures/registry/config.json
+      -Dmodel=demo-package
+      -Dout=${CMAKE_CURRENT_BINARY_DIR}/model-selected-synthesis.wav
+      -P ${CMAKE_SOURCE_DIR}/tests/assert_wav_synthesis.cmake
+  )
+
+  add_test(
+    NAME tts_host_synthesis_unknown_model
+    COMMAND
+      ${CMAKE_COMMAND}
+      -Dexe=$<TARGET_FILE:tts-host>
+      -Dconfig=${CMAKE_SOURCE_DIR}/tests/fixtures/registry/config.json
+      "-Dargs=--model;does-not-exist;--synthesize;Hello world;--out;${CMAKE_CURRENT_BINARY_DIR}/unknown-model.wav"
+      -Dneedle=Unknown model id
+      -P ${CMAKE_SOURCE_DIR}/tests/assert_failure_contains.cmake
+  )
+
+  add_test(
+    NAME tts_host_model_and_runner_mutually_exclusive
+    COMMAND
+      ${CMAKE_COMMAND}
+      -Dexe=$<TARGET_FILE:tts-host>
+      -Dconfig=${CMAKE_SOURCE_DIR}/tests/fixtures/registry/config.json
+      "-Dargs=--model;demo-package;--runner;$<TARGET_FILE:tts-host-stub-runner>;--synthesize;Hello world;--out;${CMAKE_CURRENT_BINARY_DIR}/conflicting-selectors.wav"
+      -Dneedle=mutually exclusive
+      -P ${CMAKE_SOURCE_DIR}/tests/assert_failure_contains.cmake
   )
 endif()

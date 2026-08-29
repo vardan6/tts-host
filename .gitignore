@@ -32,6 +32,7 @@ tts-app/
 models/
 *.gguf
 *.onnx
+!tests/fixtures/kokoro_runner/placeholder.onnx
 *.safetensors
 *.bin
 *.pt
@@ -57,6 +58,8 @@ cache/
 __pycache__/
 *.py[cod]
 .venv/
+.venv-linux/
+.venv-windows/
 venv/
 *.egg-info/
 .nuitka-build/

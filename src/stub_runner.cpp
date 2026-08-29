@@ -14,6 +14,11 @@ nlohmann::json handle_stub_runner_control_message(const nlohmann::json &message)
       request, {"load", "unload", "synthesize", "cancel", "stats"});
 }
 
+nlohmann::json handle_stub_runner_load_message(const nlohmann::json &message) {
+  const auto request = parse_runner_load_request(message);
+  return make_runner_load_response(request);
+}
+
 RunnerAudioFrame make_stub_runner_synthesis_frame() {
   return {.sequence_number = 0,
           .sample_count = 4,

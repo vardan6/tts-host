@@ -1,13 +1,22 @@
-if(NOT DEFINED exe OR NOT DEFINED config OR NOT DEFINED runner OR NOT DEFINED out)
-  message(FATAL_ERROR "Expected exe, config, runner, and out variables")
+if(NOT DEFINED exe OR NOT DEFINED config OR NOT DEFINED out)
+  message(FATAL_ERROR "Expected exe, config, and out variables")
+endif()
+if(NOT DEFINED runner AND NOT DEFINED model)
+  message(FATAL_ERROR "Expected either runner or model to be defined")
 endif()
 
 if(EXISTS "${out}")
   file(REMOVE "${out}")
 endif()
 
+if(DEFINED model)
+  set(selector_args --model "${model}")
+else()
+  set(selector_args --runner "${runner}")
+endif()
+
 execute_process(
-  COMMAND "${exe}" --headless --config "${config}" --runner "${runner}" --synthesize "Hello world" --out "${out}"
+  COMMAND "${exe}" --headless --config "${config}" ${selector_args} --synthesize "Hello world" --out "${out}"
   RESULT_VARIABLE exit_code
   OUTPUT_VARIABLE stdout_text
   ERROR_VARIABLE stderr_text

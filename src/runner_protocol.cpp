@@ -160,6 +160,57 @@ RunnerInitializeResponse parse_runner_initialize_response(const nlohmann::json &
           .capabilities = std::move(parsed_capabilities)};
 }
 
+RunnerLoadRequest parse_runner_load_request(const nlohmann::json &message) {
+  require_jsonrpc_2_0(message);
+  const auto &method = required_member(message, "method");
+  if (!method.is_string() || method != "load") {
+    throw RunnerProtocolError("runner control message is not a load request");
+  }
+
+  const auto &id = required_member(message, "id");
+  if (id.is_null() || (!id.is_string() && !id.is_number_integer() && !id.is_number_unsigned())) {
+    throw RunnerProtocolError("runner load request has an invalid id");
+  }
+  const auto &params = required_member(message, "params");
+  const auto &model_path = required_member(params, "modelPath");
+  if (!model_path.is_string() || model_path.get_ref<const std::string &>().empty()) {
+    throw RunnerProtocolError("runner load request has an invalid modelPath");
+  }
+  std::optional<std::string> voice_path;
+  if (params.contains("voicePath")) {
+    const auto &value = params.at("voicePath");
+    if (!value.is_string() || value.get_ref<const std::string &>().empty()) {
+      throw RunnerProtocolError("runner load request has an invalid voicePath");
+    }
+    voice_path = value.get<std::string>();
+  }
+  return {.id = id, .model_path = model_path.get<std::string>(), .voice_path = std::move(voice_path)};
+}
+
+nlohmann::json make_runner_load_request(nlohmann::json id, std::string model_path,
+                                        std::optional<std::string> voice_path) {
+  auto params = nlohmann::json{{"modelPath", std::move(model_path)}};
+  if (voice_path.has_value()) {
+    params["voicePath"] = std::move(*voice_path);
+  }
+  return {{"jsonrpc", "2.0"}, {"id", std::move(id)}, {"method", "load"}, {"params", std::move(params)}};
+}
+
+nlohmann::json make_runner_load_response(const RunnerLoadRequest &request) {
+  return {{"jsonrpc", "2.0"}, {"id", request.id}, {"result", nlohmann::json::object()}};
+}
+
+RunnerLoadResponse parse_runner_load_response(const nlohmann::json &message) {
+  require_jsonrpc_2_0(message);
+  const auto &id = required_member(message, "id");
+  const auto &result = required_member(message, "result");
+  if (id.is_null() || (!id.is_string() && !id.is_number_integer() && !id.is_number_unsigned()) ||
+      !result.is_object()) {
+    throw RunnerProtocolError("runner load response has invalid fields");
+  }
+  return {.id = id};
+}
+
 RunnerSynthesizeRequest parse_runner_synthesize_request(const nlohmann::json &message) {
   require_jsonrpc_2_0(message);
   const auto &method = required_member(message, "method");

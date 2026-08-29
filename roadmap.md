@@ -12,8 +12,32 @@ architecture live under `docs/`; this file records sequence only.
   discovered and unsupported packages through the CLI with actionable reasons.
 - [ ] **AFK — First audio through the runner protocol:** implement the JSON-RPC
   control channel and framed audio channel, ship the stub runner and the Kokoro
-  runner, synthesize text to a WAV response, and drive the whole path from an
-  end-to-end test against the stub in CI.
+  runner, and synthesize text to a WAV response.
+  - [x] JSON-RPC control channel (`Content-Length` framing) and framed binary
+    audio channel.
+  - [x] Stub runner: `initialize`/`synthesize` handshake and deterministic
+    stub audio over the inherited audio pipe.
+  - [x] Host launches runner subprocesses cross-platform (`RunnerSession`)
+    and writes a real WAV file end to end against the stub runner.
+  - [x] Runner selection by engine (`--model`, `tts-host-<engine>-runner`
+    naming convention).
+  - [x] ONNX Runtime vendored (v1.29.0, win-x64/linux-x64) and the toolchain
+    proven with a smoketest.
+  - [x] Real `tts-host-kokoro-onnx-runner` executable speaks the protocol
+    against a placeholder ONNX model.
+  - [x] `load` request wires a registry package's model path into the
+    runner before synthesis.
+  - [ ] espeak-ng vendored and real text-to-phoneme input — see
+    [design](docs/design/architecture.md#text-to-phoneme-espeak-ng) and
+    [ADR 0006](docs/adr/0006-espeak-ng-vendoring-and-phoneme-mapping.md).
+    - [ ] Vendor espeak-ng for Windows (MSI fetch + extract via CMake) and add
+      the Linux dev dependency to `scripts/setup-dev-env.sh`.
+    - [ ] Subprocess invocation producing IPA phonemes for arbitrary text.
+    - [ ] Map espeak-ng IPA output to Kokoro's phoneme vocabulary (table
+      ported from misaki) and wire into `run_kokoro_synthesis`, replacing the
+      hardcoded phoneme sequence.
+  - [x] Real Kokoro-82M ONNX weights and voice embeddings replace the
+    placeholder model.
 - [ ] **HITL — English model bake-off:** on the RTX 3070 Laptop GPU, compare
   Kokoro, Qwen3-TTS 0.6B/1.7B at candidate quantizations, and the strongest
   lightweight alternative against the acceptance criteria in
@@ -50,6 +74,10 @@ architecture live under `docs/`; this file records sequence only.
 
 ## Deliberately deferred
 
+- CI pipeline (GitHub Actions or equivalent) running the CTest suite,
+  including the stub end-to-end test. Local CTest already covers this; revisit
+  once the application works end-to-end with real inference and is worth
+  protecting from regressions.
 - Remote and cloud providers. Revisit only if local quality proves inadequate.
 - Full text normalization (numbers, dates, currency, abbreviations).
 - Token authentication and LAN serving. The config vocabulary is reserved;

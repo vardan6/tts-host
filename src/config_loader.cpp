@@ -213,17 +213,27 @@ std::optional<CliOptions> parse_cli(int argc, char **argv, std::string &error_me
       continue;
     }
 
+    if (argument == "--model") {
+      if (index + 1 >= argc) {
+        error_message = "--model requires a model id";
+        return std::nullopt;
+      }
+      options.model_id = argv[++index];
+      continue;
+    }
+
     if (argument == "--help" || argument == "-h") {
       error_message =
           "Usage: tts-host --headless [--list-models] [--config <path>] [--data-dir <path>]\n"
-          "                 [--synthesize <text> --out <path.wav> [--runner <path>]]\n"
+          "                 [--synthesize <text> --out <path.wav> [--runner <path> | --model <id>]]\n"
           "  --headless          start without UI\n"
           "  --list-models       print discovered and unsupported model packages\n"
           "  --config <path>     load a specific config.json\n"
           "  --data-dir <path>   override the portable or installed data directory\n"
           "  --synthesize <text> synthesize text through a runner process\n"
           "  --out <path>        WAV file to write the synthesized audio to\n"
-          "  --runner <path>     runner executable to launch (default: the in-repo stub runner)";
+          "  --runner <path>     runner executable to launch (default: the in-repo stub runner)\n"
+          "  --model <id>        registry model id; selects the runner for its declared engine";
       return std::nullopt;
     }
 
@@ -238,6 +248,16 @@ std::optional<CliOptions> parse_cli(int argc, char **argv, std::string &error_me
 
   if (options.synthesize_text.has_value() != options.output_path.has_value()) {
     error_message = "--synthesize and --out must be used together";
+    return std::nullopt;
+  }
+
+  if (options.runner_path_override.has_value() && options.model_id.has_value()) {
+    error_message = "--runner and --model are mutually exclusive";
+    return std::nullopt;
+  }
+
+  if (options.model_id.has_value() && !options.synthesize_text.has_value()) {
+    error_message = "--model requires --synthesize and --out";
     return std::nullopt;
   }
 

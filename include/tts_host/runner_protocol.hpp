@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -36,6 +37,22 @@ nlohmann::json make_runner_initialize_request(nlohmann::json id);
 nlohmann::json make_runner_initialize_response(const RunnerInitializeRequest &request,
                                                std::vector<std::string> capabilities);
 RunnerInitializeResponse parse_runner_initialize_response(const nlohmann::json &message);
+
+struct RunnerLoadRequest {
+  nlohmann::json id;
+  std::string model_path;
+  std::optional<std::string> voice_path;
+};
+
+struct RunnerLoadResponse {
+  nlohmann::json id;
+};
+
+RunnerLoadRequest parse_runner_load_request(const nlohmann::json &message);
+nlohmann::json make_runner_load_request(nlohmann::json id, std::string model_path,
+                                        std::optional<std::string> voice_path = std::nullopt);
+nlohmann::json make_runner_load_response(const RunnerLoadRequest &request);
+RunnerLoadResponse parse_runner_load_response(const nlohmann::json &message);
 
 struct RunnerSynthesizeRequest {
   nlohmann::json id;

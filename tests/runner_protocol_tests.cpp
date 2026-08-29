@@ -136,6 +136,11 @@ int main() {
     require(response_messages.size() == 1 && response_messages.front() == response,
             "stub runner response did not round-trip through control framing");
 
+    const auto load = tts_host::make_runner_load_request(2, "/models/demo/demo.onnx");
+    const auto load_response = tts_host::handle_stub_runner_load_message(load);
+    const auto parsed_load_response = tts_host::parse_runner_load_response(load_response);
+    require(parsed_load_response.id == 2, "stub runner load response id did not match request");
+
     const auto synthesize = nlohmann::json{{"jsonrpc", "2.0"},
                                            {"id", "synthesis-1"},
                                            {"method", "synthesize"},

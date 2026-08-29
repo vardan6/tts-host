@@ -109,8 +109,38 @@ cmake --build build --config Debug --parallel
 ctest --test-dir build -C Debug --output-on-failure
 ```
 
-There is no installer or CMake install target yet. Run the built executables
-directly from `build/` (or from `build/Debug/` on Windows).
+## Targets
+
+Beyond the default build (which builds every executable and test above), a
+few named CMake targets exist for convenience:
+
+- **Default (`all`)** — the main compile command; builds `tts-host`, every
+  runner, and the test binaries. This is what `cmake --build build ...` above
+  already does with no `--target` given.
+- **`list-models`** — rebuilds only `tts-host` (skipping the rest) and runs it
+  against the registry test fixture, for a fast manual edit/build/run loop
+  without a full CTest pass:
+
+  ```sh
+  cmake --build build --target list-models          # Linux/macOS
+  cmake --build build --config Debug --target list-models   # Windows
+  ```
+
+- **`package`** — assembles the self-contained, zip-distributable release
+  described in `docs/design/architecture.md`'s "Distribution" section
+  (`tts-host`, the Kokoro runner and its ONNX Runtime library, `schemas/`, an
+  example `config.json`, `portable.marker`, and the bundled Kokoro model if
+  `models/kokoro-en-v1/` exists locally — see "Fetching real Kokoro-82M
+  weights" below). Build normally first, then package; CPack's `package`
+  target does not rebuild for you:
+
+  ```sh
+  cmake --build build --parallel
+  cmake --build build --target package               # Linux/macOS
+  cmake --build build --config Debug --target package # Windows
+  ```
+
+  The zip lands in `build/dist/`.
 
 ## Try the host
 
@@ -147,6 +177,53 @@ Windows:
 
 The output lists two accepted example packages and several deliberately invalid
 fixtures, demonstrating the validation errors the host reports.
+
+## Dev-only Python tooling
+
+A few developer scripts under `tools/` regenerate checked-in test fixtures
+(for example the placeholder `.onnx` model used to test-drive ONNX Runtime
+linking). This tooling is **never** a dependency of the product: `tts-host`,
+its runners, and the released package/zip are native binaries and never
+invoke Python. Regenerating fixtures is optional and only needed if you're
+changing the fixture itself.
+
+Linux/macOS/WSL:
+
+```sh
+./scripts/setup-dev-env.sh
+.venv-linux/bin/python tools/generate_kokoro_runner_fixtures.py
+```
+
+Windows:
+
+```powershell
+.\scripts\setup-dev-env.ps1
+.\.venv-windows\Scripts\python tools\generate_kokoro_runner_fixtures.py
+```
+
+Each platform gets its own venv directory (`.venv-linux/` or
+`.venv-windows/`, both gitignored) so a WSL run and a native Windows run
+never write into the same files — the same reason `build/` can't be shared
+between them.
+
+### Fetching real Kokoro-82M weights
+
+`tools/fetch_kokoro_weights.py` downloads the real, full-precision Kokoro-82M
+ONNX model and one voice embedding (Apache-2.0, from
+`onnx-community/Kokoro-82M-v1.0-ONNX` on Hugging Face) into
+`models/kokoro-en-v1/`, alongside a generated `model.json` manifest. This is
+real product data (~330 MB), not a checked-in test fixture — `models/` is
+gitignored, and CTest never depends on it. Run it once to try the Kokoro
+runner against real weights:
+
+```sh
+.venv-linux/bin/python tools/fetch_kokoro_weights.py
+./build/tts-host --headless --model kokoro-en-v1 --synthesize "hello" --out hello.wav --config config.example.json
+```
+
+The runner still feeds a fixed, hardcoded phoneme sequence regardless of the
+requested text — arbitrary-text phonemization via espeak-ng is a separate,
+not-yet-implemented slice (see `roadmap.md`).
 
 ## Runner control protocol
 

@@ -4,29 +4,86 @@
 #include "tts_host/runner_protocol.hpp"
 #include "tts_host/wav_writer.hpp"
 
+#include <algorithm>
 #include <cstdlib>
 #include <filesystem>
 #include <iostream>
+#include <optional>
 #include <string>
 
 namespace {
 
-std::filesystem::path default_runner_path(const std::filesystem::path &argv0) {
+std::filesystem::path executable_dir(const std::filesystem::path &argv0) {
   std::error_code ec;
   const auto absolute = std::filesystem::absolute(argv0, ec);
-  const auto exe_dir = (ec || argv0.empty()) ? std::filesystem::current_path() : absolute.parent_path();
+  return (ec || argv0.empty()) ? std::filesystem::current_path() : absolute.parent_path();
+}
+
+std::filesystem::path default_runner_path(const std::filesystem::path &argv0) {
 #ifdef _WIN32
-  return exe_dir / "tts-host-stub-runner.exe";
+  return executable_dir(argv0) / "tts-host-stub-runner.exe";
 #else
-  return exe_dir / "tts-host-stub-runner";
+  return executable_dir(argv0) / "tts-host-stub-runner";
 #endif
 }
 
-void synthesize_to_wav(const tts_host::CliOptions &options, const std::filesystem::path &argv0) {
-  const auto runner_path =
-      options.runner_path_override.value_or(default_runner_path(argv0));
+// Runner binaries for a registry model's declared engine are installed
+// beside tts-host, named by convention: tts-host-<engine>-runner[.exe].
+std::filesystem::path runner_path_for_engine(const std::string &engine,
+                                             const std::filesystem::path &argv0) {
+#ifdef _WIN32
+  return executable_dir(argv0) / ("tts-host-" + engine + "-runner.exe");
+#else
+  return executable_dir(argv0) / ("tts-host-" + engine + "-runner");
+#endif
+}
 
-  tts_host::RunnerSession session(runner_path);
+struct RunnerSelection {
+  std::filesystem::path runner_path;
+  std::optional<std::filesystem::path> model_path;
+  std::optional<std::filesystem::path> voice_path;
+};
+
+RunnerSelection resolve_runner_selection(const tts_host::CliOptions &options,
+                                         const tts_host::ConfigDocument &document,
+                                         const std::filesystem::path &argv0) {
+  if (options.runner_path_override.has_value()) {
+    return {*options.runner_path_override, std::nullopt, std::nullopt};
+  }
+
+  if (options.model_id.has_value()) {
+    const auto scan = tts_host::scan_model_registry(document);
+    const auto package = std::find_if(
+        scan.discovered_packages.begin(), scan.discovered_packages.end(),
+        [&](const tts_host::ModelPackageCandidate &candidate) {
+          return candidate.id == *options.model_id;
+        });
+    if (package == scan.discovered_packages.end()) {
+      throw std::runtime_error("Unknown model id: " + *options.model_id);
+    }
+
+    auto runner_path = runner_path_for_engine(package->engine, argv0);
+    if (!std::filesystem::exists(runner_path)) {
+      throw std::runtime_error("No runner installed for engine '" + package->engine +
+                               "': expected " + runner_path.string());
+    }
+    const auto &files = package->manifest.at("files");
+    const auto model_path = package->package_path / files.at("model").get<std::string>();
+    std::optional<std::filesystem::path> voice_path;
+    if (files.contains("voice")) {
+      voice_path = package->package_path / files.at("voice").get<std::string>();
+    }
+    return {runner_path, model_path, voice_path};
+  }
+
+  return {default_runner_path(argv0), std::nullopt, std::nullopt};
+}
+
+void synthesize_to_wav(const tts_host::CliOptions &options, const tts_host::ConfigDocument &document,
+                       const std::filesystem::path &argv0) {
+  const auto selection = resolve_runner_selection(options, document, argv0);
+
+  tts_host::RunnerSession session(selection.runner_path);
 
   const auto initialize_response =
       session.send_request(tts_host::make_runner_initialize_request(1));
@@ -35,8 +92,16 @@ void synthesize_to_wav(const tts_host::CliOptions &options, const std::filesyste
     throw std::runtime_error("runner reported an unsupported protocol version");
   }
 
+  if (selection.model_path.has_value()) {
+    const auto load_response = session.send_request(tts_host::make_runner_load_request(
+        2, selection.model_path->string(),
+        selection.voice_path.has_value() ? std::optional<std::string>(selection.voice_path->string())
+                                         : std::nullopt));
+    tts_host::parse_runner_load_response(load_response);
+  }
+
   const auto synthesize_response = session.send_request(
-      tts_host::make_runner_synthesize_request(2, *options.synthesize_text));
+      tts_host::make_runner_synthesize_request(3, *options.synthesize_text));
   const auto synthesize_result = tts_host::parse_runner_synthesize_response(synthesize_response);
 
   const auto frames = session.read_audio_stream_until_end();
@@ -99,7 +164,7 @@ int main(int argc, char **argv) {
     }
 
     if (options->synthesize_text.has_value()) {
-      synthesize_to_wav(*options, std::filesystem::path(argv[0]));
+      synthesize_to_wav(*options, document, std::filesystem::path(argv[0]));
     }
 
     return EXIT_SUCCESS;
