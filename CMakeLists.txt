@@ -9,6 +9,14 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# Without this, MSVC encodes \uXXXX universal-character-names in narrow
+# string/char literals (e.g. the IPA phoneme constants in
+# kokoro_phoneme_mapping.cpp) using the locale-dependent execution charset
+# instead of UTF-8, silently corrupting them. Applied to every target,
+# including FetchContent'd dependencies, since it's harmless for ASCII-only
+# sources.
+add_compile_options($<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
+
 set(JSON_BuildTests OFF CACHE BOOL "" FORCE)
 set(JSON_Install OFF CACHE BOOL "" FORCE)
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)

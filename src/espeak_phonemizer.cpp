@@ -105,7 +105,11 @@ std::string run_espeak(const std::filesystem::path &executable,
                       nullptr, nullptr, &startup_info, &process_info)) {
     CloseHandle(output_read);
     CloseHandle(output_write);
-    throw RunnerProtocolError("could not start espeak-ng: " + executable.string());
+    // Match the POSIX path (execvp failure -> _exit(127) -> "exited with code
+    // 127"): a shell-style "command not found" exit code, so callers see one
+    // actionable message shape regardless of platform.
+    throw RunnerProtocolError("espeak-ng exited with code 127 (could not start: " +
+                              executable.string() + ")");
   }
   CloseHandle(output_write);
 
