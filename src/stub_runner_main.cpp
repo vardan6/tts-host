@@ -22,8 +22,12 @@ int main() {
         const auto method = message.value("method", "");
         if (method == "synthesize") {
           const auto frame = tts_host::make_stub_runner_synthesis_frame();
-          tts_host::RunnerAudioOutput::open_inherited().write_frame(frame);
           response = tts_host::handle_stub_runner_synthesize_message(message);
+          // See kokoro_runner_main.cpp: control response must precede the
+          // audio frame, or a large frame can deadlock both processes.
+          tts_host::write_stdout(tts_host::frame_runner_control_message(response));
+          tts_host::RunnerAudioOutput::open_inherited().write_frame(frame);
+          continue;
         } else if (method == "load") {
           response = tts_host::handle_stub_runner_load_message(message);
         } else {

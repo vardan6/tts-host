@@ -24,8 +24,14 @@ int main() {
         if (method == "synthesize") {
           const auto request = tts_host::parse_runner_synthesize_request(message);
           const auto frame = runner.run_synthesis(request.text);
-          tts_host::RunnerAudioOutput::open_inherited().write_frame(frame);
           response = runner.make_synthesize_response(message, frame);
+          // Send the control response before the audio frame: the host
+          // blocks on the control response before it starts draining the
+          // audio pipe, so writing the (possibly large) audio frame first
+          // can fill the OS pipe buffer and deadlock both processes.
+          tts_host::write_stdout(tts_host::frame_runner_control_message(response));
+          tts_host::RunnerAudioOutput::open_inherited().write_frame(frame);
+          continue;
         } else if (method == "load") {
           response = runner.handle_load_message(message);
         } else {

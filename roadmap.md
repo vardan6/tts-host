@@ -10,7 +10,7 @@ architecture live under `docs/`; this file records sequence only.
 - [x] **AFK — Registry discovers a model package:** scan configured directories,
   validate `model.json` against the schema, reject escaping paths, and list
   discovered and unsupported packages through the CLI with actionable reasons.
-- [ ] **AFK — First audio through the runner protocol:** implement the JSON-RPC
+- [x] **AFK — First audio through the runner protocol:** implement the JSON-RPC
   control channel and framed audio channel, ship the stub runner and the Kokoro
   runner, and synthesize text to a WAV response.
   - [x] JSON-RPC control channel (`Content-Length` framing) and framed binary
@@ -38,12 +38,9 @@ architecture live under `docs/`; this file records sequence only.
       hardcoded phoneme sequence.
   - [x] Real Kokoro-82M ONNX weights and voice embeddings replace the
     placeholder model.
-  - [ ] Fix the host/runner audio-pipe deadlock: the runner writes its audio
-    frame before its control response (`kokoro_runner_main.cpp`), but the
-    host reads the control response before draining the audio pipe
-    (`main.cpp`'s `send_request` then `read_audio_stream_until_end`), so any
-    synthesis whose audio exceeds the OS pipe buffer (~64KB — any real
-    sentence past a couple of words) hangs both processes forever.
+  - [x] Fix the host/runner audio-pipe deadlock: both runners now write their
+    control response before the audio frame, so the host is already draining
+    the audio pipe by the time a large frame is written.
 - [ ] **HITL — English model bake-off:** on the RTX 3070 Laptop GPU, compare
   Kokoro, Qwen3-TTS 0.6B/1.7B at candidate quantizations, and the strongest
   lightweight alternative against the acceptance criteria in
