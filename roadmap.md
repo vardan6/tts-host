@@ -27,17 +27,23 @@ architecture live under `docs/`; this file records sequence only.
     against a placeholder ONNX model.
   - [x] `load` request wires a registry package's model path into the
     runner before synthesis.
-  - [ ] espeak-ng vendored and real text-to-phoneme input — see
+  - [x] espeak-ng vendored and real text-to-phoneme input — see
     [design](docs/design/architecture.md#text-to-phoneme-espeak-ng) and
     [ADR 0006](docs/adr/0006-espeak-ng-vendoring-and-phoneme-mapping.md).
-    - [ ] Vendor espeak-ng for Windows (MSI fetch + extract via CMake) and add
+    - [x] Vendor espeak-ng for Windows (MSI fetch + extract via CMake) and add
       the Linux dev dependency to `scripts/setup-dev-env.sh`.
-    - [ ] Subprocess invocation producing IPA phonemes for arbitrary text.
-    - [ ] Map espeak-ng IPA output to Kokoro's phoneme vocabulary (table
+    - [x] Subprocess invocation producing IPA phonemes for arbitrary text.
+    - [x] Map espeak-ng IPA output to Kokoro's phoneme vocabulary (table
       ported from misaki) and wire into `run_kokoro_synthesis`, replacing the
       hardcoded phoneme sequence.
   - [x] Real Kokoro-82M ONNX weights and voice embeddings replace the
     placeholder model.
+  - [ ] Fix the host/runner audio-pipe deadlock: the runner writes its audio
+    frame before its control response (`kokoro_runner_main.cpp`), but the
+    host reads the control response before draining the audio pipe
+    (`main.cpp`'s `send_request` then `read_audio_stream_until_end`), so any
+    synthesis whose audio exceeds the OS pipe buffer (~64KB — any real
+    sentence past a couple of words) hangs both processes forever.
 - [ ] **HITL — English model bake-off:** on the RTX 3070 Laptop GPU, compare
   Kokoro, Qwen3-TTS 0.6B/1.7B at candidate quantizations, and the strongest
   lightweight alternative against the acceptance criteria in
@@ -50,6 +56,13 @@ architecture live under `docs/`; this file records sequence only.
 - [ ] **AFK — Everyday desktop playback:** tray controls, host-side playback,
   chunked streaming, interrupt and queue semantics, markdown/HTML normalization,
   output-device selection, CLI text/stdin/clipboard support, and start-at-login.
+  - [x] Markdown normalization in the host, applied to every synthesis request
+    before it reaches a runner — see
+    [design](docs/design/architecture.md#speech-pipeline).
+  - [x] HTML normalization: the same five rules over a different syntax.
+  - [x] CLI text/stdin/clipboard support: `--stdin` and `--clipboard` as
+    alternative text sources to `--synthesize`, feeding the same
+    `synthesize_to_wav` path.
 - [ ] **HITL — Windows selection reading:** validate UI Automation and protected
   clipboard fallback in OneNote, Windows Terminal, browsers, and representative
   editors before freezing default global shortcuts.

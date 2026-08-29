@@ -31,12 +31,12 @@ class KokoroOnnxRunner {
 
   nlohmann::json handle_control_message(const nlohmann::json &message);
   nlohmann::json handle_load_message(const nlohmann::json &message);
-  RunnerAudioFrame run_synthesis();
+  RunnerAudioFrame run_synthesis(std::string_view text);
   nlohmann::json make_synthesize_response(const nlohmann::json &message, const RunnerAudioFrame &frame);
 
  private:
   RunnerAudioFrame run_placeholder_identity_synthesis();
-  RunnerAudioFrame run_kokoro_synthesis();
+  RunnerAudioFrame run_kokoro_synthesis(std::string_view text);
 
   Ort::Env env_;
   std::optional<Ort::Session> session_;

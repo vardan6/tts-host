@@ -6,6 +6,15 @@ set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
+if ! command -v espeak-ng >/dev/null 2>&1; then
+  if ! command -v apt-get >/dev/null 2>&1; then
+    echo "espeak-ng is required for Kokoro arbitrary-text synthesis; install it with your system package manager." >&2
+    exit 1
+  fi
+  sudo apt-get update
+  sudo apt-get install --yes espeak-ng
+fi
+
 VENV_DIR=.venv-linux
 
 python3 -m venv "$VENV_DIR"

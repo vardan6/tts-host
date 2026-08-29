@@ -71,6 +71,71 @@ else()
   set(ONNXRUNTIME_RUNTIME_FILE ${onnxruntime_SOURCE_DIR}/lib/libonnxruntime.so.${ONNXRUNTIME_VERSION})
 endif()
 
+# espeak-ng vendoring (Windows only, see docs/adr/0006-espeak-ng-vendoring-and-phoneme-mapping.md).
+# The GitHub release publishes a single unversioned espeak-ng.msi asset (no
+# Linux archive), extracted with 7-Zip because it reads the MSI's embedded
+# CAB directly with no msiexec/Windows Installer dependency -- this works
+# whether the configure step runs on Windows or WSL/Linux, unlike the
+# onnxruntime archives above this only produces artifacts for Windows builds,
+# so the whole block is gated on WIN32. Linux is out of scope (ADR 0006 point
+# 2): it uses the system espeak-ng already required by scripts/setup-dev-env.sh.
+set(ESPEAK_NG_RELEASE_TAG 1.52.0)
+
+if(WIN32)
+  find_program(SEVEN_ZIP_EXECUTABLE NAMES 7z 7z.exe)
+  if(NOT SEVEN_ZIP_EXECUTABLE)
+    message(FATAL_ERROR
+      "7-Zip (7z) was not found on PATH. It is required to extract the "
+      "vendored espeak-ng.msi (see docs/adr/0006-espeak-ng-vendoring-and-phoneme-mapping.md).")
+  endif()
+
+  FetchContent_Declare(
+    espeak_ng_msi
+    URL https://github.com/espeak-ng/espeak-ng/releases/download/${ESPEAK_NG_RELEASE_TAG}/espeak-ng.msi
+    URL_HASH SHA256=7f673c709ea5dd579d3b5ebb98688cc575328a6ab7438d2bc405b88cedaeafb9
+    DOWNLOAD_NO_EXTRACT TRUE
+  )
+  FetchContent_Populate(espeak_ng_msi)
+
+  # The MSI extracts flat (443 files, no subdirectories): espeak_ng.exe,
+  # libespeak_ng.dll, and per-language data files (phondata, phontab, en_dict,
+  # ...) with no espeak-ng-data/ wrapper folder. Extract once into a build-tree
+  # staging directory, then separate the two binaries from the data files so
+  # the POST_BUILD copy below can synthesize the layout
+  # default_espeak_ng_executable() expects (src/espeak_phonemizer.cpp):
+  # espeak_ng.exe and libespeak_ng.dll next to the runner executable, and
+  # every other file under an espeak-ng-data/ subdirectory beside them.
+  set(ESPEAK_NG_EXTRACT_DIR ${CMAKE_BINARY_DIR}/_deps/espeak_ng-extracted)
+  if(NOT EXISTS ${ESPEAK_NG_EXTRACT_DIR}/espeak_ng.exe)
+    file(MAKE_DIRECTORY ${ESPEAK_NG_EXTRACT_DIR})
+    execute_process(
+      COMMAND ${SEVEN_ZIP_EXECUTABLE} x -y "${espeak_ng_msi_SOURCE_DIR}/espeak-ng.msi" -o${ESPEAK_NG_EXTRACT_DIR}
+      RESULT_VARIABLE ESPEAK_NG_EXTRACT_RESULT
+      OUTPUT_QUIET
+    )
+    if(NOT ESPEAK_NG_EXTRACT_RESULT EQUAL 0)
+      message(FATAL_ERROR "7z failed to extract espeak-ng.msi (exit code ${ESPEAK_NG_EXTRACT_RESULT})")
+    endif()
+  endif()
+
+  set(ESPEAK_NG_EXECUTABLE ${ESPEAK_NG_EXTRACT_DIR}/espeak_ng.exe)
+  set(ESPEAK_NG_LIBRARY ${ESPEAK_NG_EXTRACT_DIR}/libespeak_ng.dll)
+
+  # Stage every extracted file that is not one of the two binaries into an
+  # espeak-ng-data/ directory, at configure time (FetchContent_Populate above
+  # already ran, so the flat file list is enumerable now via file(GLOB)).
+  set(ESPEAK_NG_DATA_STAGE_DIR ${CMAKE_BINARY_DIR}/_deps/espeak_ng-data-staged)
+  if(NOT EXISTS ${ESPEAK_NG_DATA_STAGE_DIR})
+    file(MAKE_DIRECTORY ${ESPEAK_NG_DATA_STAGE_DIR})
+    file(GLOB ESPEAK_NG_ALL_FILES LIST_DIRECTORIES FALSE RELATIVE ${ESPEAK_NG_EXTRACT_DIR} ${ESPEAK_NG_EXTRACT_DIR}/*)
+    foreach(ESPEAK_NG_FILE ${ESPEAK_NG_ALL_FILES})
+      if(NOT ESPEAK_NG_FILE STREQUAL "espeak_ng.exe" AND NOT ESPEAK_NG_FILE STREQUAL "libespeak_ng.dll")
+        file(COPY ${ESPEAK_NG_EXTRACT_DIR}/${ESPEAK_NG_FILE} DESTINATION ${ESPEAK_NG_DATA_STAGE_DIR})
+      endif()
+    endforeach()
+  endif()
+endif()
+
 if(TARGET nlohmann_json_schema_validator::validator)
   set(JSON_SCHEMA_VALIDATOR_TARGET nlohmann_json_schema_validator::validator)
 elseif(TARGET nlohmann_json_schema_validator)
@@ -81,10 +146,12 @@ endif()
 
 add_executable(
   tts-host
+  src/clipboard.cpp
   src/config_loader.cpp
   src/model_registry.cpp
   src/runner_protocol.cpp
   src/runner_launcher.cpp
+  src/text_normalizer.cpp
   src/wav_writer.cpp
   src/main.cpp
 )
@@ -108,6 +175,8 @@ target_link_libraries(tts-host-stub-runner PRIVATE nlohmann_json::nlohmann_json)
 # (not yet vendored, see roadmap.md).
 add_executable(
   tts-host-kokoro-onnx-runner
+  src/espeak_phonemizer.cpp
+  src/kokoro_phoneme_mapping.cpp
   src/kokoro_runner.cpp
   src/kokoro_runner_main.cpp
   src/runner_audio_output.cpp
@@ -136,6 +205,25 @@ add_custom_command(
     $<TARGET_FILE_DIR:tts-host-kokoro-onnx-runner>/$<IF:$<BOOL:${WIN32}>,onnxruntime.dll,libonnxruntime.so.1>
 )
 
+# Places the vendored espeak-ng binaries and data next to the runner
+# executable, matching default_espeak_ng_executable()'s expected layout
+# (src/espeak_phonemizer.cpp). Windows-only; see the FetchContent/7z block
+# above and ADR 0006.
+if(WIN32)
+  add_custom_command(
+    TARGET tts-host-kokoro-onnx-runner POST_BUILD
+    COMMAND
+      ${CMAKE_COMMAND} -E copy
+      ${ESPEAK_NG_EXECUTABLE}
+      ${ESPEAK_NG_LIBRARY}
+      $<TARGET_FILE_DIR:tts-host-kokoro-onnx-runner>
+    COMMAND
+      ${CMAKE_COMMAND} -E copy_directory
+      ${ESPEAK_NG_DATA_STAGE_DIR}
+      $<TARGET_FILE_DIR:tts-host-kokoro-onnx-runner>/espeak-ng-data
+  )
+endif()
+
 target_include_directories(tts-host PRIVATE include)
 
 target_link_libraries(
@@ -144,6 +232,9 @@ target_link_libraries(
     nlohmann_json::nlohmann_json
     ${JSON_SCHEMA_VALIDATOR_TARGET}
 )
+if(WIN32)
+  target_link_libraries(tts-host PRIVATE user32)
+endif()
 
 if(MSVC)
   target_compile_options(tts-host PRIVATE /W4 /permissive-)
@@ -182,6 +273,13 @@ install(
   FILES $<TARGET_FILE_DIR:tts-host-kokoro-onnx-runner>/$<IF:$<BOOL:${WIN32}>,onnxruntime.dll,libonnxruntime.so.1>
   DESTINATION .
 )
+if(WIN32)
+  install(
+    FILES ${ESPEAK_NG_EXECUTABLE} ${ESPEAK_NG_LIBRARY}
+    DESTINATION .
+  )
+  install(DIRECTORY ${ESPEAK_NG_DATA_STAGE_DIR}/ DESTINATION espeak-ng-data)
+endif()
 install(DIRECTORY schemas DESTINATION .)
 install(FILES config.example.json DESTINATION . RENAME config.json)
 install(CODE "file(TOUCH \"\${CMAKE_INSTALL_PREFIX}/portable.marker\")")
@@ -213,6 +311,65 @@ if(BUILD_TESTING)
   endif()
 
   add_test(NAME tts_host_runner_control_framing COMMAND tts-host-runner-protocol-tests)
+
+  add_executable(
+    tts-host-config-loader-tests
+    src/config_loader.cpp
+    tests/config_loader_tests.cpp
+  )
+  target_include_directories(tts-host-config-loader-tests PRIVATE include)
+  target_link_libraries(
+    tts-host-config-loader-tests
+    PRIVATE
+      nlohmann_json::nlohmann_json
+      ${JSON_SCHEMA_VALIDATOR_TARGET}
+  )
+  if(MSVC)
+    target_compile_options(tts-host-config-loader-tests PRIVATE /W4 /permissive-)
+  else()
+    target_compile_options(tts-host-config-loader-tests PRIVATE -Wall -Wextra -Wpedantic)
+  endif()
+  add_test(NAME tts_host_cli_text_sources COMMAND tts-host-config-loader-tests)
+
+  add_executable(
+    tts-host-espeak-phonemizer-tests
+    src/espeak_phonemizer.cpp
+    tests/espeak_phonemizer_tests.cpp
+  )
+  target_include_directories(tts-host-espeak-phonemizer-tests PRIVATE include)
+  target_link_libraries(tts-host-espeak-phonemizer-tests PRIVATE nlohmann_json::nlohmann_json)
+  if(MSVC)
+    target_compile_options(tts-host-espeak-phonemizer-tests PRIVATE /W4 /permissive-)
+  else()
+    target_compile_options(tts-host-espeak-phonemizer-tests PRIVATE -Wall -Wextra -Wpedantic)
+  endif()
+  add_test(NAME tts_host_espeak_phonemizer COMMAND tts-host-espeak-phonemizer-tests)
+
+  add_executable(
+    tts-host-text-normalizer-tests
+    src/text_normalizer.cpp
+    tests/text_normalizer_tests.cpp
+  )
+  target_include_directories(tts-host-text-normalizer-tests PRIVATE include)
+  if(MSVC)
+    target_compile_options(tts-host-text-normalizer-tests PRIVATE /W4 /permissive-)
+  else()
+    target_compile_options(tts-host-text-normalizer-tests PRIVATE -Wall -Wextra -Wpedantic)
+  endif()
+  add_test(NAME tts_host_text_normalization COMMAND tts-host-text-normalizer-tests)
+
+  add_executable(
+    tts-host-kokoro-phoneme-mapping-tests
+    src/kokoro_phoneme_mapping.cpp
+    tests/kokoro_phoneme_mapping_tests.cpp
+  )
+  target_include_directories(tts-host-kokoro-phoneme-mapping-tests PRIVATE include)
+  if(MSVC)
+    target_compile_options(tts-host-kokoro-phoneme-mapping-tests PRIVATE /W4 /permissive-)
+  else()
+    target_compile_options(tts-host-kokoro-phoneme-mapping-tests PRIVATE -Wall -Wextra -Wpedantic)
+  endif()
+  add_test(NAME tts_host_kokoro_phoneme_mapping COMMAND tts-host-kokoro-phoneme-mapping-tests)
 
   # Proves the vendored ONNX Runtime toolchain (see the onnxruntime::onnxruntime
   # target above) with a standalone, non-protocol executable. Named distinctly

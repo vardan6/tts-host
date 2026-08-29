@@ -1,11 +1,15 @@
 #include "tts_host/kokoro_runner.hpp"
 
+#include "tts_host/espeak_phonemizer.hpp"
+#include "tts_host/kokoro_phoneme_mapping.hpp"
+
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdint>
 #include <fstream>
 #include <string>
+#include <vector>
 
 namespace tts_host {
 namespace {
@@ -82,7 +86,7 @@ nlohmann::json KokoroOnnxRunner::handle_load_message(const nlohmann::json &messa
   return make_runner_load_response(request);
 }
 
-RunnerAudioFrame KokoroOnnxRunner::run_synthesis() {
+RunnerAudioFrame KokoroOnnxRunner::run_synthesis(std::string_view text) {
   if (!session_.has_value()) {
     throw RunnerProtocolError("kokoro-onnx runner received synthesize before load");
   }
@@ -94,7 +98,7 @@ RunnerAudioFrame KokoroOnnxRunner::run_synthesis() {
   if (session_->GetInputCount() == 1) {
     return run_placeholder_identity_synthesis();
   }
-  return run_kokoro_synthesis();
+  return run_kokoro_synthesis(text);
 }
 
 RunnerAudioFrame KokoroOnnxRunner::run_placeholder_identity_synthesis() {
@@ -124,19 +128,28 @@ RunnerAudioFrame KokoroOnnxRunner::run_placeholder_identity_synthesis() {
           .payload = {0x00, 0x00, 0x00, 0x10, 0x00, 0xf0, 0x00, 0x00}};
 }
 
-RunnerAudioFrame KokoroOnnxRunner::run_kokoro_synthesis() {
+RunnerAudioFrame KokoroOnnxRunner::run_kokoro_synthesis(std::string_view text) {
   if (voice_style_.empty()) {
     throw RunnerProtocolError("kokoro-onnx runner received synthesize without a loaded voice");
   }
 
-  // Temporary hardcoded phoneme token ids (IPA "h ɛ l o ʊ", roughly "hello"),
-  // padded with 0 at both ends per the model's input contract. Real
-  // arbitrary-text phonemization via espeak-ng is a separate slice (see
-  // roadmap.md "espeak-ng vendored and real text-to-phoneme input"); until
-  // then every synthesize request produces this fixed utterance regardless
-  // of the requested text.
-  std::array<std::int64_t, 7> input_ids{0, 50, 86, 54, 57, 135, 0};
-  const std::size_t phoneme_count = input_ids.size() - 2;
+  // Capture arbitrary-text IPA through the isolated espeak-ng process rather
+  // than linking GPL-licensed code into this Apache-2.0 runner (ADR 0005),
+  // then translate it to Kokoro's sparse phoneme vocabulary (ADR 0006).
+  const auto ipa = phonemize_with_espeak_ng(default_espeak_ng_executable(), "en-us", text);
+  const auto phoneme_ids = translate_ipa_to_kokoro_token_ids(ipa);
+  if (phoneme_ids.empty()) {
+    throw RunnerProtocolError("kokoro-onnx runner produced no phonemes for the requested text");
+  }
+
+  // Padded with the model's id-0 token at both ends per its input contract
+  // (see the previously hardcoded fixture this replaced).
+  std::vector<std::int64_t> input_ids;
+  input_ids.reserve(phoneme_ids.size() + 2);
+  input_ids.push_back(0);
+  input_ids.insert(input_ids.end(), phoneme_ids.begin(), phoneme_ids.end());
+  input_ids.push_back(0);
+  const std::size_t phoneme_count = phoneme_ids.size();
   std::array<std::int64_t, 2> input_ids_shape{1, static_cast<std::int64_t>(input_ids.size())};
 
   const std::size_t style_row_count = voice_style_.size() / kKokoroStyleWidth;

@@ -22,7 +22,8 @@ int main() {
         nlohmann::json response;
         const auto method = message.value("method", "");
         if (method == "synthesize") {
-          const auto frame = runner.run_synthesis();
+          const auto request = tts_host::parse_runner_synthesize_request(message);
+          const auto frame = runner.run_synthesis(request.text);
           tts_host::RunnerAudioOutput::open_inherited().write_frame(frame);
           response = runner.make_synthesize_response(message, frame);
         } else if (method == "load") {

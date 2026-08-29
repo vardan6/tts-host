@@ -1,7 +1,9 @@
+#include "tts_host/clipboard.hpp"
 #include "tts_host/config_loader.hpp"
 #include "tts_host/model_registry.hpp"
 #include "tts_host/runner_launcher.hpp"
 #include "tts_host/runner_protocol.hpp"
+#include "tts_host/text_normalizer.hpp"
 #include "tts_host/wav_writer.hpp"
 
 #include <algorithm>
@@ -9,6 +11,7 @@
 #include <filesystem>
 #include <iostream>
 #include <optional>
+#include <sstream>
 #include <string>
 
 namespace {
@@ -79,6 +82,20 @@ RunnerSelection resolve_runner_selection(const tts_host::CliOptions &options,
   return {default_runner_path(argv0), std::nullopt, std::nullopt};
 }
 
+// Resolves whichever of --synthesize/--stdin/--clipboard was given (parse_cli
+// guarantees exactly one) to the raw text to speak.
+std::string resolve_input_text(const tts_host::CliOptions &options) {
+  if (options.synthesize_text.has_value()) {
+    return *options.synthesize_text;
+  }
+  if (options.use_stdin_text) {
+    std::ostringstream buffer;
+    buffer << std::cin.rdbuf();
+    return buffer.str();
+  }
+  return tts_host::read_clipboard_text();
+}
+
 void synthesize_to_wav(const tts_host::CliOptions &options, const tts_host::ConfigDocument &document,
                        const std::filesystem::path &argv0) {
   const auto selection = resolve_runner_selection(options, document, argv0);
@@ -100,8 +117,16 @@ void synthesize_to_wav(const tts_host::CliOptions &options, const tts_host::Conf
     tts_host::parse_runner_load_response(load_response);
   }
 
-  const auto synthesize_response = session.send_request(
-      tts_host::make_runner_synthesize_request(3, *options.synthesize_text));
+  // Normalization is the host's job, not each client's, so every surface gets
+  // it (docs/design/architecture.md#speech-pipeline). Runners receive speakable
+  // text and never see markup.
+  const auto spoken_text = tts_host::normalize_markdown(resolve_input_text(options));
+  if (spoken_text.empty()) {
+    throw std::runtime_error("nothing to synthesize: the text is empty once markup is removed");
+  }
+
+  const auto synthesize_response =
+      session.send_request(tts_host::make_runner_synthesize_request(3, spoken_text));
   const auto synthesize_result = tts_host::parse_runner_synthesize_response(synthesize_response);
 
   const auto frames = session.read_audio_stream_until_end();
@@ -163,7 +188,7 @@ int main(int argc, char **argv) {
       }
     }
 
-    if (options->synthesize_text.has_value()) {
+    if (options->synthesize_text.has_value() || options->use_stdin_text || options->use_clipboard_text) {
       synthesize_to_wav(*options, document, std::filesystem::path(argv[0]));
     }
 
