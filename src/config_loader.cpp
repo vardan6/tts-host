@@ -163,6 +163,11 @@ std::optional<CliOptions> parse_cli(int argc, char **argv, std::string &error_me
       continue;
     }
 
+    if (argument == "--settings") {
+      options.settings_window = true;
+      continue;
+    }
+
     if (argument == "--list-models") {
       options.list_models = true;
       continue;
@@ -214,6 +219,11 @@ std::optional<CliOptions> parse_cli(int argc, char **argv, std::string &error_me
       continue;
     }
 
+    if (argument == "--play") {
+      options.play_audio = true;
+      continue;
+    }
+
     if (argument == "--runner") {
       if (index + 1 >= argc) {
         error_message = "--runner requires a path";
@@ -232,12 +242,20 @@ std::optional<CliOptions> parse_cli(int argc, char **argv, std::string &error_me
       continue;
     }
 
+    if (argument == "--stats") {
+      options.report_stats = true;
+      continue;
+    }
+
     if (argument == "--help" || argument == "-h") {
       error_message =
-          "Usage: tts-host --headless [--list-models] [--config <path>] [--data-dir <path>]\n"
-          "                 [(--synthesize <text> | --stdin | --clipboard) --out <path.wav>\n"
-          "                  [--runner <path> | --model <id>]]\n"
-          "  --headless          start without UI\n"
+          "Usage: tts-host [--headless [--list-models] [--config <path>] [--data-dir <path>]\n"
+          "                 [(--synthesize <text> | --stdin | --clipboard) (--out <path.wav> | --play)\n"
+          "                  [--runner <path> | --model <id>] [--stats]]]\n"
+          "       tts-host [--config <path>] [--data-dir <path>]   (no --headless: runs the tray icon)\n"
+          "       tts-host --settings [--config <path>] [--data-dir <path>]\n"
+          "  --headless          start without UI, accepting the CLI flags below\n"
+          "  --settings          open the settings window instead of the tray icon\n"
           "  --list-models       print discovered and unsupported model packages\n"
           "  --config <path>     load a specific config.json\n"
           "  --data-dir <path>   override the portable or installed data directory\n"
@@ -245,8 +263,12 @@ std::optional<CliOptions> parse_cli(int argc, char **argv, std::string &error_me
           "  --stdin             synthesize text read from standard input\n"
           "  --clipboard         synthesize text read from the system clipboard\n"
           "  --out <path>        WAV file to write the synthesized audio to\n"
+          "  --play              play the synthesized audio through config's audio.outputDevice "
+          "(default: the system default output device)\n"
           "  --runner <path>     runner executable to launch (default: the in-repo stub runner)\n"
-          "  --model <id>        registry model id; selects the runner for its declared engine";
+          "  --model <id>        registry model id; selects the runner for its declared engine\n"
+          "  --stats             print peak RSS/VRAM, time to first chunk, and sample count "
+          "after synthesis";
       return std::nullopt;
     }
 
@@ -255,7 +277,25 @@ std::optional<CliOptions> parse_cli(int argc, char **argv, std::string &error_me
   }
 
   if (!options.headless) {
-    error_message = "Only --headless is implemented in this slice";
+    // Tray and settings-window modes (docs/design/architecture.md#desktop-integration):
+    // --config and --data-dir still apply, but the CLI synthesis flags below
+    // assume --headless and are rejected here rather than silently ignored.
+    const bool requests_cli_action =
+        options.list_models || options.synthesize_text.has_value() || options.use_stdin_text ||
+        options.use_clipboard_text || options.output_path.has_value() || options.play_audio ||
+        options.runner_path_override.has_value() || options.model_id.has_value() ||
+        options.report_stats;
+    if (requests_cli_action) {
+      error_message =
+          "combining tray or settings mode with CLI flags is not supported yet; pass --headless "
+          "for CLI usage";
+      return std::nullopt;
+    }
+    return options;
+  }
+
+  if (options.settings_window) {
+    error_message = "--settings cannot be combined with --headless";
     return std::nullopt;
   }
 
@@ -268,9 +308,11 @@ std::optional<CliOptions> parse_cli(int argc, char **argv, std::string &error_me
   }
   const bool has_text_source = text_source_count == 1;
 
-  if (has_text_source != options.output_path.has_value()) {
+  const bool has_sink = options.output_path.has_value() || options.play_audio;
+  if (has_text_source != has_sink) {
     error_message =
-        "a text source (--synthesize, --stdin, or --clipboard) and --out must be used together";
+        "a text source (--synthesize, --stdin, or --clipboard) and --out or --play must be used "
+        "together";
     return std::nullopt;
   }
 
@@ -280,7 +322,14 @@ std::optional<CliOptions> parse_cli(int argc, char **argv, std::string &error_me
   }
 
   if (options.model_id.has_value() && !has_text_source) {
-    error_message = "--model requires a text source (--synthesize, --stdin, or --clipboard) and --out";
+    error_message =
+        "--model requires a text source (--synthesize, --stdin, or --clipboard) and --out or --play";
+    return std::nullopt;
+  }
+
+  if (options.report_stats && !has_text_source) {
+    error_message =
+        "--stats requires a text source (--synthesize, --stdin, or --clipboard) and --out or --play";
     return std::nullopt;
   }
 

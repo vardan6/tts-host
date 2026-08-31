@@ -157,15 +157,20 @@ add_executable(
   src/clipboard.cpp
   src/config_loader.cpp
   src/model_registry.cpp
+  src/playback_sink.cpp
   src/runner_protocol.cpp
   src/runner_launcher.cpp
+  src/settings_window.cpp
   src/text_normalizer.cpp
+  src/text_splitter.cpp
+  src/tray_icon.cpp
   src/wav_writer.cpp
   src/main.cpp
 )
 
 add_executable(
   tts-host-stub-runner
+  src/process_stats.cpp
   src/runner_audio_output.cpp
   src/runner_control_io.cpp
   src/runner_protocol.cpp
@@ -175,6 +180,9 @@ add_executable(
 
 target_include_directories(tts-host-stub-runner PRIVATE include)
 target_link_libraries(tts-host-stub-runner PRIVATE nlohmann_json::nlohmann_json)
+if(WIN32)
+  target_link_libraries(tts-host-stub-runner PRIVATE psapi)
+endif()
 
 # The real engine runner for the tts-host-<engine>-runner naming convention
 # (src/main.cpp's runner_path_for_engine()). Speaks the same protocol as the
@@ -187,6 +195,7 @@ add_executable(
   src/kokoro_phoneme_mapping.cpp
   src/kokoro_runner.cpp
   src/kokoro_runner_main.cpp
+  src/process_stats.cpp
   src/runner_audio_output.cpp
   src/runner_control_io.cpp
   src/runner_protocol.cpp
@@ -199,6 +208,9 @@ target_link_libraries(
     nlohmann_json::nlohmann_json
     onnxruntime::onnxruntime
 )
+if(WIN32)
+  target_link_libraries(tts-host-kokoro-onnx-runner PRIVATE psapi)
+endif()
 if(NOT WIN32)
   set_target_properties(
     tts-host-kokoro-onnx-runner PROPERTIES
@@ -241,7 +253,7 @@ target_link_libraries(
     ${JSON_SCHEMA_VALIDATOR_TARGET}
 )
 if(WIN32)
-  target_link_libraries(tts-host PRIVATE user32)
+  target_link_libraries(tts-host PRIVATE user32 ole32 shell32)
 endif()
 
 if(MSVC)
@@ -367,6 +379,19 @@ if(BUILD_TESTING)
   add_test(NAME tts_host_text_normalization COMMAND tts-host-text-normalizer-tests)
 
   add_executable(
+    tts-host-text-splitter-tests
+    src/text_splitter.cpp
+    tests/text_splitter_tests.cpp
+  )
+  target_include_directories(tts-host-text-splitter-tests PRIVATE include)
+  if(MSVC)
+    target_compile_options(tts-host-text-splitter-tests PRIVATE /W4 /permissive-)
+  else()
+    target_compile_options(tts-host-text-splitter-tests PRIVATE -Wall -Wextra -Wpedantic)
+  endif()
+  add_test(NAME tts_host_text_splitting COMMAND tts-host-text-splitter-tests)
+
+  add_executable(
     tts-host-kokoro-phoneme-mapping-tests
     src/kokoro_phoneme_mapping.cpp
     tests/kokoro_phoneme_mapping_tests.cpp
@@ -470,6 +495,36 @@ if(BUILD_TESTING)
       -P ${CMAKE_SOURCE_DIR}/tests/assert_wav_synthesis.cmake
   )
 
+  # Proves the host splits multi-sentence text into separate back-to-back
+  # synthesize requests (src/text_splitter.cpp) rather than one request for
+  # the whole text: two sentences against the stub runner's fixed
+  # 4-sample-frame/8-byte-payload response yield double the frames and bytes
+  # a single chunk would.
+  add_test(
+    NAME tts_host_end_to_end_stub_synthesis_chunks_sentences
+    COMMAND
+      ${CMAKE_COMMAND}
+      -Dexe=$<TARGET_FILE:tts-host>
+      -Dconfig=${CMAKE_SOURCE_DIR}/config.example.json
+      -Drunner=$<TARGET_FILE:tts-host-stub-runner>
+      -Dout=${CMAKE_CURRENT_BINARY_DIR}/e2e-synthesis-chunked.wav
+      "-Dtext=Hello world. Second sentence!"
+      -Dexpected_sample_frames=8
+      -P ${CMAKE_SOURCE_DIR}/tests/assert_wav_synthesis.cmake
+  )
+
+  add_test(
+    NAME tts_host_end_to_end_stub_synthesis_stats
+    COMMAND
+      ${CMAKE_COMMAND}
+      -Dexe=$<TARGET_FILE:tts-host>
+      -Dconfig=${CMAKE_SOURCE_DIR}/config.example.json
+      -Drunner=$<TARGET_FILE:tts-host-stub-runner>
+      -Dout=${CMAKE_CURRENT_BINARY_DIR}/e2e-synthesis-stats.wav
+      -Dstats=1
+      -P ${CMAKE_SOURCE_DIR}/tests/assert_wav_synthesis.cmake
+  )
+
   add_test(
     NAME tts_host_synthesis_selects_runner_by_engine
     COMMAND
@@ -491,6 +546,68 @@ if(BUILD_TESTING)
       -Dneedle=Unknown model id
       -P ${CMAKE_SOURCE_DIR}/tests/assert_failure_contains.cmake
   )
+
+  # run_tray_icon (src/tray_icon.cpp) is Windows-only in this slice; on other
+  # platforms it throws a clear error instead of doing nothing when tts-host
+  # runs without --headless. Real tray verification needs a manual check on
+  # Windows (no GUI/display in this WSL environment).
+  if(NOT WIN32)
+    add_test(
+      NAME tts_host_tray_not_implemented_on_this_platform
+      COMMAND $<TARGET_FILE:tts-host> --config ${CMAKE_SOURCE_DIR}/config.example.json
+    )
+    set_tests_properties(
+      tts_host_tray_not_implemented_on_this_platform PROPERTIES
+      PASS_REGULAR_EXPRESSION "tray icon is not implemented on this platform yet"
+    )
+  endif()
+
+  # run_settings_window (src/settings_window.cpp) is Windows-only in this
+  # slice; on other platforms it throws a clear error instead of doing
+  # nothing when tts-host runs with --settings. Real window verification
+  # needs a manual check on Windows (no GUI/display in this WSL environment).
+  if(NOT WIN32)
+    add_test(
+      NAME tts_host_settings_not_implemented_on_this_platform
+      COMMAND $<TARGET_FILE:tts-host> --settings --config ${CMAKE_SOURCE_DIR}/config.example.json
+    )
+    set_tests_properties(
+      tts_host_settings_not_implemented_on_this_platform PROPERTIES
+      PASS_REGULAR_EXPRESSION "settings window is not implemented on this platform yet"
+    )
+  endif()
+
+  # SystemPlaybackSink (src/playback_sink.cpp) is Windows-only in this slice;
+  # on other platforms it throws a clear error instead of writing a WAV file,
+  # which this proves end to end through the real CLI plumbing. Real playback
+  # on Windows needs a manual check (no audio hardware in CI/WSL).
+  if(NOT WIN32)
+    add_test(
+      NAME tts_host_play_not_implemented_on_this_platform
+      COMMAND
+        ${CMAKE_COMMAND}
+        -Dexe=$<TARGET_FILE:tts-host>
+        -Dconfig=${CMAKE_SOURCE_DIR}/config.example.json
+        "-Dargs=--runner;$<TARGET_FILE:tts-host-stub-runner>;--synthesize;Hello world;--play"
+        "-Dneedle=audio playback is not implemented on this platform yet"
+        -P ${CMAKE_SOURCE_DIR}/tests/assert_failure_contains.cmake
+    )
+
+    # Proves config's audio.outputDevice (schemas/config.schema.json) reaches
+    # SystemPlaybackSink::play end to end through the real CLI plumbing: the
+    # pinned device name from tests/fixtures/pinned-output-device-config.json
+    # surfaces in the platform's not-implemented error.
+    add_test(
+      NAME tts_host_play_forwards_pinned_output_device
+      COMMAND
+        ${CMAKE_COMMAND}
+        -Dexe=$<TARGET_FILE:tts-host>
+        -Dconfig=${CMAKE_SOURCE_DIR}/tests/fixtures/pinned-output-device-config.json
+        "-Dargs=--runner;$<TARGET_FILE:tts-host-stub-runner>;--synthesize;Hello world;--play"
+        "-Dneedle=requested output device: \"Example Pinned Speakers\""
+        -P ${CMAKE_SOURCE_DIR}/tests/assert_failure_contains.cmake
+    )
+  endif()
 
   add_test(
     NAME tts_host_model_and_runner_mutually_exclusive

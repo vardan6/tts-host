@@ -56,5 +56,6 @@ A crash in UI code takes the service with it. Acceptable because the
 crash-prone part — inference — is already isolated in runner processes.
 
 The UI toolkit is deliberately **not** decided here. The first slices are
-headless, and the toolkit choice (with its licensing question) is made when the
-settings window is built in roadmap slice 3.
+headless; the tray and settings window are built against native platform APIs
+rather than a shared toolkit — see
+[ADR 0007](0007-native-ui-per-platform.md).

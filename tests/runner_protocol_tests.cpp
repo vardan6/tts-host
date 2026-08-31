@@ -155,6 +155,18 @@ int main() {
                 parsed_synthesis_response.total_sample_frames == 4,
             "stub runner returned unexpected synthesis metadata");
 
+    const auto stats_request = tts_host::make_runner_stats_request(9);
+    const auto parsed_stats_request = tts_host::parse_runner_stats_request(stats_request);
+    require(parsed_stats_request.id == 9, "stats request id did not round-trip");
+    const auto stats_response =
+        tts_host::make_runner_stats_response(parsed_stats_request, 123456, 0, 42.5, 4);
+    const auto parsed_stats_response = tts_host::parse_runner_stats_response(stats_response);
+    require(parsed_stats_response.id == 9 && parsed_stats_response.peak_rss_bytes == 123456 &&
+                parsed_stats_response.peak_vram_bytes == 0 &&
+                parsed_stats_response.time_to_first_chunk_ms == 42.5 &&
+                parsed_stats_response.sample_count == 4,
+            "stats response did not round-trip");
+
     const auto stub_audio = tts_host::make_stub_runner_synthesis_frame();
     require(stub_audio.sequence_number == 0 && stub_audio.sample_count == 4 &&
                 stub_audio.flags == tts_host::kRunnerAudioFrameFlagEndOfStream &&

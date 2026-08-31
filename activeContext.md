@@ -1,39 +1,38 @@
 # Active Context
 
 - Mode: session closed
-- Phase/slice: "First audio through the runner protocol" is fully checked off.
-  The host/runner audio-pipe deadlock is fixed: both runners now write their
-  control response before the audio frame, so the host is already draining
-  the audio pipe by the time a large frame arrives.
-- State: 15/15 CTests pass on Linux. Verified end to end against real
-  espeak-ng and real Kokoro-82M weights with a long sentence (342,600 sample
-  frames, 685KB WAV) — no hang, past the old ~64KB threshold.
-- Next atomic step: the next unchecked roadmap item is "HITL — English model
-  bake-off" (RTX 3070 GPU comparison) — needs the user, not an agent. The next
-  AFK-only work is under "Everyday desktop playback" (tray controls, host-side
-  playback, chunked streaming, interrupt/queue semantics, output-device
-  selection, start-at-login) — not yet broken into sub-bullets; run
-  `/next-slice` to pick one.
-- Next-after-next: wire `normalize_html` into an actual entry point once an
-  HTML-vs-Markdown input signal exists (likely an HTTP API content-type, not
-  yet built).
-- Blockers/environment: three Windows-native build fixes (`CMakeLists.txt`
-  `/utf-8` MSVC flag, `compile-win.ps1` 7-Zip PATH fallback,
-  `src/espeak_phonemizer.cpp` exit-127 message) are uncommitted and awaiting a
-  Windows rebuild to confirm 15/15 CTests — the user has not reported a
-  rebuild result yet. `models/kokoro-en-v1/` (~330MB, gitignored) must be
-  re-fetched in a fresh checkout via `tools/fetch_kokoro_weights.py`.
-- Open questions: UI toolkit and its licensing; Qwen PyTorch versus llama.cpp
-  and quantization; WSL headless distribution; per-engine runner directory
-  isolation (`runners/<engine>/` instead of flat beside `tts-host`) — still
-  unconfirmed, and it also governs the `docs/design/architecture.md`
-  Distribution-tree conflict noted there.
-- Discarded as noise: normalizing markdown inside each client rather than the
-  host (the design puts it in the host so every surface benefits); blanket
-  stripping of `*`/`_` (mangles `snake_case` and arithmetic — the normalizer
-  drops them only at word boundaries, pinned by tests); emitting SSML or any
-  pause markup from the normalizer (no consumer exists; heading pauses are
-  block boundaries for the not-yet-built split stage); reading the audio pipe
-  concurrently with the control response as the deadlock fix (writing the
-  control response first is simpler and sufficient since the two channels are
-  already separate pipes).
+- Phase/slice: Model manager and settings window (in progress in a parallel
+  session) plus everyday-desktop-playback lookahead overlap (this session).
+  Windows tray, Settings… entry, settings shell, output device, server
+  host/port, and read-only model status/licence display are implemented;
+  chunked-streaming playback now overlaps the next chunk's synthesis with the
+  current chunk's playback (`src/main.cpp`, background thread joined before
+  the next chunk plays).
+- State: 22/22 CTests pass on WSL. `compile-win.ps1` now stops on the first
+  native command failure, and the `LoadCursorW` Unicode-resource build error
+  is fixed. The Win32 UI and audio paths, and the lookahead-overlap timing,
+  still require a native Windows rebuild, CTest run, and manual check; WSL
+  only covers their non-Windows paths.
+- Next atomic step: choose a small model-selection control, likely a settings
+  combo for the configured default English profile (`languageDefaults.en`),
+  using existing `profiles`; it should write canonical JSON and clearly state
+  that restart is required until live reload exists.
+- Next-after-next: decide whether a config file watcher has enough live host
+  state to justify building it; global-hotkey controls remain premature until
+  capture behavior is validated in the Windows-selection HITL slice.
+- Blockers/environment: native Windows verification needs `./compile-win.ps1`
+  after parallel work is quiescent. WSL lacks eSpeak-NG, audio hardware, and a
+  GUI, so real Kokoro, playback/device pinning, tray/settings behavior, and
+  bake-off measurements cannot be verified here.
+- Open questions: Qwen PyTorch versus llama.cpp/quantization; whether a WSL
+  headless distribution is published; runner/runtimes release layout; and
+  release-asset preparation ownership (CMake versus Python).
+- Discarded as noise: hotkey settings before capture exists; a live-reload
+  watcher before a long-lived config-driven host state; ad hoc benchmark
+  tooling instead of `stats`; treating the release audit's recommendation
+  as an adopted architecture decision; interrupt/queue semantics before the
+  not-yet-built local API server exists to issue a second request against;
+  tray playback controls (play/pause/stop) before the tray has any active
+  playback session to control; and start-at-login, which
+  `docs/design/architecture.md`'s Distribution section explicitly defers to
+  the installer, not this roadmap item.

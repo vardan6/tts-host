@@ -63,6 +63,29 @@ void a_text_source_requires_out() {
   require(!out_without_source.has_value(), "--out without a text source should have been rejected");
 }
 
+// docs/requirements/product.md, "Speech behaviour": "Audio plays through the
+// host by default." --play is an alternative sink to --out, not a requirement
+// on top of it.
+void play_flag_is_accepted_without_out() {
+  std::string error_message;
+  const auto options = parse({"--headless", "--synthesize", "hi", "--play"}, error_message);
+  require(options.has_value(), "parsing --synthesize --play failed: " + error_message);
+  require(options->play_audio, "--play did not set play_audio");
+  require(!options->output_path.has_value(), "--play alone should not set output_path");
+
+  const auto play_without_source = parse({"--headless", "--play"}, error_message);
+  require(!play_without_source.has_value(), "--play without a text source should have been rejected");
+}
+
+void play_and_out_may_be_combined() {
+  std::string error_message;
+  const auto options =
+      parse({"--headless", "--synthesize", "hi", "--out", "out.wav", "--play"}, error_message);
+  require(options.has_value(), "parsing --out and --play together failed: " + error_message);
+  require(options->play_audio, "--play did not set play_audio");
+  require(options->output_path.has_value(), "--out did not set output_path");
+}
+
 void model_id_requires_a_text_source() {
   std::string error_message;
   const auto model_with_stdin =
@@ -73,6 +96,43 @@ void model_id_requires_a_text_source() {
   require(!model_without_source.has_value(), "--model without a text source should have been rejected");
 }
 
+// docs/design/architecture.md#desktop-integration: no --headless runs the
+// tray icon rather than a CLI action.
+void tray_mode_is_accepted_with_no_other_flags() {
+  std::string error_message;
+  const auto options = parse({}, error_message);
+  require(options.has_value(), "tray mode (no flags) should have been accepted: " + error_message);
+  require(!options->headless, "parsing with no --headless should leave headless false");
+}
+
+void tray_mode_rejects_cli_action_flags() {
+  std::string error_message;
+  const auto options = parse({"--list-models"}, error_message);
+  require(!options.has_value(), "--list-models without --headless should have been rejected");
+}
+
+// docs/design/architecture.md#desktop-integration: --settings opens the
+// settings window independently of the tray.
+void settings_flag_is_accepted_without_headless() {
+  std::string error_message;
+  const auto options = parse({"--settings"}, error_message);
+  require(options.has_value(), "--settings without --headless should have been accepted: " + error_message);
+  require(options->settings_window, "--settings should set settings_window");
+  require(!options->headless, "--settings should leave headless false");
+}
+
+void settings_flag_rejects_headless() {
+  std::string error_message;
+  const auto options = parse({"--headless", "--settings"}, error_message);
+  require(!options.has_value(), "--settings combined with --headless should have been rejected");
+}
+
+void settings_flag_rejects_cli_action_flags() {
+  std::string error_message;
+  const auto options = parse({"--settings", "--list-models"}, error_message);
+  require(!options.has_value(), "--settings with --list-models should have been rejected");
+}
+
 }  // namespace
 
 int main() {
@@ -81,7 +141,14 @@ int main() {
     clipboard_flag_is_accepted_as_a_text_source();
     text_sources_are_mutually_exclusive();
     a_text_source_requires_out();
+    play_flag_is_accepted_without_out();
+    play_and_out_may_be_combined();
     model_id_requires_a_text_source();
+    tray_mode_is_accepted_with_no_other_flags();
+    tray_mode_rejects_cli_action_flags();
+    settings_flag_is_accepted_without_headless();
+    settings_flag_rejects_headless();
+    settings_flag_rejects_cli_action_flags();
     return 0;
   } catch (const std::exception &error) {
     std::cerr << error.what() << '\n';

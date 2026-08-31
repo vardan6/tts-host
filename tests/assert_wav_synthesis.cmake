@@ -15,8 +15,23 @@ else()
   set(selector_args --runner "${runner}")
 endif()
 
+if(stats)
+  set(stats_args --stats)
+endif()
+
+if(NOT DEFINED text)
+  set(text "Hello world")
+endif()
+if(NOT DEFINED expected_sample_frames)
+  set(expected_sample_frames 4)
+endif()
+if(NOT DEFINED expected_size)
+  # 44-byte canonical header + 8 payload bytes per stub runner chunk frame.
+  math(EXPR expected_size "44 + (${expected_sample_frames} / 4) * 8")
+endif()
+
 execute_process(
-  COMMAND "${exe}" --headless --config "${config}" ${selector_args} --synthesize "Hello world" --out "${out}"
+  COMMAND "${exe}" --headless --config "${config}" ${selector_args} --synthesize "${text}" --out "${out}" ${stats_args}
   RESULT_VARIABLE exit_code
   OUTPUT_VARIABLE stdout_text
   ERROR_VARIABLE stderr_text
@@ -27,9 +42,16 @@ if(NOT exit_code EQUAL 0)
           "Expected success but command exited ${exit_code}\nstdout:\n${stdout_text}\nstderr:\n${stderr_text}")
 endif()
 
-string(FIND "${stdout_text}" "Synthesized 4 sample frames" found_at)
+string(FIND "${stdout_text}" "Synthesized ${expected_sample_frames} sample frames" found_at)
 if(found_at EQUAL -1)
   message(FATAL_ERROR "Did not find expected synthesis summary\nstdout:\n${stdout_text}")
+endif()
+
+if(stats)
+  string(FIND "${stdout_text}" "Stats: peak RSS " stats_found_at)
+  if(stats_found_at EQUAL -1)
+    message(FATAL_ERROR "Did not find expected stats summary\nstdout:\n${stdout_text}")
+  endif()
 endif()
 
 if(NOT EXISTS "${out}")
@@ -37,9 +59,8 @@ if(NOT EXISTS "${out}")
 endif()
 
 file(SIZE "${out}" out_size)
-# 44-byte canonical header + 8 payload bytes from the stub runner's single frame.
-if(NOT out_size EQUAL 52)
-  message(FATAL_ERROR "Unexpected WAV file size ${out_size}, expected 52")
+if(NOT out_size EQUAL expected_size)
+  message(FATAL_ERROR "Unexpected WAV file size ${out_size}, expected ${expected_size}")
 endif()
 
 file(READ "${out}" header_hex OFFSET 0 LIMIT 4 HEX)

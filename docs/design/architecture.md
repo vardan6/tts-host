@@ -30,10 +30,11 @@ dependency conflicts and a runner crash cannot terminate the host.
 ### Host stack
 
 - C++20 or newer with CMake.
-- A cross-platform UI toolkit for tray, settings window, and audio output. The
-  toolkit is **not yet chosen**; it is decided in roadmap slice 3, when the
-  settings window is first built. Qt 6 remains the leading candidate subject to
-  its LGPL terms. Slices 1 and 2 are headless and must not depend on the answer.
+- No cross-platform UI toolkit. Tray, settings window, and audio output are
+  each implemented against native platform APIs (Win32, AppKit, GTK) behind
+  small per-platform interfaces, one platform at a time — see
+  [ADR 0007](../adr/0007-native-ui-per-platform.md). Slices 1 and 2 are
+  headless and do not depend on this.
 - Boost.Asio/Beast for loopback HTTP and WebSocket. Avoid Qt HTTP Server unless
   the project intentionally accepts its GPLv3 or commercial terms.
 - A small C++ JSON library plus explicit JSON Schema validation for

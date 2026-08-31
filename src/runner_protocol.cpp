@@ -272,6 +272,57 @@ RunnerSynthesizeResponse parse_runner_synthesize_response(const nlohmann::json &
           .total_sample_frames = total_sample_frames.get<std::uint64_t>()};
 }
 
+RunnerStatsRequest parse_runner_stats_request(const nlohmann::json &message) {
+  require_jsonrpc_2_0(message);
+  const auto &method = required_member(message, "method");
+  if (!method.is_string() || method != "stats") {
+    throw RunnerProtocolError("runner control message is not a stats request");
+  }
+
+  const auto &id = required_member(message, "id");
+  if (id.is_null() || (!id.is_string() && !id.is_number_integer() && !id.is_number_unsigned())) {
+    throw RunnerProtocolError("runner stats request has an invalid id");
+  }
+  return {.id = id};
+}
+
+nlohmann::json make_runner_stats_request(nlohmann::json id) {
+  return {{"jsonrpc", "2.0"}, {"id", std::move(id)}, {"method", "stats"}};
+}
+
+nlohmann::json make_runner_stats_response(const RunnerStatsRequest &request,
+                                          std::uint64_t peak_rss_bytes,
+                                          std::uint64_t peak_vram_bytes,
+                                          double time_to_first_chunk_ms,
+                                          std::uint64_t sample_count) {
+  return {{"jsonrpc", "2.0"},
+          {"id", request.id},
+          {"result", {{"peakRssBytes", peak_rss_bytes},
+                      {"peakVramBytes", peak_vram_bytes},
+                      {"timeToFirstChunkMs", time_to_first_chunk_ms},
+                      {"sampleCount", sample_count}}}};
+}
+
+RunnerStatsResponse parse_runner_stats_response(const nlohmann::json &message) {
+  require_jsonrpc_2_0(message);
+  const auto &id = required_member(message, "id");
+  const auto &result = required_member(message, "result");
+  const auto &peak_rss_bytes = required_member(result, "peakRssBytes");
+  const auto &peak_vram_bytes = required_member(result, "peakVramBytes");
+  const auto &time_to_first_chunk_ms = required_member(result, "timeToFirstChunkMs");
+  const auto &sample_count = required_member(result, "sampleCount");
+  if (id.is_null() || (!id.is_string() && !id.is_number_integer() && !id.is_number_unsigned()) ||
+      !peak_rss_bytes.is_number_unsigned() || !peak_vram_bytes.is_number_unsigned() ||
+      !time_to_first_chunk_ms.is_number() || !sample_count.is_number_unsigned()) {
+    throw RunnerProtocolError("runner stats response has invalid fields");
+  }
+  return {.id = id,
+          .peak_rss_bytes = peak_rss_bytes.get<std::uint64_t>(),
+          .peak_vram_bytes = peak_vram_bytes.get<std::uint64_t>(),
+          .time_to_first_chunk_ms = time_to_first_chunk_ms.get<double>(),
+          .sample_count = sample_count.get<std::uint64_t>()};
+}
+
 std::vector<std::uint8_t> frame_runner_audio_message(const RunnerAudioFrame &frame) {
   if (frame.payload.size() > kMaximumRunnerAudioFramePayloadBytes) {
     throw RunnerProtocolError("runner audio frame exceeds the maximum payload size");

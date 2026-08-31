@@ -46,10 +46,66 @@ architecture live under `docs/`; this file records sequence only.
   lightweight alternative against the acceptance criteria in
   `docs/requirements/product.md`; settle llama.cpp versus upstream PyTorch for
   the Qwen runner and select the fast and quality defaults.
+  - [x] `stats` capability (peak RSS, peak VRAM, time-to-first-chunk, sample
+    count) implemented end to end — runner protocol, Kokoro and stub runners,
+    and a `tts-host --stats` CLI flag — per
+    [ADR 0002](docs/adr/0002-runner-protocol.md), so the comparison doesn't
+    need throwaway measurement tooling.
+  - [ ] Measure Kokoro, Qwen3-TTS 0.6B/1.7B, and the strongest lightweight
+    alternative on the RTX 3070 Laptop GPU against the acceptance criteria and
+    settle the fast/quality defaults.
 - [ ] **AFK — Model manager and settings window:** model/profile switching,
   load/unload, idle timeout, directory watching, import, catalogue download with
   progress and checksums, and licence display — through JSON and the first
-  desktop UI. **Decides the UI toolkit and settles its licensing.**
+  desktop UI, built against native platform APIs per
+  [ADR 0007](docs/adr/0007-native-ui-per-platform.md). Windows first; Linux and
+  macOS are separate later slices.
+  - [x] Windows tray icon: running `tts-host` without `--headless` shows a
+    Shell_NotifyIcon tray icon with a right-click context menu (`tray_icon.hpp/cpp`)
+    and blocks on a message loop until Quit is chosen; non-Windows throws a
+    clear not-implemented error. No model switching or other menu items yet —
+    see [design](docs/design/architecture.md#desktop-integration).
+  - [x] Tray "Settings…" menu item: opens the settings window
+    (`run_settings_window`) from the tray, blocking the tray's own message
+    loop until it closes — no threading yet, so the tray icon stops
+    responding to clicks while settings is open. `run_settings_window` now
+    tolerates being called more than once per process
+    (`ERROR_CLASS_ALREADY_EXISTS`), which repeated tray clicks require.
+  - [x] Default model selection from `profiles`/`languageDefaults`: synthesis
+    without `--model`/`--runner` selects the configured default model and its
+    engine runner instead of falling back to the test-only stub runner
+    (`src/main.cpp` `resolve_runner_selection`) — see
+    [audit](docs/reviews/2026-08-31-release-packaging-audit.md#triage) row 1.
+  - [x] Windows settings-window shell: `tts-host --settings` opens a plain
+    native window and blocks until closed (`settings_window.hpp/cpp`),
+    independent of the tray; non-Windows throws a clear not-implemented
+    error. No config-editing controls or model manager yet — see
+    [design](docs/design/architecture.md#desktop-integration).
+  - [x] Output-device control: the settings window lists active WASAPI
+    render endpoints (`list_output_devices` in `playback_sink.hpp/cpp`) plus
+    "System Default" in a combo box, preselects `audio.outputDevice`, and
+    writes the selection back to `config.json` on change — see
+    [design](docs/design/architecture.md#desktop-integration) and
+    [requirements](docs/requirements/product.md#configuration-and-controls).
+    The host-side live-reload file watcher described in
+    [design](docs/design/architecture.md#live-reload) is not built yet, so a
+    running tray/settings session won't pick up the change until restarted.
+    Model manager and hotkeys controls remain.
+  - [x] Server host/port controls: the settings window adds host and port
+    edit boxes (`kServerHostEditId`/`kServerPortEditId` in
+    `settings_window.cpp`), preselects `server.host`/`server.port`, and
+    writes changes back to `config.json` on focus loss (invalid or empty
+    values are discarded, keeping the last valid one). A static label states
+    that a restart is required — see
+    [design](docs/design/architecture.md#live-reload) and
+    [requirements](docs/requirements/product.md#configuration-and-controls).
+    The window does not enforce the restart itself. Model manager and
+    hotkeys controls remain.
+  - [x] Installed-model status and licence display: the settings window lists
+    each compatible package's name, id, licence, and licence URL, and reports
+    unsupported or incomplete package paths with their actionable registry
+    reason. The display is read-only; selection, loading, and downloading
+    remain model-manager work.
 - [ ] **AFK — Everyday desktop playback:** tray controls, host-side playback,
   chunked streaming, interrupt and queue semantics, markdown/HTML normalization,
   output-device selection, CLI text/stdin/clipboard support, and start-at-login.
@@ -60,6 +116,34 @@ architecture live under `docs/`; this file records sequence only.
   - [x] CLI text/stdin/clipboard support: `--stdin` and `--clipboard` as
     alternative text sources to `--synthesize`, feeding the same
     `synthesize_to_wav` path.
+  - [x] Host-side playback: `--play` plays synthesized audio through the
+    system default output device (`PlaybackSink`/`SystemPlaybackSink`,
+    WASAPI). Windows only in this slice; other platforms throw a clear error
+    — see [design](docs/design/architecture.md#speech-pipeline). No
+    interrupt/queue semantics yet.
+  - [x] Output-device selection: config's `audio.outputDevice` reaches
+    `SystemPlaybackSink` end to end — `"system-default"` keeps the OS default
+    device, any other value pins playback to the WASAPI endpoint whose
+    friendly name matches, per
+    [requirements](docs/requirements/product.md#configuration-and-controls).
+    No live default-device-change following yet.
+  - [x] Chunked streaming: the host splits normalized text into
+    sentence-scale chunks (`text_splitter.hpp/cpp`) and synthesizes each as a
+    separate back-to-back request within one runner session, playing each
+    chunk as soon as it is ready rather than after the whole text finishes —
+    see [design](docs/design/architecture.md#speech-pipeline).
+  - [x] Lookahead overlap: each chunk plays on a background thread
+    (`src/main.cpp`, joined before the next chunk starts playing) so the next
+    chunk's runner round trip happens while the current one plays instead of
+    after, per the "small lookahead" in
+    [design](docs/design/architecture.md#speech-pipeline). Playback errors
+    (including the non-Windows not-implemented error) are captured on the
+    background thread and rethrown on the main thread at the next join point,
+    preserving prior CLI error behavior — proven by the existing
+    `tts_host_play_not_implemented_on_this_platform` and
+    `tts_host_play_forwards_pinned_output_device` CTests, unchanged. Real
+    overlap timing needs a native Windows manual check (no audio hardware in
+    WSL). No interrupt/queue semantics yet.
 - [ ] **HITL — Windows selection reading:** validate UI Automation and protected
   clipboard fallback in OneNote, Windows Terminal, browsers, and representative
   editors before freezing default global shortcuts.
@@ -71,12 +155,14 @@ architecture live under `docs/`; this file records sequence only.
   quality is adequate and that English defaults are unaffected.
 - [ ] **AFK — Cross-platform releases and installer:** native Linux and Apple
   Silicon macOS artifacts plus a Windows installer, using the same
-  configuration, manifests, API, and conformance tests.
+  configuration, manifests, API, and conformance tests. Findings, triage, and a
+  proposed sequence are in the
+  [release packaging audit](docs/reviews/2026-08-31-release-packaging-audit.md);
+  its release-root architecture is a recommendation, so adopting it needs an ADR
+  and the `runners/`/`runtimes/` layout decided first.
 
 ## Open decisions
 
-- Desktop UI toolkit, and its licensing compliance — decided in the model
-  manager slice, deliberately kept off the critical path until then.
 - Upstream PyTorch versus llama.cpp for the Qwen quality runner, and the
   quantization level — an output of the bake-off, not an input.
 - Whether a WSL headless distribution is published, or `--headless` merely makes
