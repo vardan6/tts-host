@@ -187,8 +187,18 @@ std::string phonemize_with_espeak_ng(const std::filesystem::path &executable,
   if (voice.empty() || text.empty()) {
     throw RunnerProtocolError("espeak-ng voice and text must both be non-empty");
   }
-  const std::vector<std::string> arguments{executable.string(), "-q", "--ipa=3", "-v",
-                                           std::string(voice), "--", std::string(text)};
+  std::vector<std::string> arguments{executable.string()};
+  // Without --path, espeak-ng resolves espeak-ng-data from the current working
+  // directory and then from a registry key only the MSI *installer* writes. We
+  // unpack the MSI instead (ADR 0006), so a host launched from anywhere but the
+  // binary directory finds no voice data and espeak-ng dies with an access
+  // violation (exit 0xC0000005). Anchor the lookup to the executable instead.
+  const auto data_root = executable.parent_path();
+  if (!data_root.empty() && std::filesystem::is_directory(data_root / "espeak-ng-data")) {
+    arguments.push_back("--path=" + data_root.string());
+  }
+  arguments.insert(arguments.end(), {"-q", "--ipa=3", "-v", std::string(voice), "--",
+                                     std::string(text)});
   const auto output = trim_one_trailing_line_ending(run_espeak(executable, arguments));
   if (output.empty()) {
     throw RunnerProtocolError("espeak-ng produced no IPA phonemes");
@@ -203,7 +213,9 @@ std::filesystem::path default_espeak_ng_executable() {
   if (length == 0 || length >= module_path.size()) {
     throw RunnerProtocolError("could not resolve the Kokoro runner directory for espeak-ng");
   }
-  return std::filesystem::path(std::wstring(module_path.data(), length)).parent_path() / "espeak_ng.exe";
+  // Hyphen, matching the name the MSI itself installs; the underscore spelling
+  // is a 7z extraction artifact the build no longer relies on (CMakeLists.txt).
+  return std::filesystem::path(std::wstring(module_path.data(), length)).parent_path() / "espeak-ng.exe";
 #else
   return "espeak-ng";
 #endif

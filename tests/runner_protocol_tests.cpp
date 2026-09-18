@@ -53,6 +53,17 @@ void expect_synthesize_error(const nlohmann::json &message, const std::string &e
   throw std::runtime_error("expected synthesize error");
 }
 
+void expect_unload_error(const nlohmann::json &message, const std::string &expected_message) {
+  try {
+    static_cast<void>(tts_host::handle_stub_runner_unload_message(message));
+  } catch (const tts_host::RunnerProtocolError &error) {
+    require(std::string(error.what()).find(expected_message) != std::string::npos,
+            "unload error did not contain expected message");
+    return;
+  }
+  throw std::runtime_error("expected unload error");
+}
+
 void expect_audio_protocol_error(const std::vector<std::uint8_t> &frame,
                                  const std::string &expected_message) {
   tts_host::RunnerAudioFrameParser parser;
@@ -140,6 +151,24 @@ int main() {
     const auto load_response = tts_host::handle_stub_runner_load_message(load);
     const auto parsed_load_response = tts_host::parse_runner_load_response(load_response);
     require(parsed_load_response.id == 2, "stub runner load response id did not match request");
+
+    const auto unload = tts_host::make_runner_unload_request("unload-1");
+    require(!unload.contains("params"), "unload request carries params it does not define");
+    const auto parsed_unload = tts_host::parse_runner_unload_request(unload);
+    require(parsed_unload.id == "unload-1", "unload request id did not round-trip");
+    const auto unload_response = tts_host::handle_stub_runner_unload_message(unload);
+    const auto parsed_unload_response = tts_host::parse_runner_unload_response(unload_response);
+    require(parsed_unload_response.id == "unload-1",
+            "stub runner unload response id did not match request");
+    // Unloading twice is what a repeated Unload click sends, and what the
+    // session manager's destructor can send after an explicit unload.
+    static_cast<void>(tts_host::handle_stub_runner_unload_message(unload));
+
+    expect_unload_error(tts_host::make_runner_load_request(2, "/models/demo/demo.onnx"),
+                        "not an unload request");
+    expect_unload_error(
+        nlohmann::json{{"jsonrpc", "2.0"}, {"id", nullptr}, {"method", "unload"}},
+        "invalid id");
 
     const auto synthesize = nlohmann::json{{"jsonrpc", "2.0"},
                                            {"id", "synthesis-1"},

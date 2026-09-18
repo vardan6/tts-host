@@ -19,6 +19,14 @@ nlohmann::json handle_stub_runner_load_message(const nlohmann::json &message) {
   return make_runner_load_response(request);
 }
 
+// The stub runner holds no model, so unloading is an acknowledgement only --
+// which is exactly what makes it the conformance fixture for the request's
+// wire shape.
+nlohmann::json handle_stub_runner_unload_message(const nlohmann::json &message) {
+  const auto request = parse_runner_unload_request(message);
+  return make_runner_unload_response(request);
+}
+
 RunnerAudioFrame make_stub_runner_synthesis_frame() {
   return {.sequence_number = 0,
           .sample_count = 4,

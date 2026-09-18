@@ -128,6 +128,10 @@
                 "eager",
                 "onDemand"
               ]
+            },
+            "fallbackProfile": {
+              "type": "string",
+              "minLength": 1
             }
           }
         }

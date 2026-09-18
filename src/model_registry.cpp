@@ -26,16 +26,6 @@ class ValidationErrorHandler final : public nlohmann::json_schema::basic_error_h
   std::vector<ConfigError> issues;
 };
 
-std::filesystem::path resolve_registry_directory(const std::filesystem::path &config_path,
-                                                 const std::string &entry) {
-  const auto candidate = std::filesystem::path(entry);
-  if (candidate.is_absolute()) {
-    return candidate.lexically_normal();
-  }
-
-  return (config_path.parent_path() / candidate).lexically_normal();
-}
-
 void add_unsupported(ModelRegistryScan &scan, std::filesystem::path path, std::string reason) {
   scan.unsupported_entries.push_back(
       UnsupportedRegistryEntry{std::move(path), std::move(reason)});
@@ -154,6 +144,35 @@ ModelPackageCandidate load_manifest_candidate(const std::filesystem::path &packa
 
 }  // namespace
 
+std::filesystem::path resolve_registry_directory(const std::filesystem::path &config_path,
+                                                 const std::string &entry) {
+  const auto candidate = std::filesystem::path(entry);
+  if (candidate.is_absolute()) {
+    return candidate.lexically_normal();
+  }
+
+  return (config_path.parent_path() / candidate).lexically_normal();
+}
+
+ModelPackageCandidate validate_model_package(const std::filesystem::path &package_path) {
+  const auto normalized = package_path.lexically_normal();
+
+  std::error_code ec;
+  if (!std::filesystem::is_directory(normalized, ec) || ec) {
+    throw std::runtime_error("model package path is not a directory: " + normalized.string());
+  }
+
+  const auto manifest_path = normalized / "model.json";
+  if (!std::filesystem::exists(manifest_path, ec) || ec) {
+    throw std::runtime_error("missing model.json");
+  }
+  if (!std::filesystem::is_regular_file(manifest_path, ec) || ec) {
+    throw std::runtime_error("model.json is not a file");
+  }
+
+  return load_manifest_candidate(normalized, manifest_path);
+}
+
 ModelRegistryScan scan_model_registry(const ConfigDocument &config) {
   ModelRegistryScan scan;
 
@@ -260,6 +279,31 @@ ModelRegistryScan scan_model_registry(const ConfigDocument &config) {
             });
 
   return scan;
+}
+
+bool registry_scan_changed(const ModelRegistryScan &previous, const ModelRegistryScan &current) {
+  if (previous.discovered_packages.size() != current.discovered_packages.size() ||
+      previous.unsupported_entries.size() != current.unsupported_entries.size()) {
+    return true;
+  }
+
+  for (std::size_t index = 0; index < previous.discovered_packages.size(); ++index) {
+    const auto &left = previous.discovered_packages[index];
+    const auto &right = current.discovered_packages[index];
+    if (left.id != right.id || left.manifest_path != right.manifest_path) {
+      return true;
+    }
+  }
+
+  for (std::size_t index = 0; index < previous.unsupported_entries.size(); ++index) {
+    const auto &left = previous.unsupported_entries[index];
+    const auto &right = current.unsupported_entries[index];
+    if (left.path != right.path || left.reason != right.reason) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 }  // namespace tts_host

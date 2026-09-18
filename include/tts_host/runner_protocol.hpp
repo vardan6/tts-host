@@ -54,6 +54,23 @@ nlohmann::json make_runner_load_request(nlohmann::json id, std::string model_pat
 nlohmann::json make_runner_load_response(const RunnerLoadRequest &request);
 RunnerLoadResponse parse_runner_load_response(const nlohmann::json &message);
 
+// Releases the model a previous `load` made resident, leaving the runner
+// process alive and ready for another `load`. It carries no params: this
+// protocol version keeps at most one model per runner process, so there is
+// nothing to name.
+struct RunnerUnloadRequest {
+  nlohmann::json id;
+};
+
+struct RunnerUnloadResponse {
+  nlohmann::json id;
+};
+
+RunnerUnloadRequest parse_runner_unload_request(const nlohmann::json &message);
+nlohmann::json make_runner_unload_request(nlohmann::json id);
+nlohmann::json make_runner_unload_response(const RunnerUnloadRequest &request);
+RunnerUnloadResponse parse_runner_unload_response(const nlohmann::json &message);
+
 struct RunnerSynthesizeRequest {
   nlohmann::json id;
   std::string text;

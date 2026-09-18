@@ -36,7 +36,10 @@ dependency conflicts and a runner crash cannot terminate the host.
   [ADR 0007](../adr/0007-native-ui-per-platform.md). Slices 1 and 2 are
   headless and do not depend on this.
 - Boost.Asio/Beast for loopback HTTP and WebSocket. Avoid Qt HTTP Server unless
-  the project intentionally accepts its GPLv3 or commercial terms.
+  the project intentionally accepts its GPLv3 or commercial terms. This is the
+  *inbound* local API server's stack; the outbound catalogue-download fetch
+  uses a separate, native-per-platform client — see
+  [Download catalogue](#download-catalogue).
 - A small C++ JSON library plus explicit JSON Schema validation for
   `config.json` and model manifests.
 - Out-of-process runners rather than in-process third-party DLL plugins,
@@ -180,7 +183,8 @@ Illustrative shape, not yet a frozen schema:
     "quality": {
       "model": "qwen3-tts-1.7b",
       "device": "auto",
-      "loadPolicy": "onDemand"
+      "loadPolicy": "onDemand",
+      "fallbackProfile": "fast"
     },
     "armenian": {
       "model": "mms-hy",
@@ -195,6 +199,12 @@ Illustrative shape, not yet a frozen schema:
   }
 }
 ```
+
+A profile can set `fallbackProfile` to one other profile. If its model cannot
+be resolved or its runner is unavailable, the host uses that fallback and logs
+the reason. The initial English policy is `quality` first and CPU-only `fast`
+as the fallback; `fast` names Kokoro. A failed synthesis request does not retry
+through the fallback, because it may already have emitted audio.
 
 ### Live reload
 
@@ -289,6 +299,13 @@ download and non-commercial ones are badged; the project links to weights rather
 than redistributing them. Manual installation by placing a folder in `models/`
 always works regardless of the catalogue.
 
+The outbound HTTPS fetch is WinHTTP, not Boost.Beast (the loopback API server's
+client, above) -- Windows-first per product direction, so other platforms throw
+a clear not-implemented error until they get their own fetch client. A
+downloaded entry has no manifest on the remote host, so the host generates
+`model.json` itself from the catalogue entry's own metadata before installing
+through the same path a manual import takes.
+
 ## Engines and models
 
 - **Kokoro-82M** — bundled with the application at full precision (ONNX, roughly
@@ -341,8 +358,15 @@ Two UI surfaces, divided by how often a setting changes:
 
 The global hotkey and selection capture belong to the host: it is already
 running with a tray, so a separate companion process would mean two background
-processes for no gain. A Windows Explorer context-menu entry is a registered
-shell extension with a different install story and is out of scope.
+processes for no gain. The first Windows test control is fixed at
+`Ctrl+Alt+R`: the Host sends the normal Copy command to the foreground
+application, waits for the clipboard to change, and speaks that text through
+the current default profile. The tray also offers **Read clipboard** when an
+application does not accept the synthetic Copy command. This is a test path,
+not the final selection-capture policy: configurable bindings, a user toggle,
+UI Automation, and protected-clipboard behavior remain later work. A Windows
+Explorer context-menu entry is a registered shell extension with a different
+install story and is out of scope.
 
 ## Distribution
 

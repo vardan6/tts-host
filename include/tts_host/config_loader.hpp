@@ -12,6 +12,10 @@ struct CliOptions {
   bool headless = false;
   bool settings_window = false;
   bool list_models = false;
+  bool list_catalogue = false;
+  std::optional<std::filesystem::path> import_model_path;
+  std::optional<std::string> download_model_id;
+  std::optional<std::filesystem::path> download_destination_dir;
   std::optional<std::filesystem::path> config_path_override;
   std::optional<std::filesystem::path> data_dir_override;
   std::optional<std::string> synthesize_text;
@@ -21,6 +25,7 @@ struct CliOptions {
   bool play_audio = false;
   std::optional<std::filesystem::path> runner_path_override;
   std::optional<std::string> model_id;
+  std::optional<std::string> language;
   bool report_stats = false;
 };
 

@@ -14,11 +14,21 @@ void require(bool condition, const std::string &message) {
   }
 }
 
+// --path is only prepended when espeak-ng-data sits beside the executable, so
+// the same binary is invoked with and without it depending on the platform and
+// build layout (src/espeak_phonemizer.cpp).
 int fake_espeak_ng(int argc, char **argv) {
-  require(argc == 7, "espeak-ng received an unexpected number of arguments");
-  require(std::string(argv[1]) == "-q" && std::string(argv[2]) == "--ipa=3" &&
-              std::string(argv[3]) == "-v" && std::string(argv[4]) == "en-us" &&
-              std::string(argv[5]) == "--" && std::string(argv[6]) == "Hello; $(not-a-command)",
+  int first = 1;
+  if (std::string(argv[first]).rfind("--path=", 0) == 0) {
+    require(std::filesystem::is_directory(std::string(argv[first]).substr(7) + "/espeak-ng-data"),
+            "--path did not point at the directory holding espeak-ng-data");
+    ++first;
+  }
+  require(argc == first + 6, "espeak-ng received an unexpected number of arguments");
+  require(std::string(argv[first]) == "-q" && std::string(argv[first + 1]) == "--ipa=3" &&
+              std::string(argv[first + 2]) == "-v" && std::string(argv[first + 3]) == "en-us" &&
+              std::string(argv[first + 4]) == "--" &&
+              std::string(argv[first + 5]) == "Hello; $(not-a-command)",
           "espeak-ng invocation arguments were not preserved");
   std::cout << "h\u0259l\u02c8\u0259\u028a\n";
   return 0;
@@ -28,7 +38,8 @@ int fake_espeak_ng(int argc, char **argv) {
 
 int main(int argc, char **argv) {
   try {
-    if (argc > 1 && std::string(argv[1]) == "-q") {
+    if (argc > 1 && (std::string(argv[1]) == "-q" ||
+                     std::string(argv[1]).rfind("--path=", 0) == 0)) {
       return fake_espeak_ng(argc, argv);
     }
 

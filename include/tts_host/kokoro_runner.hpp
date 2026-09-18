@@ -31,6 +31,10 @@ class KokoroOnnxRunner {
 
   nlohmann::json handle_control_message(const nlohmann::json &message);
   nlohmann::json handle_load_message(const nlohmann::json &message);
+  // Releases the ONNX Runtime session and voice table, returning the runner to
+  // its pre-load state: a later synthesize fails as it would before any load,
+  // and a later load makes it usable again.
+  nlohmann::json handle_unload_message(const nlohmann::json &message);
   RunnerAudioFrame run_synthesis(std::string_view text);
   nlohmann::json make_synthesize_response(const nlohmann::json &message, const RunnerAudioFrame &frame);
 

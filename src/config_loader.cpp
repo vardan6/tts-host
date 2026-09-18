@@ -173,6 +173,38 @@ std::optional<CliOptions> parse_cli(int argc, char **argv, std::string &error_me
       continue;
     }
 
+    if (argument == "--list-catalogue") {
+      options.list_catalogue = true;
+      continue;
+    }
+
+    if (argument == "--import-model") {
+      if (index + 1 >= argc) {
+        error_message = "--import-model requires a path";
+        return std::nullopt;
+      }
+      options.import_model_path = argv[++index];
+      continue;
+    }
+
+    if (argument == "--download-model") {
+      if (index + 1 >= argc) {
+        error_message = "--download-model requires a catalogue entry id";
+        return std::nullopt;
+      }
+      options.download_model_id = argv[++index];
+      continue;
+    }
+
+    if (argument == "--model-directory") {
+      if (index + 1 >= argc) {
+        error_message = "--model-directory requires a path";
+        return std::nullopt;
+      }
+      options.download_destination_dir = argv[++index];
+      continue;
+    }
+
     if (argument == "--config") {
       if (index + 1 >= argc) {
         error_message = "--config requires a path";
@@ -242,6 +274,15 @@ std::optional<CliOptions> parse_cli(int argc, char **argv, std::string &error_me
       continue;
     }
 
+    if (argument == "--language") {
+      if (index + 1 >= argc) {
+        error_message = "--language requires a language tag";
+        return std::nullopt;
+      }
+      options.language = argv[++index];
+      continue;
+    }
+
     if (argument == "--stats") {
       options.report_stats = true;
       continue;
@@ -249,14 +290,28 @@ std::optional<CliOptions> parse_cli(int argc, char **argv, std::string &error_me
 
     if (argument == "--help" || argument == "-h") {
       error_message =
-          "Usage: tts-host [--headless [--list-models] [--config <path>] [--data-dir <path>]\n"
+          "Usage: tts-host [--headless [--list-models] [--list-catalogue] [--import-model <path>]\n"
+          "                 [--download-model <id> [--model-directory <path>]]\n"
+          "                 [--config <path>]\n"
+          "                 [--data-dir <path>]\n"
           "                 [(--synthesize <text> | --stdin | --clipboard) (--out <path.wav> | --play)\n"
-          "                  [--runner <path> | --model <id>] [--stats]]]\n"
+          "                  [--runner <path> | --model <id> | --language <tag>] [--stats]]]\n"
           "       tts-host [--config <path>] [--data-dir <path>]   (no --headless: runs the tray icon)\n"
           "       tts-host --settings [--config <path>] [--data-dir <path>]\n"
           "  --headless          start without UI, accepting the CLI flags below\n"
           "  --settings          open the settings window instead of the tray icon\n"
           "  --list-models       print discovered and unsupported model packages\n"
+          "  --list-catalogue    print the downloadable model catalogue with licence, download\n"
+          "                      size, and whether each entry is already installed\n"
+          "  --import-model <path>\n"
+          "                      copy a model package directory into the first configured\n"
+          "                      model directory\n"
+          "  --download-model <id>\n"
+          "                      fetch a catalogue entry's files over HTTPS, verify their pinned\n"
+          "                      checksums, and install the result (Windows only in this slice)\n"
+          "  --model-directory <path>\n"
+          "                      with --download-model, which configured model directory to\n"
+          "                      install into (default: the first one)\n"
           "  --config <path>     load a specific config.json\n"
           "  --data-dir <path>   override the portable or installed data directory\n"
           "  --synthesize <text> synthesize text through a runner process\n"
@@ -267,6 +322,8 @@ std::optional<CliOptions> parse_cli(int argc, char **argv, std::string &error_me
           "(default: the system default output device)\n"
           "  --runner <path>     runner executable to launch (default: the in-repo stub runner)\n"
           "  --model <id>        registry model id; selects the runner for its declared engine\n"
+          "  --language <tag>    languageDefaults key naming the profile to speak with "
+          "(default: the text's script, else en)\n"
           "  --stats             print peak RSS/VRAM, time to first chunk, and sample count "
           "after synthesis";
       return std::nullopt;
@@ -281,10 +338,12 @@ std::optional<CliOptions> parse_cli(int argc, char **argv, std::string &error_me
     // --config and --data-dir still apply, but the CLI synthesis flags below
     // assume --headless and are rejected here rather than silently ignored.
     const bool requests_cli_action =
-        options.list_models || options.synthesize_text.has_value() || options.use_stdin_text ||
+        options.list_models || options.import_model_path.has_value() ||
+        options.download_model_id.has_value() ||
+        options.synthesize_text.has_value() || options.use_stdin_text ||
         options.use_clipboard_text || options.output_path.has_value() || options.play_audio ||
         options.runner_path_override.has_value() || options.model_id.has_value() ||
-        options.report_stats;
+        options.language.has_value() || options.report_stats;
     if (requests_cli_action) {
       error_message =
           "combining tray or settings mode with CLI flags is not supported yet; pass --headless "
@@ -324,6 +383,21 @@ std::optional<CliOptions> parse_cli(int argc, char **argv, std::string &error_me
   if (options.model_id.has_value() && !has_text_source) {
     error_message =
         "--model requires a text source (--synthesize, --stdin, or --clipboard) and --out or --play";
+    return std::nullopt;
+  }
+
+  // --runner and --model already name what to speak with, so a language would
+  // be silently ignored beside them rather than choosing a profile.
+  if (options.language.has_value() &&
+      (options.runner_path_override.has_value() || options.model_id.has_value())) {
+    error_message = "--language cannot be combined with --runner or --model";
+    return std::nullopt;
+  }
+
+  if (options.language.has_value() && !has_text_source) {
+    error_message =
+        "--language requires a text source (--synthesize, --stdin, or --clipboard) and --out or "
+        "--play";
     return std::nullopt;
   }
 

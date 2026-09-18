@@ -1,6 +1,11 @@
+#include "tts_host/catalogue_download.hpp"
 #include "tts_host/clipboard.hpp"
 #include "tts_host/config_loader.hpp"
+#include "tts_host/language_selection.hpp"
+#include "tts_host/model_catalogue.hpp"
+#include "tts_host/model_import.hpp"
 #include "tts_host/model_registry.hpp"
+#include "tts_host/model_session.hpp"
 #include "tts_host/playback_sink.hpp"
 #include "tts_host/runner_launcher.hpp"
 #include "tts_host/runner_protocol.hpp"
@@ -20,6 +25,7 @@
 #include <string>
 #include <thread>
 #include <utility>
+#include <vector>
 
 namespace {
 
@@ -37,15 +43,15 @@ std::filesystem::path default_runner_path(const std::filesystem::path &argv0) {
 #endif
 }
 
-// Runner binaries for a registry model's declared engine are installed
-// beside tts-host, named by convention: tts-host-<engine>-runner[.exe].
-std::filesystem::path runner_path_for_engine(const std::string &engine,
-                                             const std::filesystem::path &argv0) {
-#ifdef _WIN32
-  return executable_dir(argv0) / ("tts-host-" + engine + "-runner.exe");
-#else
-  return executable_dir(argv0) / ("tts-host-" + engine + "-runner");
-#endif
+std::string join_languages(const std::vector<std::string> &languages) {
+  std::string joined;
+  for (const auto &language : languages) {
+    if (!joined.empty()) {
+      joined += ",";
+    }
+    joined += language;
+  }
+  return joined;
 }
 
 struct RunnerSelection {
@@ -54,53 +60,82 @@ struct RunnerSelection {
   std::optional<std::filesystem::path> voice_path;
 };
 
+// Model-id resolution lives in model_session.cpp so the settings window's
+// Load/Unload controls and this CLI path agree on which runner and files a
+// model id means.
 RunnerSelection resolve_runner_selection_for_model(const std::string &model_id,
                                                    const tts_host::ConfigDocument &document,
                                                    const std::filesystem::path &argv0) {
-  const auto scan = tts_host::scan_model_registry(document);
-  const auto package = std::find_if(
-      scan.discovered_packages.begin(), scan.discovered_packages.end(),
-      [&](const tts_host::ModelPackageCandidate &candidate) {
-        return candidate.id == model_id;
-      });
-  if (package == scan.discovered_packages.end()) {
-    throw std::runtime_error("Unknown model id: " + model_id);
-  }
-
-  auto runner_path = runner_path_for_engine(package->engine, argv0);
-  if (!std::filesystem::exists(runner_path)) {
-    throw std::runtime_error("No runner installed for engine '" + package->engine +
-                             "': expected " + runner_path.string());
-  }
-  const auto &files = package->manifest.at("files");
-  const auto model_path = package->package_path / files.at("model").get<std::string>();
-  std::optional<std::filesystem::path> voice_path;
-  if (files.contains("voice")) {
-    voice_path = package->package_path / files.at("voice").get<std::string>();
-  }
-  return {runner_path, model_path, voice_path};
+  const auto selection =
+      tts_host::resolve_model_runner_selection(model_id, document, executable_dir(argv0));
+  return {selection.runner_path, selection.model_path, selection.voice_path};
 }
 
 // With no --model/--runner override, synthesis follows the same path a
-// settings-window profile pick would: languageDefaults["en"] names a
-// profile, and that profile's "model" is the model id to load. English is
-// the only language surfaced end to end so far (see roadmap).
-RunnerSelection resolve_default_runner_selection(const tts_host::ConfigDocument &document,
+// settings-window profile pick would: the request's language names a
+// languageDefaults profile, and that profile's "model" is the model id to
+// load. The language itself comes from --language, else the text's script,
+// else English (docs/design/architecture.md#speech-pipeline).
+RunnerSelection resolve_default_runner_selection(const tts_host::SelectedLanguage &language,
+                                                 const tts_host::ConfigDocument &document,
                                                  const std::filesystem::path &argv0) {
   const auto &language_defaults = document.value.at("languageDefaults");
-  if (!language_defaults.contains("en")) {
+  if (!language_defaults.contains(language.tag)) {
+    // An explicit tag the user typed is a mistake worth naming; a fallback to
+    // English on a config that simply has no "en" entry is not, and keeps the
+    // pre-profile stub-runner behavior.
+    if (language.source == tts_host::LanguageSource::Explicit) {
+      throw std::runtime_error("languageDefaults has no entry for language: " + language.tag);
+    }
     return {default_runner_path(argv0), std::nullopt, std::nullopt};
   }
-  const auto profile_name = language_defaults.at("en").get<std::string>();
+  const auto profile_name = language_defaults.at(language.tag).get<std::string>();
   const auto &profiles = document.value.at("profiles");
   if (!profiles.contains(profile_name)) {
-    throw std::runtime_error("languageDefaults.en names unknown profile: " + profile_name);
+    throw std::runtime_error("languageDefaults." + language.tag +
+                             " names unknown profile: " + profile_name);
   }
-  const auto model_id = profiles.at(profile_name).at("model").get<std::string>();
-  return resolve_runner_selection_for_model(model_id, document, argv0);
+  const auto &profile = profiles.at(profile_name);
+  const auto model_id = profile.at("model").get<std::string>();
+  std::cout << "Language: " << language.tag << " ("
+            << tts_host::describe_language_source(language.source) << "), profile " << profile_name
+            << ", model " << model_id << '\n';
+  try {
+    return resolve_runner_selection_for_model(model_id, document, argv0);
+  } catch (const std::exception &primary_error) {
+    if (!profile.contains("fallbackProfile")) {
+      throw;
+    }
+
+    const auto fallback_profile_name = profile.at("fallbackProfile").get<std::string>();
+    if (fallback_profile_name == profile_name) {
+      throw std::runtime_error("profiles." + profile_name +
+                               ".fallbackProfile must name a different profile");
+    }
+    if (!profiles.contains(fallback_profile_name)) {
+      throw std::runtime_error("profiles." + profile_name + ".fallbackProfile names unknown profile: " +
+                               fallback_profile_name);
+    }
+
+    const auto &fallback_profile = profiles.at(fallback_profile_name);
+    const auto fallback_model_id = fallback_profile.at("model").get<std::string>();
+    std::cout << "Profile " << profile_name << " is unavailable (" << primary_error.what()
+              << "); using fallback profile " << fallback_profile_name << ", model "
+              << fallback_model_id << '\n';
+    try {
+      return resolve_runner_selection_for_model(fallback_model_id, document, argv0);
+    } catch (const std::exception &fallback_error) {
+      throw std::runtime_error("Profile " + profile_name + " is unavailable (" + primary_error.what() +
+                               "); fallback profile " + fallback_profile_name + " is also unavailable (" +
+                               fallback_error.what() + ")");
+    }
+  }
 }
 
+// `spoken_text` is the normalized text, so script detection sees what will
+// actually be spoken rather than the markup around it.
 RunnerSelection resolve_runner_selection(const tts_host::CliOptions &options,
+                                         const std::string &spoken_text,
                                          const tts_host::ConfigDocument &document,
                                          const std::filesystem::path &argv0) {
   if (options.runner_path_override.has_value()) {
@@ -111,7 +146,13 @@ RunnerSelection resolve_runner_selection(const tts_host::CliOptions &options,
     return resolve_runner_selection_for_model(*options.model_id, document, argv0);
   }
 
-  return resolve_default_runner_selection(document, argv0);
+  std::vector<std::string> configured_languages;
+  for (const auto &entry : document.value.at("languageDefaults").items()) {
+    configured_languages.push_back(entry.key());
+  }
+  const auto language =
+      tts_host::select_request_language(options.language, spoken_text, configured_languages);
+  return resolve_default_runner_selection(language, document, argv0);
 }
 
 // Resolves whichever of --synthesize/--stdin/--clipboard was given (parse_cli
@@ -130,7 +171,17 @@ std::string resolve_input_text(const tts_host::CliOptions &options) {
 
 void run_synthesis(const tts_host::CliOptions &options, const tts_host::ConfigDocument &document,
                    const std::filesystem::path &argv0) {
-  const auto selection = resolve_runner_selection(options, document, argv0);
+  // Normalization is the host's job, not each client's, so every surface gets
+  // it (docs/design/architecture.md#speech-pipeline). Runners receive speakable
+  // text and never see markup. It happens before runner selection because the
+  // language -- and so the profile, model, and engine runner -- is detected
+  // from the text when the request does not name one.
+  const auto spoken_text = tts_host::normalize_markdown(resolve_input_text(options));
+  if (spoken_text.empty()) {
+    throw std::runtime_error("nothing to synthesize: the text is empty once markup is removed");
+  }
+
+  const auto selection = resolve_runner_selection(options, spoken_text, document, argv0);
 
   tts_host::RunnerSession session(selection.runner_path);
 
@@ -147,14 +198,6 @@ void run_synthesis(const tts_host::CliOptions &options, const tts_host::ConfigDo
         selection.voice_path.has_value() ? std::optional<std::string>(selection.voice_path->string())
                                          : std::nullopt));
     tts_host::parse_runner_load_response(load_response);
-  }
-
-  // Normalization is the host's job, not each client's, so every surface gets
-  // it (docs/design/architecture.md#speech-pipeline). Runners receive speakable
-  // text and never see markup.
-  const auto spoken_text = tts_host::normalize_markdown(resolve_input_text(options));
-  if (spoken_text.empty()) {
-    throw std::runtime_error("nothing to synthesize: the text is empty once markup is removed");
   }
 
   // Splitting into sentence-scale chunks and synthesizing them as separate
@@ -276,14 +319,21 @@ int main(int argc, char **argv) {
         // Settings window (docs/design/architecture.md#desktop-integration):
         // opens independently of the tray, blocks until closed. Windows only
         // in this slice -- see docs/adr/0007-native-ui-per-platform.md.
-        tts_host::run_settings_window(document);
+        tts_host::run_settings_window(document, executable_dir(argv[0]));
         return EXIT_SUCCESS;
       }
 
       // Tray mode (docs/design/architecture.md#desktop-integration): blocks
       // until the user chooses Quit. Windows only in this slice -- see
       // docs/adr/0007-native-ui-per-platform.md.
-      tts_host::run_tray_icon(document);
+      tts_host::run_tray_icon(
+          document, executable_dir(argv[0]),
+          [&document, argv0 = std::filesystem::path(argv[0])](const std::string &text) {
+            tts_host::CliOptions tray_options;
+            tray_options.synthesize_text = text;
+            tray_options.play_audio = true;
+            run_synthesis(tray_options, document, argv0);
+          });
       return EXIT_SUCCESS;
     }
 
@@ -291,24 +341,103 @@ int main(int argc, char **argv) {
     std::cout << "Config: " << document.paths.config_path.string() << '\n';
     std::cout << "Schema: " << document.paths.schema_path.string() << '\n';
 
+    // Imports before listing, so --import-model with --list-models shows the
+    // package that was just installed.
+    if (options->import_model_path.has_value()) {
+      const auto imported = tts_host::import_model_package(*options->import_model_path, document);
+      std::cout << "Imported " << imported.display_name << " (" << imported.id << ") into "
+                << imported.package_path.string() << '\n';
+    }
+
     if (options->list_models) {
       const auto scan = tts_host::scan_model_registry(document);
       std::cout << "Discovered model packages: " << scan.discovered_packages.size() << '\n';
       for (const auto &package : scan.discovered_packages) {
-        std::cout << "  OK  " << package.id << " (" << package.engine << ", ";
-        for (std::size_t index = 0; index < package.languages.size(); ++index) {
-          if (index > 0) {
-            std::cout << ",";
-          }
-          std::cout << package.languages[index];
-        }
-        std::cout << ") -> " << package.manifest_path.string() << '\n';
+        std::cout << "  OK  " << package.id << " (" << package.engine << ", "
+                  << join_languages(package.languages) << ") -> " << package.manifest_path.string()
+                  << '\n';
       }
 
       std::cout << "Unsupported registry entries: " << scan.unsupported_entries.size() << '\n';
       for (const auto &entry : scan.unsupported_entries) {
         std::cout << "  BAD " << entry.path.string() << " :: " << entry.reason << '\n';
       }
+    }
+
+    // The curated download catalogue
+    // (docs/design/architecture.md#download-catalogue). Listing only: the
+    // licence and size a user has to see before agreeing to a download, and
+    // whether the registry already has the package. --download-model below
+    // does the fetching, verifying, and installing.
+    if (options->list_catalogue) {
+      const auto &entries = tts_host::model_catalogue();
+      tts_host::validate_catalogue(entries);
+      const auto scan = tts_host::scan_model_registry(document);
+
+      std::cout << "Downloadable model packages: " << entries.size() << '\n';
+      for (const auto &entry : entries) {
+        const bool installed = tts_host::catalogue_entry_installed(entry, scan);
+        std::cout << "  " << (installed ? "HAVE" : "GET ") << ' ' << entry.id << " ("
+                  << entry.engine << ", " << join_languages(entry.languages) << ", "
+                  << tts_host::describe_download_size(tts_host::catalogue_entry_size_bytes(entry))
+                  << ")\n";
+        std::cout << "       " << entry.display_name << " :: "
+                  << tts_host::describe_catalogue_license(entry) << '\n';
+      }
+    }
+
+    // Fetches, verifies, and installs a catalogue entry -- WinHTTP on
+    // Windows; other platforms throw a clear not-implemented error, same
+    // convention as the tray and settings window (docs/design/architecture.md#download-catalogue).
+    if (options->download_model_id.has_value()) {
+      const auto &entries = tts_host::model_catalogue();
+      const auto found =
+          std::find_if(entries.begin(), entries.end(),
+                       [&](const auto &entry) { return entry.id == *options->download_model_id; });
+      if (found == entries.end()) {
+        throw std::runtime_error("unknown catalogue entry id: " + *options->download_model_id);
+      }
+
+      const auto scan = tts_host::scan_model_registry(document);
+      if (tts_host::catalogue_entry_installed(*found, scan)) {
+        throw std::runtime_error("'" + found->id + "' is already installed");
+      }
+
+      const auto &directories = document.value.at("modelRegistry").at("directories");
+      if (directories.empty()) {
+        throw std::runtime_error(
+            "no model directory is configured to download into (modelRegistry.directories is empty)");
+      }
+
+      std::filesystem::path destination_root;
+      if (options->download_destination_dir.has_value()) {
+        destination_root = std::filesystem::absolute(*options->download_destination_dir).lexically_normal();
+        const bool matches_configured = std::any_of(
+            directories.begin(), directories.end(), [&](const nlohmann::json &configured_entry) {
+              return tts_host::resolve_registry_directory(
+                        document.paths.config_path, configured_entry.get<std::string>()) ==
+                    destination_root;
+            });
+        if (!matches_configured) {
+          throw std::runtime_error("--model-directory must name one of modelRegistry.directories");
+        }
+      } else {
+        destination_root = tts_host::resolve_registry_directory(document.paths.config_path,
+                                                                 directories.front().get<std::string>());
+      }
+
+      std::cout << "Downloading " << found->display_name << " (" << found->id << ", "
+                << tts_host::describe_download_size(tts_host::catalogue_entry_size_bytes(*found))
+                << ")\n";
+      const auto installed = tts_host::download_catalogue_entry(
+          *found, destination_root, document, tts_host::fetch_url_to_file,
+          [](const tts_host::DownloadProgress &download_progress) {
+            std::cout << "  " << download_progress.relative_path << ": "
+                      << download_progress.bytes_downloaded << " / " << download_progress.bytes_total
+                      << " bytes\n";
+          });
+      std::cout << "Installed " << installed.display_name << " (" << installed.id << ") into "
+                << installed.package_path.string() << '\n';
     }
 
     if (options->synthesize_text.has_value() || options->use_stdin_text || options->use_clipboard_text) {

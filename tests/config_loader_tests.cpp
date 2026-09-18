@@ -96,6 +96,28 @@ void model_id_requires_a_text_source() {
   require(!model_without_source.has_value(), "--model without a text source should have been rejected");
 }
 
+// docs/requirements/product.md, "Speech behaviour": the language of a request
+// comes from an explicit parameter first. --runner and --model already name
+// what to speak with, so a language beside them would be ignored.
+void language_requires_a_text_source_and_no_runner_or_model() {
+  std::string error_message;
+  const auto language_with_stdin =
+      parse({"--headless", "--language", "ru", "--stdin", "--out", "out.wav"}, error_message);
+  require(language_with_stdin.has_value(),
+          "--language with --stdin should have been accepted: " + error_message);
+  require(language_with_stdin->language.value_or("") == "ru", "--language did not set language");
+
+  const auto language_without_source = parse({"--headless", "--language", "ru"}, error_message);
+  require(!language_without_source.has_value(),
+          "--language without a text source should have been rejected");
+
+  const auto language_with_model =
+      parse({"--headless", "--language", "ru", "--model", "demo", "--stdin", "--out", "out.wav"},
+            error_message);
+  require(!language_with_model.has_value(),
+          "--language combined with --model should have been rejected");
+}
+
 // docs/design/architecture.md#desktop-integration: no --headless runs the
 // tray icon rather than a CLI action.
 void tray_mode_is_accepted_with_no_other_flags() {
@@ -144,6 +166,7 @@ int main() {
     play_flag_is_accepted_without_out();
     play_and_out_may_be_combined();
     model_id_requires_a_text_source();
+    language_requires_a_text_source_and_no_runner_or_model();
     tray_mode_is_accepted_with_no_other_flags();
     tray_mode_rejects_cli_action_flags();
     settings_flag_is_accepted_without_headless();

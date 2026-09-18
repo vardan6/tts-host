@@ -40,6 +40,8 @@ int main() {
           continue;
         } else if (method == "load") {
           response = tts_host::handle_stub_runner_load_message(message);
+        } else if (method == "unload") {
+          response = tts_host::handle_stub_runner_unload_message(message);
         } else if (method == "stats") {
           const auto request = tts_host::parse_runner_stats_request(message);
           response = tts_host::make_runner_stats_response(

@@ -86,6 +86,16 @@ nlohmann::json KokoroOnnxRunner::handle_load_message(const nlohmann::json &messa
   return make_runner_load_response(request);
 }
 
+nlohmann::json KokoroOnnxRunner::handle_unload_message(const nlohmann::json &message) {
+  const auto request = parse_runner_unload_request(message);
+  // Destroying the Ort::Session is what frees the weights; unloading with
+  // nothing loaded is a no-op so a repeated unload is harmless.
+  session_.reset();
+  voice_style_.clear();
+  voice_style_.shrink_to_fit();
+  return make_runner_unload_response(request);
+}
+
 RunnerAudioFrame KokoroOnnxRunner::run_synthesis(std::string_view text) {
   if (!session_.has_value()) {
     throw RunnerProtocolError("kokoro-onnx runner received synthesize before load");

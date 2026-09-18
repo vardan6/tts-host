@@ -81,22 +81,25 @@ endif()
 
 # espeak-ng vendoring (Windows only, see docs/adr/0006-espeak-ng-vendoring-and-phoneme-mapping.md).
 # The GitHub release publishes a single unversioned espeak-ng.msi asset (no
-# Linux archive), extracted with 7-Zip because it reads the MSI's embedded
-# CAB directly with no msiexec/Windows Installer dependency -- this works
-# whether the configure step runs on Windows or WSL/Linux, unlike the
-# onnxruntime archives above this only produces artifacts for Windows builds,
-# so the whole block is gated on WIN32. Linux is out of scope (ADR 0006 point
-# 2): it uses the system espeak-ng already required by scripts/setup-dev-env.sh.
+# Linux archive). Unpack it with an msiexec administrative install rather than
+# 7-Zip: 7z reads the MSI's embedded CAB, but the CAB stores every one of the
+# 441 payload files under a flat name, and the directory tree that gives them
+# meaning lives in the MSI's own Directory/File tables, which 7z does not
+# apply. A 7z extraction therefore produces a heap of files where espeak-ng
+# expects espeak-ng-data/lang/gmw/en and espeak-ng-data/voices/!v/..., so
+# looking up a voice finds nothing and espeak-ng dies with an access
+# violation. It also mangles libespeak-ng.dll to libespeak_ng.dll, which the
+# executable's import table will not resolve. msiexec applies both tables and
+# yields the real layout, so no post-hoc reshuffling or renaming is needed.
+#
+# The tradeoff is that configuring now requires Windows (msiexec) rather than
+# working from WSL too. That costs nothing here: this block is already gated on
+# WIN32 and only produces artifacts for Windows builds. Linux is out of scope
+# (ADR 0006 point 2) and uses the system espeak-ng that
+# scripts/setup-dev-env.sh installs.
 set(ESPEAK_NG_RELEASE_TAG 1.52.0)
 
 if(WIN32)
-  find_program(SEVEN_ZIP_EXECUTABLE NAMES 7z 7z.exe)
-  if(NOT SEVEN_ZIP_EXECUTABLE)
-    message(FATAL_ERROR
-      "7-Zip (7z) was not found on PATH. It is required to extract the "
-      "vendored espeak-ng.msi (see docs/adr/0006-espeak-ng-vendoring-and-phoneme-mapping.md).")
-  endif()
-
   FetchContent_Declare(
     espeak_ng_msi
     URL https://github.com/espeak-ng/espeak-ng/releases/download/${ESPEAK_NG_RELEASE_TAG}/espeak-ng.msi
@@ -105,43 +108,41 @@ if(WIN32)
   )
   FetchContent_Populate(espeak_ng_msi)
 
-  # The MSI extracts flat (443 files, no subdirectories): espeak_ng.exe,
-  # libespeak_ng.dll, and per-language data files (phondata, phontab, en_dict,
-  # ...) with no espeak-ng-data/ wrapper folder. Extract once into a build-tree
-  # staging directory, then separate the two binaries from the data files so
-  # the POST_BUILD copy below can synthesize the layout
-  # default_espeak_ng_executable() expects (src/espeak_phonemizer.cpp):
-  # espeak_ng.exe and libespeak_ng.dll next to the runner executable, and
-  # every other file under an espeak-ng-data/ subdirectory beside them.
+  # An administrative install unpacks the payload with the Directory table
+  # applied, producing "<TARGETDIR>/eSpeak NG/" holding espeak-ng.exe,
+  # libespeak-ng.dll, and a correctly nested espeak-ng-data/ (lang/gmw/en,
+  # voices/!v/..., phondata, *_dict). That is already the layout
+  # default_espeak_ng_executable() expects beside the runner executable
+  # (src/espeak_phonemizer.cpp), so the POST_BUILD step below is a plain copy.
+  #
+  # msiexec needs a native absolute path for both arguments and re-runs
+  # cheaply, but guard it anyway so reconfiguring does not repeat the unpack.
   set(ESPEAK_NG_EXTRACT_DIR ${CMAKE_BINARY_DIR}/_deps/espeak_ng-extracted)
-  if(NOT EXISTS ${ESPEAK_NG_EXTRACT_DIR}/espeak_ng.exe)
+  set(ESPEAK_NG_INSTALL_DIR "${ESPEAK_NG_EXTRACT_DIR}/eSpeak NG")
+  if(NOT EXISTS "${ESPEAK_NG_INSTALL_DIR}/espeak-ng.exe")
     file(MAKE_DIRECTORY ${ESPEAK_NG_EXTRACT_DIR})
+    file(TO_NATIVE_PATH "${espeak_ng_msi_SOURCE_DIR}/espeak-ng.msi" ESPEAK_NG_MSI_NATIVE)
+    file(TO_NATIVE_PATH "${ESPEAK_NG_EXTRACT_DIR}" ESPEAK_NG_TARGETDIR_NATIVE)
     execute_process(
-      COMMAND ${SEVEN_ZIP_EXECUTABLE} x -y "${espeak_ng_msi_SOURCE_DIR}/espeak-ng.msi" -o${ESPEAK_NG_EXTRACT_DIR}
+      COMMAND msiexec /a "${ESPEAK_NG_MSI_NATIVE}" /qn "TARGETDIR=${ESPEAK_NG_TARGETDIR_NATIVE}"
       RESULT_VARIABLE ESPEAK_NG_EXTRACT_RESULT
       OUTPUT_QUIET
     )
     if(NOT ESPEAK_NG_EXTRACT_RESULT EQUAL 0)
-      message(FATAL_ERROR "7z failed to extract espeak-ng.msi (exit code ${ESPEAK_NG_EXTRACT_RESULT})")
+      message(FATAL_ERROR
+        "msiexec failed to unpack espeak-ng.msi (exit code ${ESPEAK_NG_EXTRACT_RESULT}). "
+        "See docs/adr/0006-espeak-ng-vendoring-and-phoneme-mapping.md.")
+    endif()
+    if(NOT EXISTS "${ESPEAK_NG_INSTALL_DIR}/espeak-ng.exe")
+      message(FATAL_ERROR
+        "msiexec reported success but '${ESPEAK_NG_INSTALL_DIR}/espeak-ng.exe' is missing; "
+        "the MSI's internal layout may have changed for release ${ESPEAK_NG_RELEASE_TAG}.")
     endif()
   endif()
 
-  set(ESPEAK_NG_EXECUTABLE ${ESPEAK_NG_EXTRACT_DIR}/espeak_ng.exe)
-  set(ESPEAK_NG_LIBRARY ${ESPEAK_NG_EXTRACT_DIR}/libespeak_ng.dll)
-
-  # Stage every extracted file that is not one of the two binaries into an
-  # espeak-ng-data/ directory, at configure time (FetchContent_Populate above
-  # already ran, so the flat file list is enumerable now via file(GLOB)).
-  set(ESPEAK_NG_DATA_STAGE_DIR ${CMAKE_BINARY_DIR}/_deps/espeak_ng-data-staged)
-  if(NOT EXISTS ${ESPEAK_NG_DATA_STAGE_DIR})
-    file(MAKE_DIRECTORY ${ESPEAK_NG_DATA_STAGE_DIR})
-    file(GLOB ESPEAK_NG_ALL_FILES LIST_DIRECTORIES FALSE RELATIVE ${ESPEAK_NG_EXTRACT_DIR} ${ESPEAK_NG_EXTRACT_DIR}/*)
-    foreach(ESPEAK_NG_FILE ${ESPEAK_NG_ALL_FILES})
-      if(NOT ESPEAK_NG_FILE STREQUAL "espeak_ng.exe" AND NOT ESPEAK_NG_FILE STREQUAL "libespeak_ng.dll")
-        file(COPY ${ESPEAK_NG_EXTRACT_DIR}/${ESPEAK_NG_FILE} DESTINATION ${ESPEAK_NG_DATA_STAGE_DIR})
-      endif()
-    endforeach()
-  endif()
+  set(ESPEAK_NG_EXECUTABLE "${ESPEAK_NG_INSTALL_DIR}/espeak-ng.exe")
+  set(ESPEAK_NG_LIBRARY "${ESPEAK_NG_INSTALL_DIR}/libespeak-ng.dll")
+  set(ESPEAK_NG_DATA_DIR "${ESPEAK_NG_INSTALL_DIR}/espeak-ng-data")
 endif()
 
 if(TARGET nlohmann_json_schema_validator::validator)
@@ -154,9 +155,14 @@ endif()
 
 add_executable(
   tts-host
+  src/catalogue_download.cpp
   src/clipboard.cpp
   src/config_loader.cpp
+  src/language_selection.cpp
+  src/model_catalogue.cpp
+  src/model_import.cpp
   src/model_registry.cpp
+  src/model_session.cpp
   src/playback_sink.cpp
   src/runner_protocol.cpp
   src/runner_launcher.cpp
@@ -234,12 +240,12 @@ if(WIN32)
     TARGET tts-host-kokoro-onnx-runner POST_BUILD
     COMMAND
       ${CMAKE_COMMAND} -E copy
-      ${ESPEAK_NG_EXECUTABLE}
-      ${ESPEAK_NG_LIBRARY}
+      "${ESPEAK_NG_EXECUTABLE}"
+      "${ESPEAK_NG_LIBRARY}"
       $<TARGET_FILE_DIR:tts-host-kokoro-onnx-runner>
     COMMAND
       ${CMAKE_COMMAND} -E copy_directory
-      ${ESPEAK_NG_DATA_STAGE_DIR}
+      "${ESPEAK_NG_DATA_DIR}"
       $<TARGET_FILE_DIR:tts-host-kokoro-onnx-runner>/espeak-ng-data
   )
 endif()
@@ -253,7 +259,11 @@ target_link_libraries(
     ${JSON_SCHEMA_VALIDATOR_TARGET}
 )
 if(WIN32)
-  target_link_libraries(tts-host PRIVATE user32 ole32 shell32)
+  # uuid supplies CLSID_FileOpenDialog for the settings window's Import… folder
+  # picker (src/settings_window.cpp); winhttp is catalogue download's outbound
+  # HTTPS client (src/catalogue_download.cpp); the rest are the tray, WASAPI,
+  # and shell APIs already in use.
+  target_link_libraries(tts-host PRIVATE user32 ole32 shell32 uuid winhttp)
 endif()
 
 if(MSVC)
@@ -294,11 +304,8 @@ install(
   DESTINATION .
 )
 if(WIN32)
-  install(
-    FILES ${ESPEAK_NG_EXECUTABLE} ${ESPEAK_NG_LIBRARY}
-    DESTINATION .
-  )
-  install(DIRECTORY ${ESPEAK_NG_DATA_STAGE_DIR}/ DESTINATION espeak-ng-data)
+  install(FILES "${ESPEAK_NG_EXECUTABLE}" "${ESPEAK_NG_LIBRARY}" DESTINATION .)
+  install(DIRECTORY "${ESPEAK_NG_DATA_DIR}/" DESTINATION espeak-ng-data)
 endif()
 install(DIRECTORY schemas DESTINATION .)
 install(FILES config.example.json DESTINATION . RENAME config.json)
@@ -351,6 +358,169 @@ if(BUILD_TESTING)
   endif()
   add_test(NAME tts_host_cli_text_sources COMMAND tts-host-config-loader-tests)
 
+  # Drives ModelSessionManager (src/model_session.cpp) against a real runner
+  # process: the fixture package declares engine "stub", which the
+  # tts-host-<engine>-runner naming convention resolves to the stub runner
+  # built beside these tests.
+  add_executable(
+    tts-host-model-session-tests
+    src/model_registry.cpp
+    src/model_session.cpp
+    src/runner_launcher.cpp
+    src/runner_protocol.cpp
+    tests/model_session_tests.cpp
+  )
+  target_include_directories(tts-host-model-session-tests PRIVATE include)
+  target_link_libraries(
+    tts-host-model-session-tests
+    PRIVATE
+      nlohmann_json::nlohmann_json
+      ${JSON_SCHEMA_VALIDATOR_TARGET}
+  )
+  if(MSVC)
+    target_compile_options(tts-host-model-session-tests PRIVATE /W4 /permissive-)
+  else()
+    target_compile_options(tts-host-model-session-tests PRIVATE -Wall -Wextra -Wpedantic)
+  endif()
+  add_test(
+    NAME tts_host_model_load_unload
+    COMMAND
+      tts-host-model-session-tests
+      $<TARGET_FILE_DIR:tts-host-stub-runner>
+      ${CMAKE_SOURCE_DIR}/tests/fixtures/model_session/config.json
+  )
+
+  # Drives import_model_package (src/model_import.cpp) against generated source
+  # packages and a generated model directory under the build tree, so the test
+  # never writes into the source tree.
+  add_executable(
+    tts-host-model-import-tests
+    src/model_import.cpp
+    src/model_registry.cpp
+    tests/model_import_tests.cpp
+  )
+  target_include_directories(tts-host-model-import-tests PRIVATE include)
+  target_link_libraries(
+    tts-host-model-import-tests
+    PRIVATE
+      nlohmann_json::nlohmann_json
+      ${JSON_SCHEMA_VALIDATOR_TARGET}
+  )
+  if(MSVC)
+    target_compile_options(tts-host-model-import-tests PRIVATE /W4 /permissive-)
+  else()
+    target_compile_options(tts-host-model-import-tests PRIVATE -Wall -Wextra -Wpedantic)
+  endif()
+  add_test(
+    NAME tts_host_model_import
+    COMMAND
+      tts-host-model-import-tests
+      ${CMAKE_SOURCE_DIR}/schemas
+      ${CMAKE_CURRENT_BINARY_DIR}/model-import-tests
+  )
+
+  add_test(
+    NAME tts_host_cli_model_import
+    COMMAND
+      ${CMAKE_COMMAND}
+      -Dexe=$<TARGET_FILE:tts-host>
+      -Dschemas=${CMAKE_SOURCE_DIR}/schemas
+      -Dwork=${CMAKE_CURRENT_BINARY_DIR}/cli-model-import
+      -P ${CMAKE_SOURCE_DIR}/tests/assert_model_import.cmake
+  )
+
+  # Validates the compiled-in download catalogue (src/model_catalogue.cpp)
+  # itself, so a mistyped checksum, a plain-HTTP URL, or an entry with no
+  # licence to disclose fails here rather than during a user's download. The
+  # rejection cases drive entries the test constructs, not the shipped ones.
+  add_executable(
+    tts-host-model-catalogue-tests
+    src/model_catalogue.cpp
+    tests/model_catalogue_tests.cpp
+  )
+  target_include_directories(tts-host-model-catalogue-tests PRIVATE include)
+  target_link_libraries(tts-host-model-catalogue-tests PRIVATE nlohmann_json::nlohmann_json)
+  if(MSVC)
+    target_compile_options(tts-host-model-catalogue-tests PRIVATE /W4 /permissive-)
+  else()
+    target_compile_options(tts-host-model-catalogue-tests PRIVATE -Wall -Wextra -Wpedantic)
+  endif()
+  add_test(NAME tts_host_model_catalogue COMMAND tts-host-model-catalogue-tests)
+
+  add_test(
+    NAME tts_host_cli_list_catalogue
+    COMMAND
+      ${CMAKE_COMMAND}
+      -Dexe=$<TARGET_FILE:tts-host>
+      -Dschemas=${CMAKE_SOURCE_DIR}/schemas
+      -Dwork=${CMAKE_CURRENT_BINARY_DIR}/cli-list-catalogue
+      -P ${CMAKE_SOURCE_DIR}/tests/assert_list_catalogue.cmake
+  )
+
+  # Drives download_catalogue_entry (src/catalogue_download.cpp) end to end
+  # against a fake HttpFetchFunction that writes fixture bytes instead of
+  # touching the network -- the WinHTTP-backed fetch_url_to_file is
+  # Windows-only and needs a native run to verify, per
+  # docs/design/architecture.md#download-catalogue. The fake still exercises
+  # resume-from-partial and checksum-verification/rejection, since those are
+  # download_catalogue_entry's job, not the transport's.
+  add_executable(
+    tts-host-catalogue-download-tests
+    src/catalogue_download.cpp
+    src/model_catalogue.cpp
+    src/model_registry.cpp
+    tests/catalogue_download_tests.cpp
+  )
+  target_include_directories(tts-host-catalogue-download-tests PRIVATE include)
+  target_link_libraries(
+    tts-host-catalogue-download-tests
+    PRIVATE
+      nlohmann_json::nlohmann_json
+      ${JSON_SCHEMA_VALIDATOR_TARGET}
+  )
+  if(WIN32)
+    target_link_libraries(tts-host-catalogue-download-tests PRIVATE winhttp)
+  endif()
+  if(MSVC)
+    target_compile_options(tts-host-catalogue-download-tests PRIVATE /W4 /permissive-)
+  else()
+    target_compile_options(tts-host-catalogue-download-tests PRIVATE -Wall -Wextra -Wpedantic)
+  endif()
+  add_test(
+    NAME tts_host_catalogue_download
+    COMMAND
+      tts-host-catalogue-download-tests
+      ${CMAKE_SOURCE_DIR}/schemas
+      ${CMAKE_CURRENT_BINARY_DIR}/catalogue-download-tests
+  )
+
+  # Exercises registry_scan_changed (src/model_registry.cpp) against real
+  # filesystem scans, since directory watching's poll-and-refresh decision has
+  # to survive scan_model_registry rebuilding every candidate on every call.
+  add_executable(
+    tts-host-model-registry-scan-diff-tests
+    src/model_registry.cpp
+    tests/model_registry_scan_diff_tests.cpp
+  )
+  target_include_directories(tts-host-model-registry-scan-diff-tests PRIVATE include)
+  target_link_libraries(
+    tts-host-model-registry-scan-diff-tests
+    PRIVATE
+      nlohmann_json::nlohmann_json
+      ${JSON_SCHEMA_VALIDATOR_TARGET}
+  )
+  if(MSVC)
+    target_compile_options(tts-host-model-registry-scan-diff-tests PRIVATE /W4 /permissive-)
+  else()
+    target_compile_options(tts-host-model-registry-scan-diff-tests PRIVATE -Wall -Wextra -Wpedantic)
+  endif()
+  add_test(
+    NAME tts_host_model_registry_scan_diff
+    COMMAND
+      tts-host-model-registry-scan-diff-tests
+      ${CMAKE_SOURCE_DIR}/schemas
+  )
+
   add_executable(
     tts-host-espeak-phonemizer-tests
     src/espeak_phonemizer.cpp
@@ -377,6 +547,32 @@ if(BUILD_TESTING)
     target_compile_options(tts-host-text-normalizer-tests PRIVATE -Wall -Wextra -Wpedantic)
   endif()
   add_test(NAME tts_host_text_normalization COMMAND tts-host-text-normalizer-tests)
+
+  add_executable(
+    tts-host-language-selection-tests
+    src/language_selection.cpp
+    tests/language_selection_tests.cpp
+  )
+  target_include_directories(tts-host-language-selection-tests PRIVATE include)
+  if(MSVC)
+    target_compile_options(tts-host-language-selection-tests PRIVATE /W4 /permissive-)
+  else()
+    target_compile_options(tts-host-language-selection-tests PRIVATE -Wall -Wextra -Wpedantic)
+  endif()
+  add_test(NAME tts_host_language_selection COMMAND tts-host-language-selection-tests)
+
+  # Proves the language rule end to end through the real CLI: Cyrillic text
+  # reaches the Russian profile's model, Latin text the English one, and
+  # --language overrides both.
+  add_test(
+    NAME tts_host_cli_language_selection
+    COMMAND
+      ${CMAKE_COMMAND}
+      -Dexe=$<TARGET_FILE:tts-host>
+      -Dschemas=${CMAKE_SOURCE_DIR}/schemas
+      -Dwork=${CMAKE_CURRENT_BINARY_DIR}/cli-language-selection
+      -P ${CMAKE_SOURCE_DIR}/tests/assert_language_selection.cmake
+  )
 
   add_executable(
     tts-host-text-splitter-tests

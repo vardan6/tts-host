@@ -51,20 +51,24 @@ architecture live under `docs/`; this file records sequence only.
     and a `tts-host --stats` CLI flag — per
     [ADR 0002](docs/adr/0002-runner-protocol.md), so the comparison doesn't
     need throwaway measurement tooling.
+  - [x] Freeze the technical and long-form English benchmark passages in the
+    [acceptance criteria](docs/requirements/product.md#english-bake-off-corpus),
+    so every candidate has the same measurement and listening corpus.
   - [ ] Measure Kokoro, Qwen3-TTS 0.6B/1.7B, and the strongest lightweight
     alternative on the RTX 3070 Laptop GPU against the acceptance criteria and
     settle the fast/quality defaults.
 - [ ] **AFK — Model manager and settings window:** model/profile switching,
   load/unload, idle timeout, directory watching, import, catalogue download with
-  progress and checksums, and licence display — through JSON and the first
+  progress and checksums, licence display, and hotkey controls after selection
+  capture is settled — through JSON and the first
   desktop UI, built against native platform APIs per
   [ADR 0007](docs/adr/0007-native-ui-per-platform.md). Windows first; Linux and
   macOS are separate later slices.
   - [x] Windows tray icon: running `tts-host` without `--headless` shows a
     Shell_NotifyIcon tray icon with a right-click context menu (`tray_icon.hpp/cpp`)
     and blocks on a message loop until Quit is chosen; non-Windows throws a
-    clear not-implemented error. No model switching or other menu items yet —
-    see [design](docs/design/architecture.md#desktop-integration).
+    clear not-implemented error — see
+    [design](docs/design/architecture.md#desktop-integration).
   - [x] Tray "Settings…" menu item: opens the settings window
     (`run_settings_window`) from the tray, blocking the tray's own message
     loop until it closes — no threading yet, so the tray icon stops
@@ -76,10 +80,27 @@ architecture live under `docs/`; this file records sequence only.
     engine runner instead of falling back to the test-only stub runner
     (`src/main.cpp` `resolve_runner_selection`) — see
     [audit](docs/reviews/2026-08-31-release-packaging-audit.md#triage) row 1.
+  - [x] Preferred-profile fallback: a profile can name `fallbackProfile`; when
+    its model cannot be resolved or its runner is unavailable, synthesis uses
+    the named profile and reports why. English now tries `quality` before
+    CPU-only `fast` (Kokoro), so the fallback path is usable before a GPU runner
+    is selected by the bake-off.
+  - [x] Request language selection: `language_selection.hpp/cpp` resolves a
+    request's language from an explicit `--language` tag, else the text's
+    script (Latin → `en`, Cyrillic → `ru`, Armenian → `hy`, dominant script
+    wins, ties and unconfigured languages fall back), else `en`; that language
+    names the `languageDefaults` profile whose model and engine runner serve
+    the request, replacing the hardcoded `languageDefaults.en` lookup in
+    `src/main.cpp`. Normalization now runs before runner selection so
+    detection sees speakable text. Headless synthesis prints the chosen
+    language, its source, the profile, and the model — see
+    [design](docs/design/architecture.md#speech-pipeline) and
+    [requirements](docs/requirements/product.md#speech-behaviour). The
+    settings window and tray still resolve models by id only.
   - [x] Windows settings-window shell: `tts-host --settings` opens a plain
     native window and blocks until closed (`settings_window.hpp/cpp`),
     independent of the tray; non-Windows throws a clear not-implemented
-    error. No config-editing controls or model manager yet — see
+    error — see
     [design](docs/design/architecture.md#desktop-integration).
   - [x] Output-device control: the settings window lists active WASAPI
     render endpoints (`list_output_devices` in `playback_sink.hpp/cpp`) plus
@@ -90,7 +111,6 @@ architecture live under `docs/`; this file records sequence only.
     The host-side live-reload file watcher described in
     [design](docs/design/architecture.md#live-reload) is not built yet, so a
     running tray/settings session won't pick up the change until restarted.
-    Model manager and hotkeys controls remain.
   - [x] Server host/port controls: the settings window adds host and port
     edit boxes (`kServerHostEditId`/`kServerPortEditId` in
     `settings_window.cpp`), preselects `server.host`/`server.port`, and
@@ -99,13 +119,123 @@ architecture live under `docs/`; this file records sequence only.
     that a restart is required — see
     [design](docs/design/architecture.md#live-reload) and
     [requirements](docs/requirements/product.md#configuration-and-controls).
-    The window does not enforce the restart itself. Model manager and
-    hotkeys controls remain.
+    The window does not enforce the restart itself.
   - [x] Installed-model status and licence display: the settings window lists
     each compatible package's name, id, licence, and licence URL, and reports
     unsupported or incomplete package paths with their actionable registry
-    reason. The display is read-only; selection, loading, and downloading
-    remain model-manager work.
+    reason. The display is read-only.
+  - [x] Default-English-profile control: the settings window adds a combo box
+    (`kDefaultProfileComboId` in `settings_window.cpp`) listing every
+    `profiles` key, preselects `languageDefaults.en`, and writes the selection
+    back to `config.json` on change — see
+    [design](docs/design/architecture.md#desktop-integration) and
+    [requirements](docs/requirements/product.md#configuration-and-controls). A
+    static label states that a restart is required.
+  - [x] Model load/unload: `ModelSessionManager` (`model_session.hpp/cpp`)
+    keeps at most one model resident in a live runner process — load resolves
+    the package, launches its engine runner, and completes the
+    initialize/load handshake; unload terminates that process, which is what
+    frees the weights with one runner process per model.
+    The settings window drives it through a model combo box, Load/Unload
+    buttons, and a status line; `run_settings_window`/`run_tray_icon` now
+    take the runner directory. Residency lasts only as long as the owning
+    process, so CLI synthesis still launches its own runner — see
+    [design](docs/design/architecture.md#desktop-integration) and
+    [requirements](docs/requirements/product.md#configuration-and-controls).
+  - [x] Runner-protocol `unload` request: the method
+    [ADR 0002](docs/adr/0002-runner-protocol.md) lists among the initialize
+    capabilities now has a wire contract (`RunnerUnloadRequest`/`Response`, no
+    params — one model per runner process) and is implemented by both runners;
+    the Kokoro runner releases its ONNX session and voice table, so the process
+    stays alive and reloadable. `ModelSessionManager::unload` sends it
+    best-effort before terminating the runner.
+  - [x] Model package import: `import_model_package` (`model_import.hpp/cpp`)
+    copies a package directory into the first configured
+    `modelRegistry.directories` entry, reusing the registry's own validation so
+    invalid, incomplete (declared `files.*` missing), duplicate-id, and
+    already-installed packages are refused with the reason `--list-models`
+    would print, and nothing is copied unless the staged copy validates in its
+    new location — see
+    [design](docs/design/architecture.md#model-packages-and-discovery) and
+    [requirements](docs/requirements/product.md#models). Driven by
+    `tts-host --headless --import-model <path>` and the settings window's
+    Import… button (`kImportModelButtonId`, an `IFileOpenDialog` folder
+    picker), which refreshes the model combo and licence display. A copied
+    manifest's relative `$schema` would not resolve at the new depth, so import
+    repoints it at the installation's own `schemas/model.schema.json`.
+  - [x] Idle timeout: `ModelSessionManager::unload_if_idle`
+    (`model_session.hpp/cpp`) unloads the resident model once it has been
+    loaded for at least `modelRegistry.idleUnloadSeconds` without being
+    reloaded (`idleUnloadSeconds <= 0` disables it); the settings window
+    polls it every 5 s via a `WM_TIMER`, since it is the only process that
+    currently loads a model — see
+    [design](docs/design/architecture.md#desktop-integration). There is no
+    synthesis activity to reset the clock yet, so "idle" means time since
+    load, not time since last use, until CLI synthesis or the local API
+    server become long-lived consumers of the resident session.
+  - [x] Directory watching: `registry_scan_changed` (`model_registry.hpp/cpp`)
+    compares two registry scans by discovered package id/path and unsupported
+    entry path/reason; when `modelRegistry.watchForChanges` is true, the
+    settings window polls `modelRegistry.directories` every 5 s via a second
+    `WM_TIMER` (same mechanism as idle timeout) and refreshes the model
+    combo/licence display only when the scan actually changed, so a package
+    dropped in by something other than Import… still shows up without
+    restarting and without resetting the combo selection on every poll — see
+    [design](docs/design/architecture.md#desktop-integration).
+  - [x] Download catalogue: `model_catalogue.hpp/cpp` holds the curated set
+    compiled into the binary — no runtime fetch, so it adds no trust root
+    beyond the binary itself — with each entry's licence, per-file HTTPS URL,
+    pinned SHA-256, and size. `validate_catalogue` refuses an entry with no
+    licence to disclose, a non-HTTPS URL, an unpinned or malformed checksum, a
+    zero size, a duplicate id, or a file path escaping the package root, and
+    the catalogue's own test applies it to the shipped entries.
+    `catalogue_entry_installed` matches an entry id against a registry scan.
+    `tts-host --headless --list-catalogue` prints each entry with licence
+    (non-commercial badged), download size, and `GET`/`HAVE` — see
+    [design](docs/design/architecture.md#download-catalogue) and
+    [requirements](docs/requirements/product.md#distribution-and-usability).
+    Kokoro-82M is the only entry: it is bundled, so this is how the package is
+    restored, and its URLs and checksums are the ones
+    `tools/fetch_kokoro_weights.py` already fetches. Qwen3-TTS, LuxTTS, and MMS
+    Armenian wait on the bake-off choosing their artifacts.
+  - [x] Catalogue download UI: the settings window adds a Catalogue combo box
+    (`kCatalogueComboId` in `settings_window.cpp`) listing every compiled-in
+    entry with the same GET/HAVE, size, and licence summary
+    `--list-catalogue` prints, and a Download button
+    (`kDownloadModelButtonId`) that calls `download_catalogue_entry` into the
+    first configured `modelRegistry.directories` entry, the same destination
+    `import_model_package` uses — see
+    [design](docs/design/architecture.md#desktop-integration) and
+    [requirements](docs/requirements/product.md#distribution-and-usability).
+    Progress and failures (already installed, no configured directory,
+    transport/checksum errors) are reported on the shared model status line;
+    a successful download refreshes the model and catalogue views the same
+    way Import… does.
+  - [x] Catalogue download itself: `download_catalogue_entry`
+    (`catalogue_download.hpp/cpp`) fetches an entry's files over HTTPS with
+    progress reporting and resumability (a partially-downloaded file resumes
+    from its on-disk size via an HTTP Range request rather than refetching),
+    verifies each against its pinned SHA-256 (a self-contained SHA-256,
+    deleting a file that fails verification so the next attempt starts it
+    over), writes a generated `model.json` (the catalogue carries the
+    metadata; the remote host serves only weight files), and installs the
+    verified package — see
+    [requirements](docs/requirements/product.md#distribution-and-usability).
+    The outbound HTTPS client is WinHTTP (`fetch_url_to_file`), Windows-first
+    per product direction; other platforms throw a clear not-implemented
+    error, the same convention as the tray, settings window, and playback
+    sink. Driven by `tts-host --headless --download-model <id>
+    [--model-directory <path>]`, the destination choice among
+    `modelRegistry.directories`.
+  - [ ] Windows tray selection test: `Ctrl+Alt+R` sends Copy to the foreground
+    application, then speaks the changed clipboard through the current default
+    profile; **Read clipboard** is the tray fallback. Implementation is ready,
+    but native Windows validation is still required — see
+    [design](docs/design/architecture.md#desktop-integration).
+  - [ ] Hotkey settings and tray controls: add configurable shortcut bindings
+    and the global toggle after the basic selection test is verified on Windows
+    — see [design](docs/design/architecture.md#desktop-integration) and
+    [requirements](docs/requirements/product.md#configuration-and-controls).
 - [ ] **AFK — Everyday desktop playback:** tray controls, host-side playback,
   chunked streaming, interrupt and queue semantics, markdown/HTML normalization,
   output-device selection, CLI text/stdin/clipboard support, and start-at-login.

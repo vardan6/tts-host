@@ -78,6 +78,35 @@ A real-time factor above 1.0 cannot sustain streaming playback and is a hard
 failure. Blind A/B listening breaks ties between candidates that pass; it never
 overrides a hard failure.
 
+#### English bake-off corpus
+
+Use these exact, original passages for every English default-model measurement
+and blind listening comparison. Do not normalize or edit them before submitting
+them to the Host. The technical passage exercises acronyms, identifiers,
+numbers, units, punctuation, and a URL. The long-form passage exercises natural
+connected prose and sentence transitions.
+
+**Technical passage**
+
+> At 08:45 UTC, API gateway node EU-2 returned HTTP 503 for 17 of 2,400
+> requests. The on-call engineer reduced the cache TTL from 15 minutes to
+> 90 seconds, then restarted worker process 3. CPU use fell from 82 percent to
+> 41 percent. Confirm the repair at https://status.example.test before the
+> 09:30 release review.
+
+**Long-form passage**
+
+> Mira arrived at the workshop before sunrise, when the street was quiet and
+> the windows still reflected the lamps. She opened the doors, checked the
+> tools, and placed a clean sheet of paper beside each machine. The new team
+> would begin work that morning, and she wanted the room to feel clear rather
+> than hurried. At nine o'clock, the first visitors came in with questions
+> about the schedule, the safety rules, and the small wooden model on the
+> central table. Mira showed them how the pieces connected. She explained that
+> careful work was not slow work: it was work that prevented a problem before
+> it became expensive. By midday, the team had made its first test part. It was
+> not perfect, but it fit the model, and everyone could see what to improve.
+
 ## Speech behaviour
 
 - A new read request interrupts whatever is currently speaking. Queueing is

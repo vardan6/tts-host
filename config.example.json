@@ -1,31 +1,37 @@
 {
   "$schema": "./schemas/config.schema.json",
-  "schemaVersion": 1,
-  "server": {
-    "host": "127.0.0.1",
-    "port": 7861,
-    "authentication": "none",
-    "allowedOrigins": []
-  },
   "audio": {
     "outputDevice": "system-default"
+  },
+  "languageDefaults": {
+    "en": "quality"
   },
   "modelRegistry": {
     "directories": [
       "./models"
     ],
-    "watchForChanges": true,
     "idleUnloadSeconds": 600,
-    "maximumLoadedGpuModels": 1
+    "maximumLoadedGpuModels": 1,
+    "watchForChanges": true
   },
   "profiles": {
     "fast": {
-      "model": "kokoro-en-v1",
       "device": "cpu",
-      "loadPolicy": "eager"
+      "loadPolicy": "eager",
+      "model": "kokoro-en-v1"
+    },
+    "quality": {
+      "device": "auto",
+      "fallbackProfile": "fast",
+      "loadPolicy": "onDemand",
+      "model": "qwen3-tts-1.7b"
     }
   },
-  "languageDefaults": {
-    "en": "fast"
+  "schemaVersion": 1,
+  "server": {
+    "allowedOrigins": [],
+    "authentication": "none",
+    "host": "127.0.0.1",
+    "port": 7861
   }
 }

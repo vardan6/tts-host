@@ -37,6 +37,14 @@ capabilities. Capabilities include `load`, `unload`, `synthesize`, `cancel`, and
 `stats` — the last reporting peak RSS, VRAM, time-to-first-chunk, and sample
 count.
 
+`unload` takes **no params**: a runner process hosts exactly one model, so
+there is nothing to disambiguate. It releases the engine's model resources
+(the Kokoro runner drops its ONNX session and voice table) but leaves the
+process alive and able to serve a subsequent `load`. Freeing the weights by
+terminating the process is the host's separate choice, not this method's
+contract — see `runner_protocol.hpp` (`RunnerUnloadRequest`/`Response`) and
+`model_session.cpp`, which sends `unload` best-effort before terminating.
+
 A **stub runner** that emits synthetic audio without any model is a permanent
 in-repo fixture, not scaffolding. It is what the end-to-end test drives in CI.
 

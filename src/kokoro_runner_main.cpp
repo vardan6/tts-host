@@ -48,6 +48,8 @@ int main() {
           continue;
         } else if (method == "load") {
           response = runner.handle_load_message(message);
+        } else if (method == "unload") {
+          response = runner.handle_unload_message(message);
         } else if (method == "stats") {
           const auto request = tts_host::parse_runner_stats_request(message);
           // Kokoro-onnx runs on the CPU execution provider only, so it never

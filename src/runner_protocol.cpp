@@ -211,6 +211,39 @@ RunnerLoadResponse parse_runner_load_response(const nlohmann::json &message) {
   return {.id = id};
 }
 
+RunnerUnloadRequest parse_runner_unload_request(const nlohmann::json &message) {
+  require_jsonrpc_2_0(message);
+  const auto &method = required_member(message, "method");
+  if (!method.is_string() || method != "unload") {
+    throw RunnerProtocolError("runner control message is not an unload request");
+  }
+
+  const auto &id = required_member(message, "id");
+  if (id.is_null() || (!id.is_string() && !id.is_number_integer() && !id.is_number_unsigned())) {
+    throw RunnerProtocolError("runner unload request has an invalid id");
+  }
+  return {.id = id};
+}
+
+nlohmann::json make_runner_unload_request(nlohmann::json id) {
+  return {{"jsonrpc", "2.0"}, {"id", std::move(id)}, {"method", "unload"}};
+}
+
+nlohmann::json make_runner_unload_response(const RunnerUnloadRequest &request) {
+  return {{"jsonrpc", "2.0"}, {"id", request.id}, {"result", nlohmann::json::object()}};
+}
+
+RunnerUnloadResponse parse_runner_unload_response(const nlohmann::json &message) {
+  require_jsonrpc_2_0(message);
+  const auto &id = required_member(message, "id");
+  const auto &result = required_member(message, "result");
+  if (id.is_null() || (!id.is_string() && !id.is_number_integer() && !id.is_number_unsigned()) ||
+      !result.is_object()) {
+    throw RunnerProtocolError("runner unload response has invalid fields");
+  }
+  return {.id = id};
+}
+
 RunnerSynthesizeRequest parse_runner_synthesize_request(const nlohmann::json &message) {
   require_jsonrpc_2_0(message);
   const auto &method = required_member(message, "method");
