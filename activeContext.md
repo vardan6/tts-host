@@ -1,18 +1,16 @@
 # Active Context
 
-- Mode: session closed
-- Phase/slice: Windows tray selection test; model bake-off is deferred.
-- State: the tray has **Read clipboard** and a fixed `Ctrl+Alt+R` selection
-  command that sends Copy then speaks through the current default profile. The
-  Linux build and all 31 CTests pass; the Windows-only path is unverified.
-- Next atomic step: validate the Windows tray selection test: select text in a
-  representative application and press `Ctrl+Alt+R`; then add the configurable
-  hotkey binding and toggle.
-- Blockers/environment: no GPU engine is installed in TTS Host yet; model
-  bake-off and selection remain deferred while desktop functionality is built.
-  The new selection test still needs native Windows validation across
-  representative applications.
-- Open questions: Qwen backend/quantization and the fast/quality defaults after
-  the agreed-passage comparison; WSL headless and release packaging choices.
-- Discarded as noise: spawning a second Host process for tray playback; the tray
-  calls the owning Host's synthesis path instead.
+- Mode: session closed.
+- Phase/slice: Windows desktop prototype sequence.
+- State: Generated-audio seek, browser selected-text reader, and tray shortcut
+  toggle are implemented. Linux host/focused targets compiled for earlier
+  slices; no tests were run for this toggle.
+- Next atomic step: Run the combined native Windows desktop acceptance in
+  [roadmap](roadmap.md), including the tray shortcut toggle; leave it unchecked
+  until the walkthrough passes.
+- Blockers/environment: Native Windows build, WASAPI seek, Chrome interaction,
+  shortcut-toggle interaction, and the combined walkthrough remain unverified.
+  The tree includes older and current uncommitted changes; none were committed.
+- Open questions: English model defaults await the bake-off; Linux capture and
+  release sequencing remain future decisions.
+- Discarded as noise: None this session.

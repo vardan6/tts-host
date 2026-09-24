@@ -65,9 +65,10 @@ number, sample count, and flags. Runner stderr remains diagnostic output.
 `load`, `unload`, `synthesize`, `cancel`, `stats`.
 
 Version 1 synthesis payloads are interleaved `pcm_s16le`. `synthesize` accepts
-non-empty `params.text`, returns stream metadata and total sample frames, and
-marks its final audio frame with the end-of-stream flag. One request is active
-per runner initially. The protocol ADR defines the exact wire contract.
+non-empty `params.text` and an optional typed `params.speed`, returns stream
+metadata and total sample frames, and marks its final audio frame with the
+end-of-stream flag. One request is active per runner initially. The protocol
+ADR defines the exact wire contract.
 
 `stats` reports peak RSS, VRAM, time-to-first-chunk, and sample count. It exists
 in the first protocol version because the model bake-off must measure those
@@ -108,6 +109,79 @@ Language for a request: explicit parameter, else script detection (Latin,
 Cyrillic, and Armenian scripts are mutually unambiguous for the supported
 languages), else the configured default.
 
+### Playback control and position
+
+The long-lived desktop host owns a `PlaybackController`, rather than leaving
+each `PlaybackSink::play` call as an unobservable blocking operation. It owns
+one active utterance, its cancellation and pause state, a source-audio timeline,
+and the PCM already generated for that utterance. The controller drives WASAPI
+on its worker thread; pausing stops the audio client without discarding the
+current source position, resuming starts it again, and stopping cancels the
+utterance and clears its queue. Convert submitted endpoint frames minus endpoint
+padding into the source timeline using the negotiated sample rate and the seek
+origin; never subtract frame counts from different sample rates. Position is
+not wall-clock time. Seek flushes old endpoint buffers before restarting at the
+new source position and preserves the paused state.
+
+The controller retains source PCM for the current utterance while it is active,
+so backward seek and seek within already-generated lookahead audio do not
+invoke the model again. A forward target beyond generated audio is temporarily
+unavailable; it becomes available as lookahead synthesis produces the required
+audio. It never skips text by guessing a character or word offset. This keeps
+seek deterministic across voices and languages while preserving the existing
+fast-first-audio pipeline. `audio.playbackSkipSeconds` is an integer from one
+to 30, default five, used by both seek buttons.
+
+Retained history uses a per-utterance temporary PCM spool with a bounded RAM
+cache, preserving backward seek without keeping the whole utterance in RAM.
+Use an initial 64 MiB cache and 1 GiB spool ceiling; when storage is exhausted,
+stop generating additional audio and show an actionable error rather than
+silently evicting history. Delete the spool on stop, replacement, completion,
+and orderly exit, and clean abandoned host-owned spools on startup. Pause also
+applies backpressure: finish at most the in-flight synthesis request, then stop
+lookahead until playback resumes. Synchronous runner cancellation still waits
+for the current request; audio stop and UI feedback must not wait for it.
+
+The controller publishes preparing/playing/paused/stopping/idle/error state and
+source metadata to the UI. Capture failure leaves current speech untouched;
+only successfully captured non-empty text submits an interrupting request.
+Stop clears pending speech; natural completion starts the next queued request.
+Closing Now Playing hides it without stopping speech. Display elapsed position
+and available generated duration; do not invent a total duration before
+synthesis completes. Request identities prevent late worker results from an
+interrupted utterance updating the new utterance's UI or audio.
+
+`audio.speechSpeed` is a floating-point multiplier from 0.5 through 2.0,
+defaulting to 1.0. Now Playing changes the active utterance's requested speed,
+but the PCM currently submitted to WASAPI finishes unchanged. At the next host
+sentence boundary, the controller discards any unplayed lookahead and
+re-synthesizes those still-pending chunks with the new value. This avoids
+pitch-changing PCM resampling and needs no unreliable audio-to-word alignment.
+The setting travels as the typed runner `synthesize.params.speed` field; do not
+create a generic unvalidated engine-options map. Model-specific voice, accent,
+pronunciation, and sampling controls wait until the bake-off identifies real
+shipping capabilities and their typed contracts.
+
+### Engine-bounded synthesis
+
+The host's sentence-scale split is an engine-independent latency and
+cancellation boundary; it is not proof that a chunk fits every model. An engine
+runner that has a stricter post-tokenization input limit owns the final split,
+because only it can measure its actual input representation.
+
+Kokoro maps text to phoneme ids after espeak-ng. Its ONNX graph permits at most
+510 mapped phoneme ids: the runner adds one id-0 pad token at each end, filling
+the graph's 512-position input. When a host chunk exceeds that limit, the
+Kokoro runner partitions the ids into consecutive batches of at most 510,
+preferring the latest available sentence or phrase punctuation boundary and
+otherwise splitting exactly at the limit. It synthesizes every batch in order;
+no ids are discarded. Each batch uses the voice-style row for its own bounded
+phoneme count. The runner returns the resulting PCM as ordered audio frames
+under the original `synthesize` response, as already defined by
+[ADR 0002](../adr/0002-runner-protocol.md). This keeps the model-specific limit
+out of host splitting and makes runner failure an exceptional condition rather
+than normal long-text control flow.
+
 ### Text-to-phoneme (espeak-ng)
 
 espeak-ng converts request text to phonemes for the Kokoro engine. It runs as
@@ -134,6 +208,14 @@ Two surfaces:
 - A **native streaming** interface — incremental audio, explicit cancellation,
   playback control, and status — over WebSocket. It must not inherit the
   limitations of the compatibility endpoint.
+
+The browser-selection prototype also accepts `POST /v1/selection` with a JSON
+`{"text":"..."}` body. A non-empty selection submits one interrupting Host
+request; an empty selection is rejected without changing playback. The route
+is loopback-only and returns `Access-Control-Allow-Origin` only when the
+request's exact origin appears in `server.allowedOrigins`. The Chrome extension
+uses the configured Host port (default 7861); it reads `window.getSelection()`
+in the active page and never accesses the clipboard.
 
 The service binds `127.0.0.1:7861` by default. The port is configurable; on
 collision the host fails to start with a clear error rather than moving, because
@@ -166,7 +248,11 @@ Illustrative shape, not yet a frozen schema:
     "allowedOrigins": []
   },
   "audio": {
-    "outputDevice": "system-default"
+    "outputDevice": "system-default",
+    "playbackSkipSeconds": 5
+  },
+  "selection": {
+    "capturePolicy": "automatic"
   },
   "modelRegistry": {
     "directories": ["./models"],
@@ -345,11 +431,21 @@ from reaching the user's audio device or showing a tray icon. Autostart is on by
 default with an obvious switch, because a background service that is not running
 when a client calls it is the most likely support complaint.
 
-Two UI surfaces, divided by how often a setting changes:
+Three UI surfaces, divided by task:
 
 - **Tray menu** — current model/profile, pause/resume/stop, output device,
-  global hotkey toggle, Settings…, open logs, quit. Roughly eight items; beyond
-  that a menu stops being usable.
+  global hotkey toggle, **Now Playing…**, Settings…, open logs, quit. Roughly
+  eight items; beyond that a menu stops being usable.
+- **Now Playing window** — a single modeless controller for the active
+  utterance, opened from the tray and usable independently of Settings. It
+  shows idle/reading/paused state, source and capture method, and the current
+  position; its primary buttons are **Read selection**, **Read clipboard**,
+  Pause/Resume, Stop, and signed seek buttons labelled with the configured
+  interval. A disabled seek button means its target is not in generated audio.
+  It is deliberately not a second settings form. There is no separate “Copy
+  clipboard” action: **Read selection** runs the configured capture policy and
+  surfaces the policy result, while **Read clipboard** explicitly reads the
+  existing clipboard.
 - **Settings window** — everything, as a form over `config.json`: model manager
   (install, download, remove, load/unload, idle timeout), server port and bind
   address, autostart, hotkey bindings, log level. Restart-requiring settings are
@@ -358,15 +454,71 @@ Two UI surfaces, divided by how often a setting changes:
 
 The global hotkey and selection capture belong to the host: it is already
 running with a tray, so a separate companion process would mean two background
-processes for no gain. The first Windows test control is fixed at
-`Ctrl+Alt+R`: the Host sends the normal Copy command to the foreground
-application, waits for the clipboard to change, and speaks that text through
-the current default profile. The tray also offers **Read clipboard** when an
-application does not accept the synthetic Copy command. This is a test path,
-not the final selection-capture policy: configurable bindings, a user toggle,
-UI Automation, and protected-clipboard behavior remain later work. A Windows
-Explorer context-menu entry is a registered shell extension with a different
-install story and is out of scope.
+processes for no gain. `hotkeys.readSelection` configures the global command;
+an empty value disables it. Its focused capture field records a pressed chord of
+modifiers plus a letter, digit, or F1–F24 key, then Settings probes it with
+`RegisterHotKey` before saving. A failed probe means Windows or another
+application currently owns the chord; Windows provides no global hotkey
+inventory.
+
+Desktop selection capture has three explicit policies, persisted in
+`selection.capturePolicy`: `automatic` (the default), `uiAutomationOnly`, and
+`clipboardOnly`. In `automatic`, the host snapshots the foreground target when
+the command arrives, asks that target's focused UI Automation element for
+`TextPattern` selection text, then sends Copy and waits for a changed clipboard
+only when UI Automation offers no non-empty selection. The fallback dispatches
+through a per-platform capture adapter, using the saved target identity and
+refusing injection if focus has changed. The first prototype performs direct
+capture only and requests manual copy on failure. Synthetic fallback is enabled
+later only for tested focused-control adapters. Executable identity is a hint,
+never proof of Copy semantics: editors and browsers can contain terminals, and
+users can remap shortcuts. No default `Ctrl+C` is sent to unidentified controls.
+Windows Terminal's default `Ctrl+Shift+C` is a compatibility candidate to test,
+not a universal guarantee. Unknown targets and ambiguous controls fail closed.
+Any later adapter must account for held hotkey modifiers, focus changes, and
+key-release cleanup; it must not retry another chord after a timeout.
+
+Global hotkeys snapshot the external window and focused element before Host UI
+activation. Now Playing remembers the last external target and labels it next
+to Read selection; clicking that button must not capture Host controls. If the
+saved target is gone or its selection cannot be obtained directly, ask the user
+to reselect and use the global shortcut. Do not steal focus to inject Copy.
+Accessibility requests run off the UI thread with a bounded deadline and
+discard late results; repeated timeouts must not create unbounded workers.
+Never inspect password/protected controls. Capture diagnostics record method,
+target identity, and failure reason, not selected text.
+
+`uiAutomationOnly` never writes the clipboard. `clipboardOnly` reads the
+existing clipboard without sending input; the user must copy the intended text
+first, and stale clipboard text may be read. In `automatic`, the host labels the
+method used and the reason for failure in Now Playing and the activity log; it
+never treats an unchanged clipboard as a selection. UIPI, protected fields,
+secure desktops, focus changes, and applications that expose neither TextPattern
+nor a verified Copy action can all fail; **Read clipboard** remains the explicit
+escape hatch. The host does not request UIAccess simply to cross elevation
+boundaries: that requires a signed installed application and expands the
+security boundary.
+
+The Windows-specific `uiAutomationOnly` name remains scoped to the Windows
+configuration for now; other platforms need native direct-capture labels and
+an explicit schema compatibility decision before sharing saved policy values.
+`clipboardOnly` means reading the existing clipboard without sending input;
+**Read clipboard** uses that same clipboard path independently of the capture
+policy. Do not enable synthetic Copy fallback until clipboard concurrency is
+addressed: a changed
+clipboard sequence alone cannot prove the target supplied the text. Preserve
+restorable clipboard formats and never restore over a subsequent user's copy;
+if ownership or preservation cannot be established, decline the fallback.
+
+The browser client is equally first-class but has a more precise source: its
+content script reads the page DOM selection and sends text to the local Host
+after the extension's origin is allowlisted. It does not use the clipboard or
+UI Automation for normal web-page text. Browser chrome, PDFs, and pages where
+the extension is absent continue through desktop selection policy. Tray requests
+run off the Win32 message loop: an interrupting request stops current playback
+promptly and abandons synthesis after its current sentence; a queued request
+waits behind it. A Windows Explorer context-menu entry is a registered shell
+extension with a different install story and is out of scope.
 
 ## Distribution
 
@@ -428,9 +580,14 @@ console needs a file, or its actionable errors reach nobody.
 - **Linux:** designed, not built in the first release. Tray support varies by
   desktop environment — KDE implements StatusNotifierItem natively, GNOME needs
   an extension — so the tray is best-effort there and the settings window is
-  always reachable without it.
+  always reachable without it. X11 and Wayland selection, active-window, and
+  injected-input permissions differ materially; a Linux capture adapter must
+  use the session's native accessibility/selection mechanism and report an
+  unavailable capability rather than emulate the Windows fallback.
 - **macOS:** designed, not built. Signed and notarized bundle, Apple Silicon and
-  Metal first.
+  Metal first. Its capture adapter uses the macOS accessibility APIs and asks
+  for the required Accessibility permission; it does not reuse Windows process
+  classification or key injection rules.
 - **WSL:** optional headless deployment using the same service contract, served
   by the `--headless` mode that already exists. Not part of the Windows
   dependency chain.

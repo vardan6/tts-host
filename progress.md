@@ -1,6 +1,52 @@
 # Progress
 
-- 2026-09-18: Windows tray selection test implementation — added **Read clipboard** and a fixed `Ctrl+Alt+R` hotkey. The hotkey sends the standard Copy command to the foreground application, waits for a changed clipboard, and passes that text to the owning Host's current-default-profile synthesis path; no second Host process is started. Linux build and all 31 CTests pass. Native Windows build and manual validation in representative applications remain required, so the roadmap slice is not complete.
+- 2026-09-18: Desktop feedback consolidation — reduced five pending desktop
+  HITL checkpoints to one combined Windows acceptance walkthrough; Copy adapter
+  verification is AFK, with unsupported adapters disabled and independent work
+  unblocked. Intermediate demos remain optional.
+
+- 2026-09-18: Combined desktop planning — reconciled capture safety, source
+  focus, playback states, bounded seek retention, and prototype feedback gates
+  across both sessions' pending plans. Implementation remains pending.
+
+- 2026-09-18: Kokoro bounded synthesis — the runner now splits mapped phoneme
+  ids into lossless batches of at most 510, preferring punctuation boundaries,
+  and emits ordered PCM frames under one synthesis request. Model-free boundary,
+  long-unpunctuated-selection, frame-size, phoneme-mapping, and runner-selection
+  tests pass on Linux; native Windows tray validation remains.
+
+- 2026-09-18: Windows WASAPI shared-mode format negotiation — playback now
+  calls `IAudioClient::IsFormatSupported`, uses the closest endpoint format,
+  and converts runner PCM (sample rate, channel count, S16/S24/S32 PCM or
+  float32) before buffering it. New platform-independent conversion tests,
+  the full 32-test WSL suite, and the native Windows `tts-host` build pass.
+  Audible endpoint and tray-selection validation remain required.
+
+- 2026-09-18: Settings hotkey capture and activity log — the selection-hotkey
+  field now records a pressed modifier chord rather than requiring manual text,
+  and capture/validation/model/import/download output shares the scrollable
+  lower activity pane. Native testing of the pre-rebuild binary showed that a
+  saved chord reaches synthesis, but fallback Kokoro playback fails at WASAPI
+  initialization with `AUDCLNT_E_UNSUPPORTED_FORMAT` (`0x88890008`); a separate
+  Debug CRT `abort()` has no stack trace yet. The new Windows-only UI code still
+  needs a native rebuild and manual check.
+
+- 2026-09-18: Windows development dependency cache — `compile-win.ps1` still
+  performs a clean build/test flow but preserves CMake FetchContent artifacts
+  in ignored `cache/fetchcontent/windows-vs2022/`; `-ResetDependencyCache`
+  deliberately discards them. README documents incremental edit/test commands.
+
+- 2026-09-18: Configurable selection hotkey — Settings now edits
+  `hotkeys.readSelection` through a manual chord field and **Check and save**.
+  The check temporarily registers the chord, reporting Windows/application
+  conflicts before it writes the configuration; blank disables the selection
+  hotkey. The tray releases its current hotkey while Settings is open, then
+  applies the saved binding when Settings closes. Native Windows build and
+  manual validation remain required.
+
+- 2026-09-18: Tray interrupt and queue semantics — routed tray speech through a single background scheduler, keeping the Win32 message loop responsive. **Read clipboard** and `Ctrl+Win+S` now cancel the current utterance by default; `Queue clipboard` is the explicit opt-in. WASAPI playback observes cancellation promptly, while synchronous runner synthesis stops at the next sentence boundary; queued requests are serialized so playback never overlaps. The changed Linux translation units compile and `git diff --check` passes. Native Windows build and tray/audio interaction remain required; the WSL build cache is Windows-generated and cannot be reused.
+
+- 2026-09-18: Windows tray selection test implementation — added **Read clipboard** and a fixed `Ctrl+Win+S` hotkey. The hotkey sends the standard Copy command to the foreground application, waits for a changed clipboard, and passes that text to the owning Host's current-default-profile synthesis path; no second Host process is started. Linux build and all 31 CTests pass. Native Windows build and manual validation in representative applications remain required, so the roadmap slice is not complete.
 
 - 2026-09-18: Native catalogue-download verification — added the `refresh_model_views` forward declaration and linked `winhttp` into the catalogue test target; the Visual Studio 2022 build succeeds and all 27 Windows CTests pass. The user confirmed the settings window renders. A real Kokoro-82M WinHTTP CLI download into an isolated registry passed checksum verification and discovery as `HAVE`; its temporary files were removed. The user then verified the settings-window Download from `GET` to `HAVE`; the screenshot showed the package installed and loaded. MSVC `getenv` deprecation warnings are non-fatal.
 
@@ -66,3 +112,33 @@
 - 2026-09-07: Settings-window background color mismatch — fixed a third Windows-only visual defect (reported via screenshot): STATIC labels and the read-only licence display painted white (DefWindowProc's default `WM_CTLCOLORSTATIC` brush) against the window's unset background, producing a visible white/grey checkerboard. The window class now sets `hbrBackground` to `COLOR_BTNFACE`, and a new `WM_CTLCOLORSTATIC` handler in `settings_window.cpp` returns the same brush with `TRANSPARENT` background mode. Not yet verified on native Windows — joins the font/layout and espeak-ng MSI fixes awaiting the next `compile-win.ps1` run.
 - 2026-09-10: Catalogue download itself, closing "Model manager and settings window" — resolved the outbound-HTTP-client decision as WinHTTP, Windows-first per direct instruction (rejected libcurl to avoid a new vendored dependency, matching ADR 0007's native-per-platform policy already used for the tray/settings window/playback sink). Added `download_catalogue_entry` (`include/tts_host/catalogue_download.hpp`, `src/catalogue_download.cpp`): fetches each file over HTTPS with progress reporting and HTTP-Range resumability, verifies it against its pinned SHA-256 (a self-contained, incremental SHA-256 implementation so verification stays testable on Linux even though the WinHTTP fetch itself is Windows-only; validated against the FIPS `"abc"` test vector), generates the `model.json` a downloaded entry has no manifest for, and installs the result via the same staging/validate/rename pattern `import_model_package` uses. `CatalogueFile` gained a `manifest_key` field (e.g. `"model"`/`"voice"`) so the generated manifest's `files` object matches `schemas/model.schema.json`; `validate_catalogue` now enforces it is present, unique, and that one file claims `"model"`. Wired to `tts-host --headless --download-model <id> [--model-directory <path>]`; non-Windows throws the same not-implemented convention as the tray/settings window/playback sink. New `tts_host_catalogue_download` CTest drives the pipeline end to end against a fake `HttpFetchFunction` (fresh download, resume-from-partial, checksum-mismatch rejection-and-cleanup, already-installed short-circuit before any fetch) — the real WinHTTP path itself needs a native Windows run to verify, same limitation as every other `_WIN32`-gated slice. 31/31 CTests pass on WSL. Settings-window download UI is not built — catalogue listing was CLI-only first too, so this follows the same precedent; that plus the still-unverified Windows font/espeak-ng/background-color fixes from the last native run are the open items.
 - 2026-09-10: Settings-window catalogue-download UI, closing the last autonomous sub-bullet of "Model manager and settings window" — added a Catalogue combo box (`kCatalogueComboId`, `settings_window.cpp`) listing every compiled-in `model_catalogue()` entry with the same GET/HAVE, size, and licence summary `--list-catalogue` prints, and a Download button (`kDownloadModelButtonId`) calling the existing `download_catalogue_entry` into the first configured `modelRegistry.directories` entry (the same destination `import_model_package` uses), reporting progress and failures (already installed, no configured directory, transport/checksum errors) on the shared model status line and refreshing both the model and catalogue views on success, mirroring the existing Import… button's pattern. 31/31 CTests pass on WSL; the control is inside the `_WIN32` gate and still needs a native Windows build and manual check, joining the existing backlog of unverified Windows-only fixes. Also removed a stray untracked `.kokoro-en-v1.downloading` fixture directory left over from a prior session's run, which was making `tts_host_list_models` fail on an extra phantom unsupported entry. Only hotkeys remain open under "Model manager and settings window", deferred until hotkey capture design exists.
+
+- 2026-09-18: Native Windows tray-selection validation — user confirmed the configured selection shortcut and **Read clipboard** speak through the selected endpoint without closing the runner. Captured the next selection-capture policy: UI Automation first, configurable Copy/clipboard fallback, and browser DOM selection through a first-class extension path; also planned a separate Now Playing window with pause/resume/stop and generated-audio seek controls. No implementation or automated verification was added in this session.
+- 2026-09-18: Windows direct selection and capture policy — removed unconditional synthetic `Ctrl+C`; added focused UI Automation `TextPattern` capture off the tray thread with a bounded deadline, late-result rejection, protected/empty/stale-target failures, bounded text-free diagnostics, and manual-copy guidance. Added canonical `selection.capturePolicy` schema/config/Settings support for `automatic`, `uiAutomationOnly`, and `clipboardOnly`; Copy remains disabled until a focused-control adapter passes compatibility verification. Verified 34/34 Linux tests and the native Windows selection test; changed Windows host sources compile, while final relinking was blocked by the running tray executable.
+- 2026-09-19: Now Playing speed behavior captured — specified a persisted 0.5×–2.0× typed synthesis option (default 1.0×) and an active-utterance control that takes effect at the next sentence boundary by regenerating unplayed lookahead, avoiding pitch-changing resampling, skipped/repeated text, and false claims of seamless mid-sentence adjustment. Generic model-specific controls remain deferred until the bake-off establishes real capabilities. Planning only; no playback code was implemented.
+
+- 2026-09-19: Now Playing playback-controller foundation — added a shared
+  `PlaybackController`/`PlaybackControl` lifecycle for the one active tray
+  utterance, with preparing/playing/paused/stopping/idle state, serialized
+  replacement cancellation, and cooperative WASAPI pause/resume/stop. Added
+  lifecycle/replacement tests; Linux build and all 35 CTests pass. The modeless
+  Now Playing UI and speed configuration remain the next slices; native Windows
+  interaction verification is still required.
+
+- 2026-09-19: Now Playing controls — added the singleton modeless Windows
+  window opened from the tray, with state refresh plus Pause/Resume and Stop
+  wired to `PlaybackController`; closing hides it without interrupting speech.
+  Linux build and all 35 CTests pass; native Windows interaction verification
+  remains required.
+
+- 2026-09-19: Now Playing speed controls — added persisted `audio.speechSpeed`
+  (0.5×–2.0×, default 1.0×), Settings and Now Playing controls, typed runner
+  speed validation, and stale-lookahead regeneration at a sentence boundary.
+  Also corrected focused UI Automation target ownership to compare process ids,
+  allowing console/terminal proxy HWNDs while retaining foreground validation.
+  Focused Linux tests pass; native Windows rebuild and manual Ctrl+F8 retest
+  remain required.
+- 2026-09-23: Clipboard-only selection capture — changed the existing `clipboardOnly` policy to read current clipboard text on Ctrl+F8 without synthesizing Copy; Settings now says to copy the intended selection first, and requirements/design plus the review record document stale-text behavior. `automatic` remains the default. `git diff --check` passed; tests were not run, and native Windows verification remains pending.
+- 2026-09-24: Generated-audio seek — added source-timeline seeking across generated sentence chunks, sample-rate-aware frame mapping, a 64 MiB RAM cache with a 1 GiB per-utterance PCM spool, configurable 1–30 s interval, paused-seek wakeup, enabled-only Now Playing controls, and visible storage errors. Focused host and test targets compile on Linux; tests were not run, and native WASAPI behavior remains for combined acceptance.
+- 2026-09-24: Browser selected-text reader — added a Manifest V3 Chrome extension and loopback Boost.Beast `POST /v1/selection` ingress. The extension reads DOM selection without clipboard access; Host accepts only configured exact CORS origins and submits non-empty text as an interrupting request. Linux host and API test targets compile; tests and browser interaction were not run.
+- 2026-09-24: Global selection shortcut toggle — added a checkable tray menu command that registers or unregisters the configured chord without changing its saved binding; Settings preserves a runtime disable when it closes. Native Windows build/interaction and tests remain unverified, so combined acceptance now includes the toggle. Scoped `git diff --check` passed; the repository-wide check reports CRLF-only whitespace on the pre-existing `config.example.json` edit.

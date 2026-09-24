@@ -22,8 +22,10 @@ git clone <this repo> && cd tts
 ```
 
 `compile-win.ps1` wipes `build/`, configures, builds everything, and runs the
-full CTest suite, logging to `logs/`. The weights fetch is a one-time ~330 MB
-download into `models/kokoro-en-v1/`. First-time toolchain setup is in
+full CTest suite, logging to `logs/`. CMake dependencies are kept in the
+gitignored `cache/fetchcontent/windows-vs2022/` directory, so later clean
+builds reuse their verified downloads and extracts. The weights fetch is a
+one-time ~330 MB download into `models/kokoro-en-v1/`. First-time toolchain setup is in
 "Windows setup" below.
 
 Then run it as a desktop app — no flags gives you the tray icon:
@@ -130,10 +132,22 @@ ctest --test-dir build --output-on-failure
 
 Windows (after the setup above): the Visual Studio generator is
 multi-configuration, so pass a configuration explicitly to both build and
-test. `.\compile-win.ps1` runs all three as a clean rebuild.
+test. `.\compile-win.ps1` runs all three as a clean rebuild, reusing its
+Windows-specific FetchContent cache. Pass `-ResetDependencyCache` only to
+discard and redownload the CMake dependencies (for example, after diagnosing a
+corrupt cache or changing a pinned dependency).
 
 ```powershell
 cmake -S . -B build -G "Visual Studio 17 2022"
+cmake --build build --config Debug --parallel
+ctest --test-dir build -C Debug --output-on-failure
+```
+
+After one successful `compile-win.ps1` run, an ordinary edit usually needs
+only the incremental build and relevant test; neither command reconfigures or
+downloads dependencies:
+
+```powershell
 cmake --build build --config Debug --parallel
 ctest --test-dir build -C Debug --output-on-failure
 ```

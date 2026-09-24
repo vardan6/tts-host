@@ -3,9 +3,26 @@
 # suite). Deleting build/ every run is deliberate, not laziness — see
 # README.md "Don't mix WSL and native Windows for the same build/ directory":
 # a stale cache from a different generator/environment fails in confusing
-# ways, and a full wipe is the only fix that's actually reliable.
+# ways, and a full wipe is the only fix that's actually reliable. Downloaded
+# FetchContent dependencies are intentionally kept outside build/ so the clean
+# rebuild does not redownload them.
+
+param(
+    [switch]$ResetDependencyCache
+)
 
 $ErrorActionPreference = "Stop"
+
+# Keep downloaded/extracted dependencies outside the disposable build tree.
+# This path is gitignored and specific to the native Windows VS generator, so
+# it cannot be confused with a WSL or another-generator build. Pass it through
+# CMake's documented FETCHCONTENT_BASE_DIR override rather than teaching each
+# individual dependency about a project-specific cache.
+$dependencyCacheDir = Join-Path $PSScriptRoot "cache\fetchcontent\windows-vs2022"
+if ($ResetDependencyCache -and (Test-Path $dependencyCacheDir)) {
+    Write-Host "==> Resetting cached CMake dependencies" -ForegroundColor Yellow
+    Remove-Item -Recurse -Force $dependencyCacheDir
+}
 
 # PowerShell's $ErrorActionPreference does not turn a non-zero exit from a
 # native program (such as cmake or ctest) into a terminating error. Check it
@@ -51,7 +68,10 @@ try {
     }
 
     Write-Host "==> Configuring (Visual Studio 17 2022)" -ForegroundColor Cyan
-    Invoke-NativeChecked "CMake configure" { cmake -S . -B build -G "Visual Studio 17 2022" }
+    Write-Host "    FetchContent cache: $dependencyCacheDir" -ForegroundColor DarkGray
+    Invoke-NativeChecked "CMake configure" {
+        cmake -S . -B build -G "Visual Studio 17 2022" "-DFETCHCONTENT_BASE_DIR=$dependencyCacheDir"
+    }
 
     Write-Host "==> Building everything (Debug)" -ForegroundColor Cyan
     Invoke-NativeChecked "CMake build" { cmake --build build --config Debug --parallel }

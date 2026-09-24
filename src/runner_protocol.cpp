@@ -1,5 +1,6 @@
 #include "tts_host/runner_protocol.hpp"
 
+#include <cmath>
 #include <charconv>
 #include <cctype>
 #include <limits>
@@ -260,14 +261,24 @@ RunnerSynthesizeRequest parse_runner_synthesize_request(const nlohmann::json &me
   if (!text.is_string() || text.get_ref<const std::string &>().empty()) {
     throw RunnerProtocolError("runner synthesize request has an invalid text");
   }
-  return {.id = id, .text = text.get<std::string>()};
+  const auto speed_it = params.find("speed");
+  const double speed = speed_it == params.end() ? 1.0 :
+      (speed_it->is_number() ? speed_it->get<double>() : 0.0);
+  if ((speed_it != params.end() && !speed_it->is_number()) || !std::isfinite(speed) ||
+      speed < 0.5 || speed > 2.0) {
+    throw RunnerProtocolError("runner synthesize request has an invalid speed");
+  }
+  return {.id = id, .text = text.get<std::string>(), .speed = speed};
 }
 
-nlohmann::json make_runner_synthesize_request(nlohmann::json id, std::string text) {
+nlohmann::json make_runner_synthesize_request(nlohmann::json id, std::string text, double speed) {
+  if (!std::isfinite(speed) || speed < 0.5 || speed > 2.0) {
+    throw RunnerProtocolError("runner synthesize request has an invalid speed");
+  }
   return {{"jsonrpc", "2.0"},
           {"id", std::move(id)},
           {"method", "synthesize"},
-          {"params", {{"text", std::move(text)}}}};
+          {"params", {{"text", std::move(text)}, {"speed", speed}}}};
 }
 
 nlohmann::json make_runner_synthesize_response(const RunnerSynthesizeRequest &request,

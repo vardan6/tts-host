@@ -8,15 +8,19 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdlib>
+#include <cwchar>
 #include <fstream>
 #include <string>
 #include <vector>
 
 #include "tts_host/catalogue_download.hpp"
+#include "tts_host/global_hotkey.hpp"
 #include "tts_host/model_catalogue.hpp"
 #include "tts_host/model_import.hpp"
 #include "tts_host/model_registry.hpp"
+#include "tts_host/selection_capture.hpp"
 #include "tts_host/model_session.hpp"
 #include "tts_host/playback_sink.hpp"
 
@@ -33,6 +37,12 @@ constexpr int kUnloadModelButtonId = 107;
 constexpr int kImportModelButtonId = 108;
 constexpr int kCatalogueComboId = 109;
 constexpr int kDownloadModelButtonId = 110;
+constexpr int kReadSelectionHotkeyEditId = 111;
+constexpr int kCheckHotkeyButtonId = 112;
+constexpr int kSelectionPolicyComboId = 113;
+constexpr int kSpeechSpeedComboId = 114;
+constexpr int kPlaybackSkipComboId = 115;
+constexpr int kSettingsHotkeyProbeId = 2;
 
 // Polls ModelSessionManager::unload_if_idle against modelRegistry.idleUnloadSeconds
 // (docs/design/architecture.md#desktop-integration). The settings window is the
@@ -57,17 +67,18 @@ constexpr UINT kDirectoryWatchTimerIntervalMs = 5000;
 // It also owns the resident model session, so closing the window unloads
 // whatever the user loaded from it.
 struct SettingsState {
-  SettingsState(const ConfigDocument &config, const std::filesystem::path &runner_directory)
+  SettingsState(ConfigDocument &config, const std::filesystem::path &runner_directory)
       : document(config), sessions(runner_directory) {}
 
-  ConfigDocument document;
+  ConfigDocument &document;
   ModelSessionManager sessions;
   // Model ids in combo-box order; the combo itself shows display names.
   std::vector<std::string> model_ids;
   // Catalogue entry ids in combo-box order, mirroring model_ids above.
   std::vector<std::string> catalogue_ids;
-  HWND model_status_label = nullptr;
-  HWND installed_models_display = nullptr;
+  // The lower pane is the one durable place for user-visible settings-window
+  // output: model information, progress, successes, and actionable failures.
+  HWND activity_log = nullptr;
   // The scan the model views currently reflect, so the directory-watch timer
   // can tell a real change from scan_model_registry re-validating the same
   // packages on every poll.
@@ -75,6 +86,8 @@ struct SettingsState {
 };
 
 void refresh_model_views(SettingsState &state, HWND window);
+void append_activity_log(SettingsState &state, const std::wstring &text);
+WNDPROC original_hotkey_edit_proc = nullptr;
 
 std::wstring utf8_to_wide(const std::string &text) {
   if (text.empty()) {
@@ -156,6 +169,79 @@ void on_output_device_selected(SettingsState &state, HWND combo) {
   save_config(state);
 }
 
+void populate_speech_speed_combo(HWND combo, double current_speed) {
+  const wchar_t *labels[] = {L"0.5×", L"0.75×", L"1.0×", L"1.25×", L"1.5×", L"1.75×", L"2.0×"};
+  for (int index = 0; index < static_cast<int>(std::size(labels)); ++index) {
+    SendMessageW(combo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(labels[index]));
+    if (std::abs(std::wcstod(labels[index], nullptr) - current_speed) < 0.001) {
+      SendMessageW(combo, CB_SETCURSEL, index, 0);
+    }
+  }
+}
+
+void on_speech_speed_selected(SettingsState &state, HWND combo) {
+  wchar_t value[16];
+  const auto index = SendMessageW(combo, CB_GETCURSEL, 0, 0);
+  if (index == CB_ERR) return;
+  SendMessageW(combo, CB_GETLBTEXT, index, reinterpret_cast<LPARAM>(value));
+  state.document.value["audio"]["speechSpeed"] = std::wcstod(value, nullptr);
+  save_config(state);
+}
+
+void populate_playback_skip_combo(HWND combo, int current_seconds) {
+  for (int seconds = 1; seconds <= 30; ++seconds) {
+    const auto label = std::to_wstring(seconds) + L" seconds";
+    const auto index = SendMessageW(combo, CB_ADDSTRING, 0,
+                                    reinterpret_cast<LPARAM>(label.c_str()));
+    if (seconds == current_seconds) SendMessageW(combo, CB_SETCURSEL, index, 0);
+  }
+}
+
+void on_playback_skip_selected(SettingsState &state, HWND combo) {
+  const auto index = SendMessageW(combo, CB_GETCURSEL, 0, 0);
+  if (index == CB_ERR) return;
+  wchar_t value[32];
+  SendMessageW(combo, CB_GETLBTEXT, index, reinterpret_cast<LPARAM>(value));
+  state.document.value["audio"]["playbackSkipSeconds"] = std::wcstol(value, nullptr, 10);
+  save_config(state);
+}
+
+void populate_selection_policy_combo(HWND combo, const ConfigDocument &document) {
+  const auto selection = document.value.value("selection", nlohmann::json::object());
+  const auto current = parse_selection_capture_policy(selection.value("capturePolicy", "automatic"));
+  const SelectionCapturePolicy policies[] = {
+      SelectionCapturePolicy::Automatic,
+      SelectionCapturePolicy::UiAutomationOnly,
+      SelectionCapturePolicy::ClipboardOnly,
+  };
+  for (int index = 0; index < 3; ++index) {
+    const auto name = selection_capture_policy_name(policies[index]);
+    const std::wstring label = policies[index] == SelectionCapturePolicy::Automatic
+                                   ? L"Automatic (direct, then safe Copy if supported)"
+                               : policies[index] == SelectionCapturePolicy::UiAutomationOnly
+                                   ? L"UI Automation only"
+                                   : L"Clipboard only (read existing clipboard)";
+    SendMessageW(combo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(label.c_str()));
+    SendMessageW(combo, CB_SETITEMDATA, index, static_cast<LPARAM>(policies[index]));
+    if (policies[index] == current) SendMessageW(combo, CB_SETCURSEL, index, 0);
+    (void)name;
+  }
+}
+
+void on_selection_policy_selected(SettingsState &state, HWND combo) {
+  const int index = static_cast<int>(SendMessageW(combo, CB_GETCURSEL, 0, 0));
+  if (index < 0) return;
+  const auto policy = static_cast<SelectionCapturePolicy>(SendMessageW(combo, CB_GETITEMDATA, index, 0));
+  state.document.value["selection"]["capturePolicy"] = selection_capture_policy_name(policy);
+  save_config(state);
+  append_activity_log(state,
+                      policy == SelectionCapturePolicy::UiAutomationOnly
+                          ? L"Selection policy saved: UI Automation only; the clipboard is never changed."
+                      : policy == SelectionCapturePolicy::ClipboardOnly
+                          ? L"Selection policy saved: Ctrl+F8 reads the existing clipboard; copy the selection first."
+                          : L"Selection policy saved: automatic direct capture; safe Copy is used only when a compatible adapter is available.");
+}
+
 // Controls created with CreateWindowExW inherit no font, so Windows draws them
 // with the ancient bitmap SYSTEM_FONT: bold, oversized, and wide enough to
 // overflow the fixed pixel layout below (it clipped the Import… caption and the
@@ -219,6 +305,112 @@ void on_default_profile_selected(SettingsState &state, HWND combo) {
   save_config(state);
 }
 
+std::string edit_text(HWND edit) {
+  const int length = GetWindowTextLengthW(edit);
+  std::wstring text(static_cast<std::size_t>(length) + 1, L'\0');
+  GetWindowTextW(edit, text.data(), length + 1);
+  text.resize(static_cast<std::size_t>(length));
+  return wide_to_utf8(text.c_str());
+}
+
+void append_activity_log(SettingsState &state, const std::wstring &text) {
+  if (state.activity_log == nullptr) {
+    return;
+  }
+  const int length = GetWindowTextLengthW(state.activity_log);
+  SendMessageW(state.activity_log, EM_SETSEL, length, length);
+  if (length != 0) {
+    SendMessageW(state.activity_log, EM_REPLACESEL, FALSE, reinterpret_cast<LPARAM>(L"\r\n"));
+  }
+  SendMessageW(state.activity_log, EM_REPLACESEL, FALSE, reinterpret_cast<LPARAM>(text.c_str()));
+  SendMessageW(state.activity_log, EM_SCROLLCARET, 0, 0);
+  // Loading and download setup block this UI thread, so repaint the message
+  // announcing that work before entering either operation.
+  UpdateWindow(state.activity_log);
+}
+
+std::wstring captured_hotkey_text(WPARAM virtual_key) {
+  std::wstring text;
+  const bool control_down = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
+  const bool alt_down = (GetKeyState(VK_MENU) & 0x8000) != 0;
+  const bool shift_down = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+  const bool windows_down = (GetKeyState(VK_LWIN) & 0x8000) != 0 ||
+                            (GetKeyState(VK_RWIN) & 0x8000) != 0;
+  if (control_down) {
+    text += L"Ctrl + ";
+  }
+  if (alt_down) {
+    text += L"Alt + ";
+  }
+  if (shift_down) {
+    text += L"Shift + ";
+  }
+  if (windows_down) {
+    text += L"Win + ";
+  }
+
+  if ((virtual_key >= 'A' && virtual_key <= 'Z') || (virtual_key >= '0' && virtual_key <= '9')) {
+    text += static_cast<wchar_t>(virtual_key);
+  } else if (virtual_key >= VK_F1 && virtual_key <= VK_F24) {
+    text += L"F" + std::to_wstring(virtual_key - VK_F1 + 1);
+  }
+  return control_down || alt_down || shift_down || windows_down ? text : std::wstring();
+}
+
+LRESULT CALLBACK hotkey_edit_proc(HWND edit, UINT message, WPARAM wparam, LPARAM lparam) {
+  if (message == WM_KEYDOWN || message == WM_SYSKEYDOWN) {
+    const auto captured = captured_hotkey_text(wparam);
+    if (!captured.empty() && captured.back() != L' ') {
+      SetWindowTextW(edit, captured.c_str());
+      SendMessageW(edit, EM_SETSEL, 0, -1);
+      auto *state = reinterpret_cast<SettingsState *>(
+          GetWindowLongPtrW(GetParent(edit), GWLP_USERDATA));
+      if (state != nullptr) {
+        append_activity_log(*state, L"Captured shortcut: " + captured + L". Check and save it to apply.");
+      }
+      return 0;
+    }
+  }
+  // Suppress the character message after a captured chord, otherwise the edit
+  // control inserts the final key after the canonical chord above.
+  if (message == WM_CHAR || message == WM_SYSCHAR) {
+    return 0;
+  }
+  return CallWindowProcW(original_hotkey_edit_proc, edit, message, wparam, lparam);
+}
+
+void on_check_hotkey_clicked(SettingsState &state, HWND window, HWND edit) {
+  const std::string configured = edit_text(edit);
+  if (configured.empty()) {
+    state.document.value["hotkeys"]["readSelection"] = "";
+    save_config(state);
+    append_activity_log(state, L"Selection hotkey disabled and saved. Close Settings to apply.");
+    return;
+  }
+
+  std::string error;
+  const auto hotkey = parse_global_hotkey(configured, error);
+  if (!hotkey.has_value()) {
+    append_activity_log(state, utf8_to_wide("Invalid shortcut: " + error));
+    return;
+  }
+
+  // Registering then immediately unregistering is Windows' only reliable
+  // availability check: there is no API that enumerates every application's
+  // global hotkeys. The tray releases its own registration before opening this
+  // window, so changing an already-active TTS Host binding does not self-report
+  // as a conflict.
+  if (!RegisterHotKey(window, kSettingsHotkeyProbeId,
+                      hotkey->modifiers | MOD_NOREPEAT, hotkey->virtual_key)) {
+    append_activity_log(state, L"Shortcut unavailable: Windows or another application is using it.");
+    return;
+  }
+  UnregisterHotKey(window, kSettingsHotkeyProbeId);
+  state.document.value["hotkeys"]["readSelection"] = configured;
+  save_config(state);
+  append_activity_log(state, L"Shortcut available and saved. Close Settings to apply.");
+}
+
 // server.host/server.port cannot be applied live (docs/design/architecture.md#live-reload),
 // so these are only written on focus loss, once the user has finished editing, rather than
 // on every keystroke like the output-device combo's immediate selection.
@@ -263,42 +455,32 @@ void populate_model_combo(HWND combo, SettingsState &state, const ModelRegistryS
   }
 }
 
-void set_model_status(SettingsState &state, const std::wstring &text) {
-  if (state.model_status_label == nullptr) {
-    return;
-  }
-  SetWindowTextW(state.model_status_label, text.c_str());
-  // Loading blocks this thread on the runner handshake, so force the label to
-  // repaint now rather than after the wait it is announcing.
-  UpdateWindow(state.model_status_label);
-}
-
 void report_session_status(SettingsState &state) {
   const auto &status = state.sessions.status();
   if (!status.loaded) {
-    set_model_status(state, L"No model loaded.");
+    append_activity_log(state, L"No model loaded.");
     return;
   }
-  set_model_status(state, L"Loaded: " + utf8_to_wide(status.display_name) + L" (" +
-                              utf8_to_wide(status.model_id) + L", " +
-                              utf8_to_wide(status.engine) + L")");
+  append_activity_log(state, L"Loaded: " + utf8_to_wide(status.display_name) + L" (" +
+                                 utf8_to_wide(status.model_id) + L", " +
+                                 utf8_to_wide(status.engine) + L")");
 }
 
 void on_load_model_clicked(SettingsState &state, HWND combo) {
   const int index = static_cast<int>(SendMessageW(combo, CB_GETCURSEL, 0, 0));
   if (index < 0 || static_cast<std::size_t>(index) >= state.model_ids.size()) {
-    set_model_status(state, L"Select a model to load.");
+    append_activity_log(state, L"Select a model to load.");
     return;
   }
 
   const auto &model_id = state.model_ids[static_cast<std::size_t>(index)];
-  set_model_status(state, L"Loading " + utf8_to_wide(model_id) + L"…");
+  append_activity_log(state, L"Loading " + utf8_to_wide(model_id) + L"…");
   try {
     state.sessions.load(model_id, state.document);
   } catch (const std::exception &error) {
     // A model that will not load is ordinary (missing runner, bad weights);
     // report it in the window instead of taking the process down.
-    set_model_status(state, L"Load failed: " + utf8_to_wide(error.what()));
+    append_activity_log(state, L"Load failed: " + utf8_to_wide(error.what()));
     return;
   }
   report_session_status(state);
@@ -325,7 +507,7 @@ void populate_catalogue_combo(HWND combo, SettingsState &state, const ModelRegis
 void on_download_model_clicked(SettingsState &state, HWND combo, HWND window) {
   const int index = static_cast<int>(SendMessageW(combo, CB_GETCURSEL, 0, 0));
   if (index < 0 || static_cast<std::size_t>(index) >= state.catalogue_ids.size()) {
-    set_model_status(state, L"Select a catalogue entry to download.");
+    append_activity_log(state, L"Select a catalogue entry to download.");
     return;
   }
 
@@ -337,34 +519,34 @@ void on_download_model_clicked(SettingsState &state, HWND combo, HWND window) {
     return;
   }
   if (catalogue_entry_installed(*found, state.last_scan)) {
-    set_model_status(state, utf8_to_wide(found->id) + L" is already installed.");
+    append_activity_log(state, utf8_to_wide(found->id) + L" is already installed.");
     return;
   }
 
   const auto &directories = state.document.value.at("modelRegistry").at("directories");
   if (directories.empty()) {
-    set_model_status(state, L"No model directory is configured to download into.");
+    append_activity_log(state, L"No model directory is configured to download into.");
     return;
   }
   const auto destination_root = resolve_registry_directory(
       state.document.paths.config_path, directories.front().get<std::string>());
 
   try {
-    set_model_status(state, L"Downloading " + utf8_to_wide(found->display_name) + L"…");
+    append_activity_log(state, L"Downloading " + utf8_to_wide(found->display_name) + L"…");
     download_catalogue_entry(
         *found, destination_root, state.document, fetch_url_to_file,
         [&state](const DownloadProgress &progress) {
-          set_model_status(state, utf8_to_wide(progress.relative_path) + L": " +
-                                      std::to_wstring(progress.bytes_downloaded) + L" / " +
-                                      std::to_wstring(progress.bytes_total) + L" bytes");
+          append_activity_log(state, utf8_to_wide(progress.relative_path) + L": " +
+                                         std::to_wstring(progress.bytes_downloaded) + L" / " +
+                                         std::to_wstring(progress.bytes_total) + L" bytes");
         });
     refresh_model_views(state, window);
-    set_model_status(state, L"Downloaded " + utf8_to_wide(found->display_name));
+    append_activity_log(state, L"Downloaded " + utf8_to_wide(found->display_name));
   } catch (const std::exception &error) {
     // Transport failures and checksum mismatches are ordinary (flaky network,
     // corrupted partial file); report them in the window instead of taking
     // the process down.
-    set_model_status(state, L"Download failed: " + utf8_to_wide(error.what()));
+    append_activity_log(state, L"Download failed: " + utf8_to_wide(error.what()));
   }
 }
 
@@ -380,15 +562,15 @@ void on_unload_model_clicked(SettingsState &state) {
   try {
     state.sessions.unload();
   } catch (const std::exception &error) {
-    set_model_status(state, L"Unload failed: " + utf8_to_wide(error.what()));
+    append_activity_log(state, L"Unload failed: " + utf8_to_wide(error.what()));
     return;
   }
   report_session_status(state);
 }
 
-// Model manifests are validated by scan_model_registry before reaching this
-// display, which stays read-only: it shows licence information for every
-// discovered package, while the combo box above it is what the user acts on.
+// Model manifests are validated by scan_model_registry before their details
+// reach the read-only activity log; the combo box above it is what the user
+// acts on.
 std::wstring format_installed_models(const ModelRegistryScan &scan) {
   std::wstring text;
   if (scan.discovered_packages.empty()) {
@@ -474,9 +656,8 @@ void refresh_model_views(SettingsState &state, HWND window) {
     state.model_ids.clear();
     populate_model_combo(combo, state, state.last_scan);
   }
-  if (state.installed_models_display != nullptr) {
-    SetWindowTextW(state.installed_models_display, format_installed_models(state.last_scan).c_str());
-  }
+  append_activity_log(state, L"Installed models and licences updated:\r\n" +
+                                 format_installed_models(state.last_scan));
   const HWND catalogue_combo = GetDlgItem(window, kCatalogueComboId);
   if (catalogue_combo != nullptr) {
     SendMessageW(catalogue_combo, CB_RESETCONTENT, 0, 0);
@@ -505,16 +686,16 @@ void on_import_model_clicked(SettingsState &state, HWND window) {
     return;  // Cancelled; leave the status line saying whatever it said before.
   }
 
-  set_model_status(state, L"Importing " + folder + L"…");
+  append_activity_log(state, L"Importing " + folder + L"…");
   try {
     const auto imported = import_model_package(std::filesystem::path(folder), state.document);
     refresh_model_views(state, window);
-    set_model_status(state, L"Imported " + utf8_to_wide(imported.display_name) + L" (" +
-                                utf8_to_wide(imported.id) + L")");
+    append_activity_log(state, L"Imported " + utf8_to_wide(imported.display_name) + L" (" +
+                                   utf8_to_wide(imported.id) + L")");
   } catch (const std::exception &error) {
     // Invalid, incomplete, and duplicate packages are ordinary user mistakes:
     // report the registry's actionable reason in the window.
-    set_model_status(state, L"Import failed: " + utf8_to_wide(error.what()));
+    append_activity_log(state, L"Import failed: " + utf8_to_wide(error.what()));
   }
 }
 
@@ -553,6 +734,12 @@ LRESULT CALLBACK settings_window_proc(HWND window, UINT message, WPARAM wparam, 
       }
       if (LOWORD(wparam) == kOutputDeviceComboId && HIWORD(wparam) == CBN_SELCHANGE) {
         on_output_device_selected(*state, reinterpret_cast<HWND>(lparam));
+      } else if (LOWORD(wparam) == kSpeechSpeedComboId && HIWORD(wparam) == CBN_SELCHANGE) {
+        on_speech_speed_selected(*state, reinterpret_cast<HWND>(lparam));
+      } else if (LOWORD(wparam) == kPlaybackSkipComboId && HIWORD(wparam) == CBN_SELCHANGE) {
+        on_playback_skip_selected(*state, reinterpret_cast<HWND>(lparam));
+      } else if (LOWORD(wparam) == kSelectionPolicyComboId && HIWORD(wparam) == CBN_SELCHANGE) {
+        on_selection_policy_selected(*state, reinterpret_cast<HWND>(lparam));
       } else if (LOWORD(wparam) == kServerHostEditId && HIWORD(wparam) == EN_KILLFOCUS) {
         on_server_host_changed(*state, reinterpret_cast<HWND>(lparam));
       } else if (LOWORD(wparam) == kServerPortEditId && HIWORD(wparam) == EN_KILLFOCUS) {
@@ -567,6 +754,8 @@ LRESULT CALLBACK settings_window_proc(HWND window, UINT message, WPARAM wparam, 
         on_import_model_clicked(*state, window);
       } else if (LOWORD(wparam) == kDownloadModelButtonId && HIWORD(wparam) == BN_CLICKED) {
         on_download_model_clicked(*state, GetDlgItem(window, kCatalogueComboId), window);
+      } else if (LOWORD(wparam) == kCheckHotkeyButtonId && HIWORD(wparam) == BN_CLICKED) {
+        on_check_hotkey_clicked(*state, window, GetDlgItem(window, kReadSelectionHotkeyEditId));
       }
       return 0;
     }
@@ -577,7 +766,7 @@ LRESULT CALLBACK settings_window_proc(HWND window, UINT message, WPARAM wparam, 
 
 }  // namespace
 
-void run_settings_window(const ConfigDocument &document,
+void run_settings_window(ConfigDocument &document,
                          const std::filesystem::path &runner_directory) {
   const wchar_t *kClassName = L"TtsHostSettingsWindow";
   const HINSTANCE instance = GetModuleHandleW(nullptr);
@@ -604,13 +793,12 @@ void run_settings_window(const ConfigDocument &document,
 
   SettingsState state(document, runner_directory);
 
-  // A plain visible top-level window with output-device, server host/port,
-  // default-English-profile, model load/unload/import, catalogue download,
-  // and installed-model licence display controls. Hotkeys arrive in a later
-  // slice as additional controls added to this window.
+  // A plain visible top-level window with output-device, selection-hotkey,
+  // server host/port, default-English-profile, model load/unload/import,
+  // catalogue download, and installed-model licence display controls.
   const HWND window =
       CreateWindowExW(0, kClassName, L"TTS Host Settings", WS_OVERLAPPEDWINDOW, CW_USEDEFAULT,
-                      CW_USEDEFAULT, 512, 648, nullptr, nullptr, instance, nullptr);
+                      CW_USEDEFAULT, 512, 900, nullptr, nullptr, instance, nullptr);
   if (!window) {
     throw std::runtime_error("failed to create the settings window");
   }
@@ -669,10 +857,44 @@ void run_settings_window(const ConfigDocument &document,
   CreateWindowExW(0, L"STATIC", L"Restart required to take effect.", WS_CHILD | WS_VISIBLE, 176, 172,
                   260, 20, window, nullptr, instance, nullptr);
 
-  CreateWindowExW(0, L"STATIC", L"Model:", WS_CHILD | WS_VISIBLE, 16, 204, 152, 24, window, nullptr,
+  CreateWindowExW(0, L"STATIC", L"Selection hotkey:", WS_CHILD | WS_VISIBLE, 16, 204, 152, 24, window,
+                  nullptr, instance, nullptr);
+  const std::string configured_hotkey =
+      state.document.value.value("hotkeys", nlohmann::json::object()).value("readSelection", "");
+  const HWND hotkey_edit = CreateWindowExW(
+      WS_EX_CLIENTEDGE, L"EDIT", utf8_to_wide(configured_hotkey).c_str(),
+      WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL, 176, 200, 190, 24, window,
+      reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kReadSelectionHotkeyEditId)), instance, nullptr);
+  if (!hotkey_edit) {
+    throw std::runtime_error("failed to create the selection-hotkey controls");
+  }
+  original_hotkey_edit_proc = reinterpret_cast<WNDPROC>(
+      SetWindowLongPtrW(hotkey_edit, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(hotkey_edit_proc)));
+  const HWND check_hotkey_button = CreateWindowExW(
+      0, L"BUTTON", L"Check and save", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 376, 200, 100, 24, window,
+      reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kCheckHotkeyButtonId)), instance, nullptr);
+  if (!check_hotkey_button || original_hotkey_edit_proc == nullptr) {
+    throw std::runtime_error("failed to create the selection-hotkey controls");
+  }
+
+  CreateWindowExW(0, L"STATIC", L"Capture policy:", WS_CHILD | WS_VISIBLE, 16, 238, 152, 24,
+                  window, nullptr, instance, nullptr);
+  const HWND capture_policy_combo = CreateWindowExW(
+      0, L"COMBOBOX", nullptr, WS_CHILD | WS_VISIBLE | WS_VSCROLL | CBS_DROPDOWNLIST,
+      176, 234, 300, 120, window,
+      reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kSelectionPolicyComboId)), instance, nullptr);
+  if (!capture_policy_combo) {
+    throw std::runtime_error("failed to create the selection-capture policy control");
+  }
+  populate_selection_policy_combo(capture_policy_combo, document);
+  CreateWindowExW(0, L"STATIC",
+                  L"Clipboard-only reads existing text; copy first. Automatic Copy may change it.",
+                  WS_CHILD | WS_VISIBLE, 16, 264, 460, 20, window, nullptr, instance, nullptr);
+
+  CreateWindowExW(0, L"STATIC", L"Model:", WS_CHILD | WS_VISIBLE, 16, 328, 152, 24, window, nullptr,
                   instance, nullptr);
   const HWND model_combo = CreateWindowExW(
-      0, L"COMBOBOX", nullptr, WS_CHILD | WS_VISIBLE | WS_VSCROLL | CBS_DROPDOWNLIST, 176, 200, 300,
+      0, L"COMBOBOX", nullptr, WS_CHILD | WS_VISIBLE | WS_VSCROLL | CBS_DROPDOWNLIST, 176, 324, 300,
       200, window, reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kModelComboId)), instance, nullptr);
   if (!model_combo) {
     throw std::runtime_error("failed to create the model-selection control");
@@ -681,31 +903,22 @@ void run_settings_window(const ConfigDocument &document,
   populate_model_combo(model_combo, state, state.last_scan);
 
   const HWND load_button = CreateWindowExW(
-      0, L"BUTTON", L"Load", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 176, 232, 90, 26, window,
+      0, L"BUTTON", L"Load", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 176, 356, 90, 26, window,
       reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kLoadModelButtonId)), instance, nullptr);
   const HWND unload_button = CreateWindowExW(
-      0, L"BUTTON", L"Unload", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 276, 232, 90, 26, window,
+      0, L"BUTTON", L"Unload", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 276, 356, 90, 26, window,
       reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kUnloadModelButtonId)), instance, nullptr);
   const HWND import_button = CreateWindowExW(
-      0, L"BUTTON", L"Import…", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 376, 232, 100, 26, window,
+      0, L"BUTTON", L"Import…", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 376, 356, 100, 26, window,
       reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kImportModelButtonId)), instance, nullptr);
   if (!load_button || !unload_button || !import_button) {
     throw std::runtime_error("failed to create the model load/unload/import controls");
   }
 
-  state.model_status_label = CreateWindowExW(0, L"STATIC", L"", WS_CHILD | WS_VISIBLE, 16, 266, 460,
-                                             20, window, nullptr, instance, nullptr);
-  if (state.model_status_label == nullptr) {
-    throw std::runtime_error("failed to create the model status display");
-  }
-  // A loaded model stays resident only while this window is open, so the
-  // window always opens with nothing loaded (see tts_host/model_session.hpp).
-  report_session_status(state);
-
-  CreateWindowExW(0, L"STATIC", L"Catalogue:", WS_CHILD | WS_VISIBLE, 16, 298, 152, 24, window, nullptr,
+  CreateWindowExW(0, L"STATIC", L"Catalogue:", WS_CHILD | WS_VISIBLE, 16, 422, 152, 24, window, nullptr,
                   instance, nullptr);
   const HWND catalogue_combo = CreateWindowExW(
-      0, L"COMBOBOX", nullptr, WS_CHILD | WS_VISIBLE | WS_VSCROLL | CBS_DROPDOWNLIST, 176, 294, 300,
+      0, L"COMBOBOX", nullptr, WS_CHILD | WS_VISIBLE | WS_VSCROLL | CBS_DROPDOWNLIST, 176, 418, 300,
       200, window, reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kCatalogueComboId)), instance,
       nullptr);
   if (!catalogue_combo) {
@@ -714,22 +927,51 @@ void run_settings_window(const ConfigDocument &document,
   populate_catalogue_combo(catalogue_combo, state, state.last_scan);
 
   const HWND download_button = CreateWindowExW(
-      0, L"BUTTON", L"Download", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 176, 326, 100, 26, window,
+      0, L"BUTTON", L"Download", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 176, 450, 100, 26, window,
       reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kDownloadModelButtonId)), instance, nullptr);
   if (!download_button) {
     throw std::runtime_error("failed to create the download-model control");
   }
 
-  CreateWindowExW(0, L"STATIC", L"Installed models and licences:", WS_CHILD | WS_VISIBLE, 16, 362,
+  CreateWindowExW(0, L"STATIC", L"Activity and installed models:", WS_CHILD | WS_VISIBLE, 16, 486,
                   240, 24, window, nullptr, instance, nullptr);
-  const auto model_text = format_installed_models(state.last_scan);
-  state.installed_models_display = CreateWindowExW(
-      WS_EX_CLIENTEDGE, L"EDIT", model_text.c_str(),
-      WS_CHILD | WS_VISIBLE | WS_VSCROLL | ES_AUTOVSCROLL | ES_MULTILINE | ES_READONLY, 16, 386, 460,
+  state.activity_log = CreateWindowExW(
+      WS_EX_CLIENTEDGE, L"EDIT", nullptr,
+      WS_CHILD | WS_VISIBLE | WS_VSCROLL | ES_AUTOVSCROLL | ES_MULTILINE | ES_READONLY, 16, 510, 460,
       170, window, nullptr, instance, nullptr);
-  if (state.installed_models_display == nullptr) {
-    throw std::runtime_error("failed to create the installed-model licence display");
+  if (state.activity_log == nullptr) {
+    throw std::runtime_error("failed to create the settings activity log");
   }
+  append_activity_log(state, L"Installed models and licences:\r\n" + format_installed_models(state.last_scan));
+  for (const auto &diagnostic : selection_capture_diagnostics()) {
+    append_activity_log(state, utf8_to_wide(diagnostic));
+  }
+  // A loaded model stays resident only while this window is open, so the
+  // window always opens with nothing loaded (see tts_host/model_session.hpp).
+  report_session_status(state);
+
+  CreateWindowExW(0, L"STATIC", L"Default speech speed:", WS_CHILD | WS_VISIBLE, 16, 700, 152, 24,
+                  window, nullptr, instance, nullptr);
+  const HWND speech_speed_combo = CreateWindowExW(
+      0, L"COMBOBOX", nullptr, WS_CHILD | WS_VISIBLE | WS_VSCROLL | CBS_DROPDOWNLIST, 176, 696, 120,
+      160, window, reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kSpeechSpeedComboId)), instance,
+      nullptr);
+  if (speech_speed_combo == nullptr) {
+    throw std::runtime_error("failed to create the speech-speed control");
+  }
+  populate_speech_speed_combo(speech_speed_combo, state.document.value["audio"].value("speechSpeed", 1.0));
+
+  CreateWindowExW(0, L"STATIC", L"Playback seek interval:", WS_CHILD | WS_VISIBLE, 16, 736, 152,
+                  24, window, nullptr, instance, nullptr);
+  const HWND playback_skip_combo = CreateWindowExW(
+      0, L"COMBOBOX", nullptr, WS_CHILD | WS_VISIBLE | WS_VSCROLL | CBS_DROPDOWNLIST, 176, 732,
+      150, 240, window,
+      reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kPlaybackSkipComboId)), instance, nullptr);
+  if (playback_skip_combo == nullptr) {
+    throw std::runtime_error("failed to create the playback seek interval control");
+  }
+  populate_playback_skip_combo(playback_skip_combo,
+                               state.document.value["audio"].value("playbackSkipSeconds", 5));
 
   // Every control above is created without a font, so give them all the shell
   // UI font in one pass now that they exist.
@@ -756,7 +998,7 @@ void run_settings_window(const ConfigDocument &document,
 
 namespace tts_host {
 
-void run_settings_window(const ConfigDocument &, const std::filesystem::path &) {
+void run_settings_window(ConfigDocument &, const std::filesystem::path &) {
   throw std::runtime_error(
       "the settings window is not implemented on this platform yet (Windows only, see "
       "docs/adr/0007-native-ui-per-platform.md)");

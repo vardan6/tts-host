@@ -33,6 +33,17 @@ FetchContent_Declare(
 
 FetchContent_MakeAvailable(nlohmann_json json_schema_validator)
 
+# The local ingress follows the documented Boost.Asio/Beast stack. The
+# components used here are header-only, so populate headers without building
+# the rest of Boost.
+FetchContent_Declare(
+  boost_headers
+  URL https://archives.boost.io/release/1.89.0/source/boost_1_89_0.tar.gz
+  URL_HASH SHA256=9de758db755e8330a01d995b0a24d09798048400ac25c03fc5ea9be364b13c93
+  DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+)
+FetchContent_Populate(boost_headers)
+
 # ONNX Runtime ships prebuilt release archives with no top-level CMakeLists.txt
 # (its lib/cmake/onnxruntime config package assumes an installed layout with
 # lib64/ and include/onnxruntime/, which does not match the release archive's
@@ -155,17 +166,24 @@ endif()
 
 add_executable(
   tts-host
+  src/audio_conversion.cpp
+  src/audio_history.cpp
   src/catalogue_download.cpp
   src/clipboard.cpp
   src/config_loader.cpp
+  src/global_hotkey.cpp
   src/language_selection.cpp
+  src/local_api_server.cpp
   src/model_catalogue.cpp
   src/model_import.cpp
   src/model_registry.cpp
   src/model_session.cpp
+  src/now_playing_window.cpp
+  src/playback_controller.cpp
   src/playback_sink.cpp
   src/runner_protocol.cpp
   src/runner_launcher.cpp
+  src/selection_capture.cpp
   src/settings_window.cpp
   src/text_normalizer.cpp
   src/text_splitter.cpp
@@ -198,6 +216,7 @@ endif()
 add_executable(
   tts-host-kokoro-onnx-runner
   src/espeak_phonemizer.cpp
+  src/kokoro_batching.cpp
   src/kokoro_phoneme_mapping.cpp
   src/kokoro_runner.cpp
   src/kokoro_runner_main.cpp
@@ -250,7 +269,8 @@ if(WIN32)
   )
 endif()
 
-target_include_directories(tts-host PRIVATE include)
+target_include_directories(tts-host PRIVATE include ${boost_headers_SOURCE_DIR})
+target_compile_definitions(tts-host PRIVATE BOOST_ERROR_CODE_HEADER_ONLY)
 
 target_link_libraries(
   tts-host
@@ -263,7 +283,7 @@ if(WIN32)
   # picker (src/settings_window.cpp); winhttp is catalogue download's outbound
   # HTTPS client (src/catalogue_download.cpp); the rest are the tray, WASAPI,
   # and shell APIs already in use.
-  target_link_libraries(tts-host PRIVATE user32 ole32 shell32 uuid winhttp)
+  target_link_libraries(tts-host PRIVATE user32 ole32 oleaut32 shell32 uuid winhttp ws2_32 mswsock)
 endif()
 
 if(MSVC)
@@ -322,6 +342,35 @@ set(CPACK_PACKAGE_DIRECTORY "${CMAKE_BINARY_DIR}/dist")
 include(CPack)
 
 if(BUILD_TESTING)
+  add_executable(
+    tts-host-selection-capture-tests
+    src/selection_capture.cpp
+    tests/selection_capture_tests.cpp
+  )
+  target_include_directories(tts-host-selection-capture-tests PRIVATE include)
+  if(WIN32)
+    target_link_libraries(tts-host-selection-capture-tests PRIVATE ole32 oleaut32)
+  endif()
+  if(MSVC)
+    target_compile_options(tts-host-selection-capture-tests PRIVATE /W4 /permissive-)
+  else()
+    target_compile_options(tts-host-selection-capture-tests PRIVATE -Wall -Wextra -Wpedantic)
+  endif()
+  add_test(NAME tts_host_selection_capture COMMAND tts-host-selection-capture-tests)
+
+  add_executable(
+    tts-host-audio-conversion-tests
+    src/audio_conversion.cpp
+    tests/audio_conversion_tests.cpp
+  )
+  target_include_directories(tts-host-audio-conversion-tests PRIVATE include)
+  if(MSVC)
+    target_compile_options(tts-host-audio-conversion-tests PRIVATE /W4 /permissive-)
+  else()
+    target_compile_options(tts-host-audio-conversion-tests PRIVATE -Wall -Wextra -Wpedantic)
+  endif()
+  add_test(NAME tts_host_audio_conversion COMMAND tts-host-audio-conversion-tests)
+
   add_executable(
     tts-host-runner-protocol-tests
     src/runner_audio_output.cpp
@@ -588,6 +637,42 @@ if(BUILD_TESTING)
   add_test(NAME tts_host_text_splitting COMMAND tts-host-text-splitter-tests)
 
   add_executable(
+    tts-host-playback-controller-tests
+    src/playback_controller.cpp
+    tests/playback_controller_tests.cpp
+  )
+  target_include_directories(tts-host-playback-controller-tests PRIVATE include)
+  if(MSVC)
+    target_compile_options(tts-host-playback-controller-tests PRIVATE /W4 /permissive-)
+  else()
+    target_compile_options(tts-host-playback-controller-tests PRIVATE -Wall -Wextra -Wpedantic)
+  endif()
+  add_test(NAME tts_host_playback_controller COMMAND tts-host-playback-controller-tests)
+
+  add_executable(tts-host-audio-history-tests src/audio_history.cpp tests/audio_history_tests.cpp)
+  target_include_directories(tts-host-audio-history-tests PRIVATE include)
+  if(MSVC)
+    target_compile_options(tts-host-audio-history-tests PRIVATE /W4 /permissive-)
+  else()
+    target_compile_options(tts-host-audio-history-tests PRIVATE -Wall -Wextra -Wpedantic)
+  endif()
+  add_test(NAME tts_host_audio_history COMMAND tts-host-audio-history-tests)
+
+  add_executable(tts-host-local-api-tests src/local_api_server.cpp tests/local_api_server_tests.cpp)
+  target_include_directories(tts-host-local-api-tests PRIVATE include ${boost_headers_SOURCE_DIR})
+  target_compile_definitions(tts-host-local-api-tests PRIVATE BOOST_ERROR_CODE_HEADER_ONLY)
+  target_link_libraries(tts-host-local-api-tests PRIVATE nlohmann_json::nlohmann_json)
+  if(WIN32)
+    target_link_libraries(tts-host-local-api-tests PRIVATE ws2_32 mswsock)
+  endif()
+  if(MSVC)
+    target_compile_options(tts-host-local-api-tests PRIVATE /W4 /permissive-)
+  else()
+    target_compile_options(tts-host-local-api-tests PRIVATE -Wall -Wextra -Wpedantic)
+  endif()
+  add_test(NAME tts_host_local_api COMMAND tts-host-local-api-tests)
+
+  add_executable(
     tts-host-kokoro-phoneme-mapping-tests
     src/kokoro_phoneme_mapping.cpp
     tests/kokoro_phoneme_mapping_tests.cpp
@@ -599,6 +684,21 @@ if(BUILD_TESTING)
     target_compile_options(tts-host-kokoro-phoneme-mapping-tests PRIVATE -Wall -Wextra -Wpedantic)
   endif()
   add_test(NAME tts_host_kokoro_phoneme_mapping COMMAND tts-host-kokoro-phoneme-mapping-tests)
+
+  add_executable(
+    tts-host-kokoro-batching-tests
+    src/kokoro_batching.cpp
+    src/runner_protocol.cpp
+    tests/kokoro_batching_tests.cpp
+  )
+  target_include_directories(tts-host-kokoro-batching-tests PRIVATE include)
+  target_link_libraries(tts-host-kokoro-batching-tests PRIVATE nlohmann_json::nlohmann_json)
+  if(MSVC)
+    target_compile_options(tts-host-kokoro-batching-tests PRIVATE /W4 /permissive-)
+  else()
+    target_compile_options(tts-host-kokoro-batching-tests PRIVATE -Wall -Wextra -Wpedantic)
+  endif()
+  add_test(NAME tts_host_kokoro_batching COMMAND tts-host-kokoro-batching-tests)
 
   # Proves the vendored ONNX Runtime toolchain (see the onnxruntime::onnxruntime
   # target above) with a standalone, non-protocol executable. Named distinctly

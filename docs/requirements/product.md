@@ -113,6 +113,9 @@ connected prose and sentence transitions.
   available but is not the default.
 - Long text begins playing quickly rather than after full synthesis, and can be
   cancelled at any point.
+- Engine input limits must not silently truncate a read request or terminate
+  its runner. The complete normalized request is spoken in bounded engine
+  batches when a model cannot accept it as one input.
 - Markdown and HTML input are read correctly by default, not read as literal
   markup: code blocks are announced and skipped, inline code is read, links are
   read as their text, tables are skipped with a marker, headings are read with a
@@ -123,6 +126,33 @@ connected prose and sentence transitions.
   data.
 - Audio follows the operating system's default output device and follows changes
   to it, unless a device is pinned in configuration.
+- A global **Read selection** command reads the active application's selected
+  text without requiring the user to copy it manually whenever that application
+  exposes a selection. It must report which capture path failed rather than
+  silently reading stale clipboard content. Direct accessibility capture is
+  preferred; a synthetic Copy fallback must preserve the focused application's
+  normal Copy semantics and must never send an interrupting command to a
+  terminal or console. Browser-page selection is a first-class path, not a
+  lower-priority fallback.
+- The desktop offers a persistent, independently opened **Now Playing** window
+  for the active utterance. It shows state and source, provides read-selection,
+  read-clipboard, pause/resume, and stop controls, and provides backward and
+  forward seek controls plus a speech-speed control from 0.5× to 2.0×. The seek
+  interval is configurable, defaults to five seconds, and a control that cannot
+  reach its target is disabled rather than pretending that the utterance moved.
+- Pause retains the current position; Stop ends playback and clears queued
+  requests. Closing Now Playing hides the window without stopping playback.
+  Capture failure does not interrupt the current utterance. Read selection
+  from Host controls targets the identified last external application, never
+  the Host window itself.
+- Backward seek remains available through retained generated audio. Retention
+  must have bounded memory and storage use, with an actionable error on resource
+  exhaustion. Display elapsed and generated duration without claiming a final
+  duration before synthesis finishes.
+- A speed change applies to an active utterance at its next sentence boundary:
+  finish already audible PCM unchanged, discard unplayed lookahead, and
+  regenerate that lookahead at the new speed. It must not skip or repeat text,
+  change pitch by resampling PCM, or claim seamless mid-sentence adjustment.
 
 ## Configuration and controls
 
@@ -133,6 +163,24 @@ connected prose and sentence transitions.
   a second source of truth.
 - Every setting is reachable from the settings window. The tray menu duplicates
   only the frequently changed subset.
+- Selection capture is configurable: automatic direct selection with a Copy/
+  clipboard fallback is the default; users can choose direct-selection-only or
+  clipboard-only operation. Clipboard-only reads the existing clipboard and
+  never sends Copy, so users must copy the intended selection first and may
+  otherwise read stale text. Automatic Copy fallback may change the clipboard
+  and cannot work for protected or elevated targets. When a safe platform-native
+  Copy action is unknown, automatic capture reports that limitation and leaves
+  the foreground application untouched.
+  Application names alone must not authorize synthetic input. The initial
+  direct-capture prototype may leave automatic Copy fallback unavailable and
+  direct users to manual copy followed by Read clipboard.
+- The playback seek interval is configurable from one to 30 seconds and takes
+  effect for the next button press.
+- The tray can suspend or resume the configured global selection shortcut for
+  the current Host process without clearing its saved `hotkeys.readSelection`
+  binding. On startup, the Host attempts to register that saved binding.
+- Default speech speed is configurable from 0.5× to 2.0×, defaults to 1.0×, and
+  is also adjustable from Now Playing for the active utterance.
 - Configuration changes take effect without a restart wherever possible.
   Settings that genuinely require a restart say so rather than being silently
   ignored.

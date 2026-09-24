@@ -13,7 +13,7 @@ namespace tts_host {
 // docs/adr/0007-native-ui-per-platform.md; other platforms throw a clear
 // not-implemented error instead of doing nothing. document supplies the
 // current config and the path to write changes back to; this slice edits
-// audio.outputDevice, server.host/server.port, and languageDefaults.en
+// audio.outputDevice, hotkeys.readSelection, server.host/server.port, and languageDefaults.en
 // (docs/requirements/product.md#configuration-and-controls) -- server.host/port
 // and languageDefaults.en require a restart to take effect
 // (docs/design/architecture.md#live-reload), which the window says but does
@@ -35,8 +35,8 @@ namespace tts_host {
 // verifies, and installs the entry through the same
 // tts_host/catalogue_download.hpp path `--download-model` uses, into the
 // first configured modelRegistry.directories entry, then refreshes the model
-// views. The hotkeys controls remain.
-void run_settings_window(const ConfigDocument &document,
+// views.
+void run_settings_window(ConfigDocument &document,
                          const std::filesystem::path &runner_directory);
 
 }  // namespace tts_host

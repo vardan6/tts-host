@@ -1,0 +1,12 @@
+{
+  "manifest_version": 3,
+  "name": "TTS Host Selection Reader",
+  "version": "0.1.0",
+  "description": "Speak the selected text on the current page with TTS Host.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAlMqRx12u7OEsKQkusq9e3SxlfkGVY6HcUbE/fxqZ16qk5MHpT2JCBgoran6uQLmntgdq0yhByoMPS9tHCTqxKyYnvRHA2QdMlM0grMXgjMjUWjRK9NNcPJxV/a3lMgeKqrNki/xH+uK6g8Aw3lyJmsm/MqfciG/SszRJQXh4Et+fmt57mFxOQXlCN6UmfR79IiSr9g8OXk3pd9fKlOqfF2FvpqmNSIjdcgYPp4lq6oPrIQWD494RG7js5Kwq0CrBswPIWqsl8UWqzHdyPaRWEafAzxPRHuTolDpxHInX4MgMeFWT+EhndqcDU/Cn/NyMAUc6g1iDN8Srt+B3w3U51wIDAQAB",
+  "permissions": ["activeTab", "scripting", "storage"],
+  "host_permissions": ["http://127.0.0.1/*"],
+  "background": { "service_worker": "service_worker.js" },
+  "action": { "default_title": "Read selected text" },
+  "options_page": "options.html"
+}

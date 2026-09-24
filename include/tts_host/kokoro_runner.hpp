@@ -22,9 +22,8 @@ namespace tts_host {
 // the loaded ONNX graph's input count: a single-input placeholder identity
 // model (used by CTest, see tests/fixtures/kokoro_runner/placeholder.onnx),
 // and the real Kokoro-82M contract (`input_ids`, `style`, `speed`). The real
-// path still feeds a hardcoded phoneme token sequence rather than the
-// `synthesize` request's actual text — text-to-phoneme conversion via
-// espeak-ng is a separate, not-yet-implemented slice (see roadmap.md).
+// path phonemizes request text through espeak-ng, then bounds the resulting
+// ids to the model's 510-id input limit.
 class KokoroOnnxRunner {
  public:
   KokoroOnnxRunner();
@@ -35,12 +34,13 @@ class KokoroOnnxRunner {
   // its pre-load state: a later synthesize fails as it would before any load,
   // and a later load makes it usable again.
   nlohmann::json handle_unload_message(const nlohmann::json &message);
-  RunnerAudioFrame run_synthesis(std::string_view text);
-  nlohmann::json make_synthesize_response(const nlohmann::json &message, const RunnerAudioFrame &frame);
+  std::vector<RunnerAudioFrame> run_synthesis(std::string_view text, double speed = 1.0);
+  nlohmann::json make_synthesize_response(const nlohmann::json &message,
+                                          const std::vector<RunnerAudioFrame> &frames);
 
  private:
-  RunnerAudioFrame run_placeholder_identity_synthesis();
-  RunnerAudioFrame run_kokoro_synthesis(std::string_view text);
+  std::vector<RunnerAudioFrame> run_placeholder_identity_synthesis();
+  std::vector<RunnerAudioFrame> run_kokoro_synthesis(std::string_view text, double speed);
 
   Ort::Env env_;
   std::optional<Ort::Session> session_;

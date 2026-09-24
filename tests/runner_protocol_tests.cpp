@@ -184,6 +184,17 @@ int main() {
                 parsed_synthesis_response.total_sample_frames == 4,
             "stub runner returned unexpected synthesis metadata");
 
+    const auto speed_request = tts_host::make_runner_synthesize_request(7, "At speed.", 1.5);
+    const auto parsed_speed_request = tts_host::parse_runner_synthesize_request(speed_request);
+    require(parsed_speed_request.speed == 1.5, "synthesize speed did not round-trip");
+    try {
+      static_cast<void>(tts_host::parse_runner_synthesize_request(
+          nlohmann::json{{"jsonrpc", "2.0"}, {"id", 8}, {"method", "synthesize"},
+                         {"params", {{"text", "too fast"}, {"speed", 2.1}}}}));
+      throw std::runtime_error("out-of-range synthesize speed was accepted");
+    } catch (const tts_host::RunnerProtocolError &) {
+    }
+
     const auto stats_request = tts_host::make_runner_stats_request(9);
     const auto parsed_stats_request = tts_host::parse_runner_stats_request(stats_request);
     require(parsed_stats_request.id == 9, "stats request id did not round-trip");

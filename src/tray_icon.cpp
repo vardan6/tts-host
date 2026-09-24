@@ -8,10 +8,17 @@
 #include <shellapi.h>
 
 #include "tts_host/clipboard.hpp"
+#include "tts_host/global_hotkey.hpp"
+#include "tts_host/now_playing_window.hpp"
+#include "tts_host/selection_capture.hpp"
 #include "tts_host/settings_window.hpp"
 
-#include <array>
+#include <atomic>
+#include <cstdint>
+#include <memory>
+#include <optional>
 #include <string>
+#include <thread>
 
 namespace tts_host {
 namespace {
@@ -19,11 +26,20 @@ namespace {
 // What the tray window carries in GWLP_USERDATA for the Settings… item to
 // forward; both members outlive the message loop (see run_tray_icon).
 struct TrayContext {
-  const ConfigDocument *document;
+  ConfigDocument *document;
   const std::filesystem::path *runner_directory;
   const SpeakTextFunction *speak_text;
-  UINT clipboard_sequence_before_copy = 0;
-  unsigned int clipboard_poll_count = 0;
+  PlaybackController *playback_controller;
+  std::uint64_t capture_generation = 0;
+  bool capture_timed_out = false;
+  bool selection_hotkey_registered = false;
+  bool selection_hotkey_disabled_by_user = false;
+};
+
+struct CaptureCompletion {
+  std::uint64_t generation;
+  SelectionCapturePolicy policy;
+  SelectionCaptureResult result;
 };
 
 // Shell_NotifyIcon delivers mouse events on the icon through this
@@ -31,14 +47,67 @@ struct TrayContext {
 // WM_RBUTTONUP) in the low word of lParam -- the pre-NOTIFYICON_VERSION_4
 // callback shape, which is all this minimal Quit-only menu needs.
 constexpr UINT kTrayCallbackMessage = WM_APP + 1;
+constexpr UINT kSelectionCaptureCompleteMessage = WM_APP + 2;
 constexpr UINT kTrayIconId = 1;
 constexpr UINT kSettingsMenuItemId = 1;
 constexpr UINT kQuitMenuItemId = 2;
 constexpr UINT kReadClipboardMenuItemId = 3;
+constexpr UINT kQueueClipboardMenuItemId = 4;
+constexpr UINT kNowPlayingMenuItemId = 5;
+constexpr UINT kSelectionHotkeyToggleMenuItemId = 6;
 constexpr int kReadSelectionHotkeyId = 1;
-constexpr UINT_PTR kSelectionCopyTimerId = 1;
-constexpr UINT kSelectionCopyPollMilliseconds = 50;
-constexpr unsigned int kMaximumSelectionCopyPolls = 10;
+constexpr UINT_PTR kSelectionCaptureTimerId = 1;
+constexpr UINT kSelectionCaptureDeadlineMilliseconds = 1500;
+std::atomic_bool selection_capture_worker_active = false;
+
+std::optional<GlobalHotkey> configured_read_selection_hotkey(const ConfigDocument &document,
+                                                              std::string &error) {
+  const auto hotkeys = document.value.find("hotkeys");
+  if (hotkeys == document.value.end()) {
+    return std::nullopt;
+  }
+  if (!hotkeys->is_object()) {
+    error = "hotkeys must be an object";
+    return std::nullopt;
+  }
+  const auto read_selection = hotkeys->find("readSelection");
+  if (read_selection == hotkeys->end() || read_selection->is_null()) {
+    return std::nullopt;
+  }
+  if (!read_selection->is_string()) {
+    error = "hotkeys.readSelection must be a string";
+    return std::nullopt;
+  }
+  if (read_selection->empty()) {
+    return std::nullopt;
+  }
+  return parse_global_hotkey(read_selection->get<std::string>(), error);
+}
+
+bool register_read_selection_hotkey(HWND window, const ConfigDocument &document) {
+  std::string error;
+  const auto hotkey = configured_read_selection_hotkey(document, error);
+  if (!hotkey.has_value()) {
+    if (!error.empty()) {
+      MessageBoxW(window, L"The configured selection hotkey is invalid. Open Settings and choose another one.",
+                  L"TTS Host", MB_OK | MB_ICONWARNING);
+    }
+    return false;
+  }
+  if (!RegisterHotKey(window, kReadSelectionHotkeyId, hotkey->modifiers | MOD_NOREPEAT,
+                      hotkey->virtual_key)) {
+    MessageBoxW(window,
+                L"The configured selection hotkey is unavailable. Open Settings and choose another one.",
+                L"TTS Host", MB_OK | MB_ICONWARNING);
+    return false;
+  }
+  return true;
+}
+
+bool has_valid_read_selection_hotkey(const ConfigDocument &document) {
+  std::string error;
+  return configured_read_selection_hotkey(document, error).has_value();
+}
 
 TrayContext *tray_context(HWND window) {
   return reinterpret_cast<TrayContext *>(GetWindowLongPtrW(window, GWLP_USERDATA));
@@ -54,45 +123,76 @@ void show_error(HWND window, const std::string &message) {
   MessageBoxW(window, wide_message.c_str(), L"TTS Host", MB_OK | MB_ICONERROR);
 }
 
-void speak_clipboard(HWND window) {
+void speak_clipboard(HWND window, SpeechQueueMode queue_mode = SpeechQueueMode::Interrupt) {
   auto *context = tray_context(window);
   try {
-    (*context->speak_text)(read_clipboard_text());
+    (*context->speak_text)(read_clipboard_text(), queue_mode);
   } catch (const std::exception &error) {
     show_error(window, error.what());
   }
 }
 
-void request_selection_copy(HWND window) {
-  auto *context = tray_context(window);
-  context->clipboard_sequence_before_copy = GetClipboardSequenceNumber();
-  context->clipboard_poll_count = 0;
+SelectionCapturePolicy configured_selection_policy(const ConfigDocument &document) {
+  const auto selection = document.value.value("selection", nlohmann::json::object());
+  return parse_selection_capture_policy(selection.value("capturePolicy", "automatic"));
+}
 
-  std::array<INPUT, 4> inputs{};
-  inputs[0].type = INPUT_KEYBOARD;
-  inputs[0].ki.wVk = VK_CONTROL;
-  inputs[1].type = INPUT_KEYBOARD;
-  inputs[1].ki.wVk = 'C';
-  inputs[2].type = INPUT_KEYBOARD;
-  inputs[2].ki.wVk = 'C';
-  inputs[2].ki.dwFlags = KEYEVENTF_KEYUP;
-  inputs[3].type = INPUT_KEYBOARD;
-  inputs[3].ki.wVk = VK_CONTROL;
-  inputs[3].ki.dwFlags = KEYEVENTF_KEYUP;
-  if (SendInput(static_cast<UINT>(inputs.size()), inputs.data(), sizeof(INPUT)) != inputs.size()) {
-    show_error(window, "Could not copy the current selection.");
+void log_capture_diagnostic(const SelectionCaptureResult &result) {
+  record_selection_capture_diagnostic(result);
+  const std::string message = "TTS Host selection capture: method=" + result.method +
+                              ", target=" + result.target + ", result=" +
+                              (result.succeeded ? "success" : result.failure) + "\n";
+  OutputDebugStringA(message.c_str());
+}
+
+void request_selection_capture(HWND window) {
+  auto *context = tray_context(window);
+  const auto policy = configured_selection_policy(*context->document);
+  if (policy == SelectionCapturePolicy::ClipboardOnly) {
+    // This policy deliberately reads the existing clipboard without trying to
+    // synthesize Copy. The user must copy the intended selection first.
+    speak_clipboard(window);
     return;
   }
-  SetTimer(window, kSelectionCopyTimerId, kSelectionCopyPollMilliseconds, nullptr);
+  bool expected = false;
+  if (!selection_capture_worker_active.compare_exchange_strong(expected, true)) {
+    show_error(window, "Selection capture is still waiting on the target application. Try again shortly.");
+    return;
+  }
+
+  const SelectionCaptureTarget target = snapshot_selection_target();
+  const std::uint64_t generation = ++context->capture_generation;
+  context->capture_timed_out = false;
+  SetTimer(window, kSelectionCaptureTimerId, kSelectionCaptureDeadlineMilliseconds, nullptr);
+  std::thread([window, generation, policy, target] {
+    auto *completion = new CaptureCompletion{generation, policy, capture_selection_direct(target)};
+    selection_capture_worker_active.store(false);
+    if (!PostMessageW(window, kSelectionCaptureCompleteMessage, 0,
+                      reinterpret_cast<LPARAM>(completion))) {
+      delete completion;
+    }
+  }).detach();
 }
 
 void show_context_menu(HWND window) {
+  const auto *context = tray_context(window);
   HMENU menu = CreatePopupMenu();
   if (!menu) {
     return;
   }
+  UINT hotkey_menu_flags = MF_STRING;
+  if (context->selection_hotkey_registered) {
+    hotkey_menu_flags |= MF_CHECKED;
+  }
+  if (!has_valid_read_selection_hotkey(*context->document)) {
+    hotkey_menu_flags |= MF_GRAYED;
+  }
+  AppendMenuW(menu, hotkey_menu_flags, kSelectionHotkeyToggleMenuItemId,
+              L"Global selection shortcut");
   AppendMenuW(menu, MF_STRING, kSettingsMenuItemId, L"Settings…");
   AppendMenuW(menu, MF_STRING, kReadClipboardMenuItemId, L"Read clipboard");
+  AppendMenuW(menu, MF_STRING, kQueueClipboardMenuItemId, L"Queue clipboard");
+  AppendMenuW(menu, MF_STRING, kNowPlayingMenuItemId, L"Now Playing…");
   AppendMenuW(menu, MF_STRING, kQuitMenuItemId, L"Quit");
 
   POINT cursor{};
@@ -113,6 +213,32 @@ LRESULT CALLBACK tray_window_proc(HWND window, UINT message, WPARAM wparam, LPAR
         show_context_menu(window);
       }
       return 0;
+    case kSelectionCaptureCompleteMessage: {
+      std::unique_ptr<CaptureCompletion> completion(
+          reinterpret_cast<CaptureCompletion *>(lparam));
+      auto *context = tray_context(window);
+      if (completion->generation != context->capture_generation || context->capture_timed_out) {
+        return 0;
+      }
+      KillTimer(window, kSelectionCaptureTimerId);
+      log_capture_diagnostic(completion->result);
+      if (completion->result.succeeded) {
+        try {
+          (*context->speak_text)(completion->result.text, SpeechQueueMode::Interrupt);
+        } catch (const std::exception &error) {
+          show_error(window, error.what());
+        }
+      } else {
+        std::string explanation = completion->result.method + " failed for " +
+                                  completion->result.target + ": " + completion->result.failure + ". ";
+        if (completion->policy == SelectionCapturePolicy::Automatic) {
+          explanation += "Safe Copy fallback is unavailable for this control. ";
+        }
+        explanation += "Copy manually, then use Read clipboard.";
+        show_error(window, explanation);
+      }
+      return 0;
+    }
     case WM_COMMAND:
       if (LOWORD(wparam) == kQuitMenuItemId) {
         DestroyWindow(window);
@@ -121,27 +247,56 @@ LRESULT CALLBACK tray_window_proc(HWND window, UINT message, WPARAM wparam, LPAR
         // closes -- both windows are modal-by-blocking in this slice, so
         // the tray icon simply stops responding to clicks while settings is
         // open rather than needing a second thread.
-        const auto *context = tray_context(window);
+        auto *context = tray_context(window);
+        const bool reenable_selection_hotkey = !context->selection_hotkey_disabled_by_user;
+        // Release our own hotkey while Settings probes candidates. Otherwise
+        // testing the active value would always report a conflict with TTS Host.
+        UnregisterHotKey(window, kReadSelectionHotkeyId);
+        context->selection_hotkey_registered = false;
         run_settings_window(*context->document, *context->runner_directory);
+        // Settings edits the shared document. Apply its persisted default to
+        // the next utterance without changing the active utterance's requested
+        // speed; the latter belongs to the Now Playing control.
+        context->playback_controller->set_default_speech_speed(
+            context->document->value.at("audio").value("speechSpeed", 1.0));
+        if (reenable_selection_hotkey) {
+          context->selection_hotkey_registered =
+              register_read_selection_hotkey(window, *context->document);
+        }
+      } else if (LOWORD(wparam) == kSelectionHotkeyToggleMenuItemId) {
+        auto *context = tray_context(window);
+        if (context->selection_hotkey_registered) {
+          UnregisterHotKey(window, kReadSelectionHotkeyId);
+          context->selection_hotkey_registered = false;
+          context->selection_hotkey_disabled_by_user = true;
+        } else {
+          context->selection_hotkey_disabled_by_user = false;
+          context->selection_hotkey_registered =
+              register_read_selection_hotkey(window, *context->document);
+        }
       } else if (LOWORD(wparam) == kReadClipboardMenuItemId) {
         speak_clipboard(window);
+      } else if (LOWORD(wparam) == kQueueClipboardMenuItemId) {
+        speak_clipboard(window, SpeechQueueMode::Enqueue);
+      } else if (LOWORD(wparam) == kNowPlayingMenuItemId) {
+        show_now_playing_window(*tray_context(window)->playback_controller);
       }
       return 0;
     case WM_HOTKEY:
-      if (wparam == kReadSelectionHotkeyId) {
-        request_selection_copy(window);
+      if (wparam == kReadSelectionHotkeyId && tray_context(window)->selection_hotkey_registered) {
+        request_selection_capture(window);
       }
       return 0;
     case WM_TIMER:
-      if (wparam == kSelectionCopyTimerId) {
+      if (wparam == kSelectionCaptureTimerId) {
         auto *context = tray_context(window);
-        if (GetClipboardSequenceNumber() != context->clipboard_sequence_before_copy) {
-          KillTimer(window, kSelectionCopyTimerId);
-          speak_clipboard(window);
-        } else if (++context->clipboard_poll_count >= kMaximumSelectionCopyPolls) {
-          KillTimer(window, kSelectionCopyTimerId);
-          show_error(window, "No text was copied from the current selection. Copy the text manually, then use Read clipboard.");
-        }
+        KillTimer(window, kSelectionCaptureTimerId);
+        context->capture_timed_out = true;
+        log_capture_diagnostic({false, {}, "UI Automation TextPattern", "saved foreground target",
+                                "capture timed out; late result discarded"});
+        show_error(window,
+                   "UI Automation selection capture timed out. The late result will be ignored; "
+                   "copy manually, then use Read clipboard.");
       }
       return 0;
     case WM_DESTROY: {
@@ -156,9 +311,9 @@ LRESULT CALLBACK tray_window_proc(HWND window, UINT message, WPARAM wparam, LPAR
 
 }  // namespace
 
-void run_tray_icon(const ConfigDocument &document,
+void run_tray_icon(ConfigDocument &document,
                    const std::filesystem::path &runner_directory,
-                   const SpeakTextFunction &speak_text) {
+                   const SpeakTextFunction &speak_text, PlaybackController &playback_controller) {
   const wchar_t *kClassName = L"TtsHostTrayWindow";
   const HINSTANCE instance = GetModuleHandleW(nullptr);
 
@@ -177,7 +332,7 @@ void run_tray_icon(const ConfigDocument &document,
   if (!window) {
     throw std::runtime_error("failed to create the tray message window");
   }
-  const TrayContext context{&document, &runner_directory, &speak_text};
+  const TrayContext context{&document, &runner_directory, &speak_text, &playback_controller};
   auto mutable_context = context;
   SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(&mutable_context));
 
@@ -188,17 +343,13 @@ void run_tray_icon(const ConfigDocument &document,
   icon_data.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
   icon_data.uCallbackMessage = kTrayCallbackMessage;
   icon_data.hIcon = LoadIconW(nullptr, MAKEINTRESOURCEW(32512));  // IDI_APPLICATION, forced wide
-  wcscpy_s(icon_data.szTip, L"TTS Host — Ctrl+Alt+R reads selection");
+  wcscpy_s(icon_data.szTip, L"TTS Host — global selection shortcut in menu");
 
   if (!Shell_NotifyIconW(NIM_ADD, &icon_data)) {
     throw std::runtime_error("failed to add the tray icon (Shell_NotifyIcon NIM_ADD)");
   }
 
-  if (!RegisterHotKey(window, kReadSelectionHotkeyId, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, 'R')) {
-    MessageBoxW(window,
-                L"Ctrl+Alt+R is already used by another application. You can still use the tray menu's Read clipboard command.",
-                L"TTS Host", MB_OK | MB_ICONWARNING);
-  }
+  mutable_context.selection_hotkey_registered = register_read_selection_hotkey(window, document);
 
   MSG message;
   while (GetMessageW(&message, nullptr, 0, 0) > 0) {
@@ -215,9 +366,9 @@ void run_tray_icon(const ConfigDocument &document,
 
 namespace tts_host {
 
-void run_tray_icon(const ConfigDocument & /*document*/,
+void run_tray_icon(ConfigDocument & /*document*/,
                    const std::filesystem::path & /*runner_directory*/,
-                   const SpeakTextFunction & /*speak_text*/) {
+                   const SpeakTextFunction & /*speak_text*/, PlaybackController & /*playback_controller*/) {
   throw std::runtime_error(
       "the tray icon is not implemented on this platform yet (Windows only, see "
       "docs/adr/0007-native-ui-per-platform.md)");

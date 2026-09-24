@@ -66,6 +66,44 @@
         "outputDevice": {
           "type": "string",
           "minLength": 1
+        },
+        "speechSpeed": {
+          "type": "number",
+          "minimum": 0.5,
+          "maximum": 2.0,
+          "default": 1.0
+        },
+        "playbackSkipSeconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 30,
+          "default": 5
+        }
+      }
+    },
+    "hotkeys": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "readSelection": {
+          "type": "string"
+        }
+      }
+    },
+    "selection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "capturePolicy"
+      ],
+      "properties": {
+        "capturePolicy": {
+          "type": "string",
+          "enum": [
+            "automatic",
+            "uiAutomationOnly",
+            "clipboardOnly"
+          ]
         }
       }
     },

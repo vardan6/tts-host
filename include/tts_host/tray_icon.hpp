@@ -5,6 +5,7 @@
 #include <string>
 
 #include "tts_host/config_loader.hpp"
+#include "tts_host/playback_controller.hpp"
 
 namespace tts_host {
 
@@ -17,12 +18,19 @@ namespace tts_host {
 // throw a clear not-implemented error instead of doing nothing. document and
 // runner_directory are forwarded unchanged to the settings window, which
 // needs the latter to find a model's engine runner when the user loads it.
+// Tray startup attempts to register the configured selection shortcut; the
+// tray menu can suspend and resume it for the current process without
+// changing its saved binding.
+// A new tray request interrupts the current utterance by default. Queueing is
+// explicit, matching docs/design/architecture.md#speech-pipeline.
+enum class SpeechQueueMode { Interrupt, Enqueue };
+
 // speak_text runs the owning Host's synthesis path for text captured by a
 // tray command; it keeps the tray and playback in the same Host process.
-using SpeakTextFunction = std::function<void(const std::string &text)>;
+using SpeakTextFunction = std::function<void(const std::string &text, SpeechQueueMode)>;
 
-void run_tray_icon(const ConfigDocument &document,
+void run_tray_icon(ConfigDocument &document,
                    const std::filesystem::path &runner_directory,
-                   const SpeakTextFunction &speak_text);
+                   const SpeakTextFunction &speak_text, PlaybackController &playback_controller);
 
 }  // namespace tts_host

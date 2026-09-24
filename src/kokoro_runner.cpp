@@ -1,6 +1,7 @@
 #include "tts_host/kokoro_runner.hpp"
 
 #include "tts_host/espeak_phonemizer.hpp"
+#include "tts_host/kokoro_batching.hpp"
 #include "tts_host/kokoro_phoneme_mapping.hpp"
 
 #include <algorithm>
@@ -96,7 +97,7 @@ nlohmann::json KokoroOnnxRunner::handle_unload_message(const nlohmann::json &mes
   return make_runner_unload_response(request);
 }
 
-RunnerAudioFrame KokoroOnnxRunner::run_synthesis(std::string_view text) {
+std::vector<RunnerAudioFrame> KokoroOnnxRunner::run_synthesis(std::string_view text, double speed) {
   if (!session_.has_value()) {
     throw RunnerProtocolError("kokoro-onnx runner received synthesize before load");
   }
@@ -108,10 +109,10 @@ RunnerAudioFrame KokoroOnnxRunner::run_synthesis(std::string_view text) {
   if (session_->GetInputCount() == 1) {
     return run_placeholder_identity_synthesis();
   }
-  return run_kokoro_synthesis(text);
+  return run_kokoro_synthesis(text, speed);
 }
 
-RunnerAudioFrame KokoroOnnxRunner::run_placeholder_identity_synthesis() {
+std::vector<RunnerAudioFrame> KokoroOnnxRunner::run_placeholder_identity_synthesis() {
   // Running the placeholder identity model here (rather than returning
   // synthetic audio like the stub runner) proves the ONNX Runtime session
   // executes end to end inside the real runner process.
@@ -132,13 +133,13 @@ RunnerAudioFrame KokoroOnnxRunner::run_placeholder_identity_synthesis() {
         "kokoro-onnx runner inference did not return the expected identity output");
   }
 
-  return {.sequence_number = 0,
-          .sample_count = 4,
-          .flags = kRunnerAudioFrameFlagEndOfStream,
-          .payload = {0x00, 0x00, 0x00, 0x10, 0x00, 0xf0, 0x00, 0x00}};
+  return {{.sequence_number = 0,
+           .sample_count = 4,
+           .flags = kRunnerAudioFrameFlagEndOfStream,
+           .payload = {0x00, 0x00, 0x00, 0x10, 0x00, 0xf0, 0x00, 0x00}}};
 }
 
-RunnerAudioFrame KokoroOnnxRunner::run_kokoro_synthesis(std::string_view text) {
+std::vector<RunnerAudioFrame> KokoroOnnxRunner::run_kokoro_synthesis(std::string_view text, double speed_value) {
   if (voice_style_.empty()) {
     throw RunnerProtocolError("kokoro-onnx runner received synthesize without a loaded voice");
   }
@@ -152,22 +153,13 @@ RunnerAudioFrame KokoroOnnxRunner::run_kokoro_synthesis(std::string_view text) {
     throw RunnerProtocolError("kokoro-onnx runner produced no phonemes for the requested text");
   }
 
-  // Padded with the model's id-0 token at both ends per its input contract
-  // (see the previously hardcoded fixture this replaced).
-  std::vector<std::int64_t> input_ids;
-  input_ids.reserve(phoneme_ids.size() + 2);
-  input_ids.push_back(0);
-  input_ids.insert(input_ids.end(), phoneme_ids.begin(), phoneme_ids.end());
-  input_ids.push_back(0);
-  const std::size_t phoneme_count = phoneme_ids.size();
-  std::array<std::int64_t, 2> input_ids_shape{1, static_cast<std::int64_t>(input_ids.size())};
-
   const std::size_t style_row_count = voice_style_.size() / kKokoroStyleWidth;
-  const std::size_t style_row_index = std::min(phoneme_count, style_row_count) - 1;
-  float *style_row = voice_style_.data() + style_row_index * kKokoroStyleWidth;
+  if (style_row_count == 0) {
+    throw RunnerProtocolError("kokoro-onnx runner loaded an empty voice style table");
+  }
   std::array<std::int64_t, 2> style_shape{1, static_cast<std::int64_t>(kKokoroStyleWidth)};
 
-  std::array<float, 1> speed{1.0f};
+  std::array<float, 1> speed{static_cast<float>(speed_value)};
   std::array<std::int64_t, 1> speed_shape{1};
 
   Ort::MemoryInfo memory_info = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
@@ -178,48 +170,63 @@ RunnerAudioFrame KokoroOnnxRunner::run_kokoro_synthesis(std::string_view text) {
   // "input_ids" and "tokens" depending on conversion tooling/version.
   std::vector<Ort::AllocatedStringPtr> input_name_holders;
   std::vector<const char *> input_names;
-  std::vector<Ort::Value> inputs;
-  for (std::size_t index = 0; index < session_->GetInputCount(); ++index) {
-    input_name_holders.push_back(session_->GetInputNameAllocated(index, allocator));
-    const std::string name = input_name_holders.back().get();
-    input_names.push_back(input_name_holders.back().get());
-    if (name == "style") {
-      inputs.push_back(Ort::Value::CreateTensor<float>(memory_info, style_row, kKokoroStyleWidth,
-                                                        style_shape.data(), style_shape.size()));
-    } else if (name == "speed") {
-      inputs.push_back(Ort::Value::CreateTensor<float>(memory_info, speed.data(), speed.size(),
-                                                        speed_shape.data(), speed_shape.size()));
-    } else {
-      inputs.push_back(Ort::Value::CreateTensor<std::int64_t>(
-          memory_info, input_ids.data(), input_ids.size(), input_ids_shape.data(), input_ids_shape.size()));
-    }
-  }
-
   std::vector<Ort::AllocatedStringPtr> output_name_holders;
   std::vector<const char *> output_names;
+  for (std::size_t index = 0; index < session_->GetInputCount(); ++index) {
+    input_name_holders.push_back(session_->GetInputNameAllocated(index, allocator));
+    input_names.push_back(input_name_holders.back().get());
+  }
   for (std::size_t index = 0; index < session_->GetOutputCount(); ++index) {
     output_name_holders.push_back(session_->GetOutputNameAllocated(index, allocator));
     output_names.push_back(output_name_holders.back().get());
   }
 
-  auto outputs = session_->Run(Ort::RunOptions{nullptr}, input_names.data(), inputs.data(), inputs.size(),
-                               output_names.data(), output_names.size());
+  std::vector<RunnerAudioFrame> frames;
+  for (const auto &batch : split_kokoro_phoneme_ids(phoneme_ids)) {
+    std::vector<std::int64_t> input_ids;
+    input_ids.reserve(batch.size() + 2);
+    input_ids.push_back(0);
+    input_ids.insert(input_ids.end(), batch.begin(), batch.end());
+    input_ids.push_back(0);
+    std::array<std::int64_t, 2> input_ids_shape{1, static_cast<std::int64_t>(input_ids.size())};
 
-  // Kokoro exports return the audio waveform as the first output (a second
-  // "duration"/timing output may follow depending on export variant).
-  const auto element_count = outputs.front().GetTensorTypeAndShapeInfo().GetElementCount();
-  const float *samples = outputs.front().GetTensorData<float>();
-
-  return {.sequence_number = 0,
-          .sample_count = static_cast<std::uint32_t>(element_count),
-          .flags = kRunnerAudioFrameFlagEndOfStream,
-          .payload = encode_pcm_s16le(samples, element_count)};
+    const std::size_t style_row_index = std::min(batch.size(), style_row_count) - 1;
+    float *style_row = voice_style_.data() + style_row_index * kKokoroStyleWidth;
+    std::vector<Ort::Value> inputs;
+    for (std::size_t index = 0; index < session_->GetInputCount(); ++index) {
+      const std::string name = input_name_holders[index].get();
+      if (name == "style") {
+        inputs.push_back(Ort::Value::CreateTensor<float>(memory_info, style_row, kKokoroStyleWidth,
+                                                          style_shape.data(), style_shape.size()));
+      } else if (name == "speed") {
+        inputs.push_back(Ort::Value::CreateTensor<float>(memory_info, speed.data(), speed.size(),
+                                                          speed_shape.data(), speed_shape.size()));
+      } else {
+        inputs.push_back(Ort::Value::CreateTensor<std::int64_t>(
+            memory_info, input_ids.data(), input_ids.size(), input_ids_shape.data(), input_ids_shape.size()));
+      }
+    }
+    auto outputs = session_->Run(Ort::RunOptions{nullptr}, input_names.data(), inputs.data(), inputs.size(),
+                                 output_names.data(), output_names.size());
+    const auto element_count = outputs.front().GetTensorTypeAndShapeInfo().GetElementCount();
+    const float *samples = outputs.front().GetTensorData<float>();
+    auto batch_frames = frame_kokoro_pcm_s16le(encode_pcm_s16le(samples, element_count), frames.size());
+    frames.insert(frames.end(), std::make_move_iterator(batch_frames.begin()),
+                  std::make_move_iterator(batch_frames.end()));
+  }
+  if (frames.empty()) {
+    throw RunnerProtocolError("kokoro-onnx runner produced no audio for the requested text");
+  }
+  frames.back().flags |= kRunnerAudioFrameFlagEndOfStream;
+  return frames;
 }
 
 nlohmann::json KokoroOnnxRunner::make_synthesize_response(const nlohmann::json &message,
-                                                          const RunnerAudioFrame &frame) {
+                                                          const std::vector<RunnerAudioFrame> &frames) {
   const auto request = parse_runner_synthesize_request(message);
-  return make_runner_synthesize_response(request, 24000, 1, "pcm_s16le", frame.sample_count);
+  std::uint64_t total_sample_frames = 0;
+  for (const auto &frame : frames) total_sample_frames += frame.sample_count;
+  return make_runner_synthesize_response(request, 24000, 1, "pcm_s16le", total_sample_frames);
 }
 
 }  // namespace tts_host

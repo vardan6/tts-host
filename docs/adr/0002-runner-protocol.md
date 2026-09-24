@@ -23,8 +23,9 @@ unsigned 32-bit flags, followed by the payload bytes. The maximum payload is
 16 MiB. Big-endian encoding makes the stream independent of host CPU byte
 order; the payload format is negotiated separately by the synthesis protocol.
 
-`synthesize` is a JSON-RPC request with a non-empty string `params.text`. Its
-response identifies the PCM stream with `sampleRateHz`, `channels`,
+`synthesize` is a JSON-RPC request with a non-empty string `params.text` and an
+optional numeric `params.speed` multiplier from 0.5 through 2.0 (omission means
+1.0). Its response identifies the PCM stream with `sampleRateHz`, `channels`,
 `sampleFormat`, and `totalSampleFrames`. Protocol version 1 uses interleaved
 signed 16-bit little-endian PCM (`pcm_s16le`); an audio-frame `sample_count` is
 the number of sample frames (one frame contains one sample per channel). Frames

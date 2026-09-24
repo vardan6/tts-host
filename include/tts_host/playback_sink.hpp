@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include "tts_host/playback_controller.hpp"
 #include <string>
 #include <vector>
 
@@ -21,7 +22,13 @@ class PlaybackSink {
   virtual ~PlaybackSink() = default;
   virtual void play(std::uint32_t sample_rate_hz, std::uint16_t channels,
                     const std::vector<std::uint8_t> &pcm_s16le,
-                    const std::string &device_name = kSystemDefaultOutputDevice) = 0;
+                    const std::string &device_name = kSystemDefaultOutputDevice,
+                    PlaybackControl *control = nullptr) = 0;
+  virtual bool play_from(std::uint32_t sample_rate_hz, std::uint16_t channels,
+                         const std::vector<std::uint8_t> &pcm_s16le,
+                         const std::string &device_name, std::uint64_t start_source_frame,
+                         double source_origin_seconds, PlaybackControl *control,
+                         std::uint64_t seek_generation);
 };
 
 // Plays through the operating system's default audio output device, or a
@@ -34,7 +41,12 @@ class SystemPlaybackSink final : public PlaybackSink {
  public:
   void play(std::uint32_t sample_rate_hz, std::uint16_t channels,
             const std::vector<std::uint8_t> &pcm_s16le,
-            const std::string &device_name = kSystemDefaultOutputDevice) override;
+            const std::string &device_name = kSystemDefaultOutputDevice,
+            PlaybackControl *control = nullptr) override;
+  bool play_from(std::uint32_t sample_rate_hz, std::uint16_t channels,
+                 const std::vector<std::uint8_t> &pcm_s16le, const std::string &device_name,
+                 std::uint64_t start_source_frame, double source_origin_seconds,
+                 PlaybackControl *control, std::uint64_t seek_generation) override;
 };
 
 // Lists the friendly names of active audio render endpoints, for populating
