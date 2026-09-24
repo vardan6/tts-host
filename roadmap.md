@@ -12,6 +12,19 @@ Synthetic Copy adapters require technical compatibility evidence, not a separate
 user approval. Unsupported adapters stay disabled without blocking playback or
 browser work. Platform ports remain later work, Linux before macOS per ADR 0007.
 
+Developer workflow:
+
+- [ ] **AFK — Incremental Windows build and run loop:** keep separate `build/`
+  and `build-linux/` trees; make `compile-win.ps1` configure when needed, then
+  incrementally build, run CTest, and launch the desktop app — see
+  [requirements](docs/requirements/developer-workflow.md) and
+  [design](docs/design/developer-workflow.md#incremental-windows-build-and-run).
+- [ ] **AFK — Explicit Windows clean and fresh operations:** expose a generated
+  clean target and a `fresh-win.ps1` full build that preserves the separate
+  FetchContent cache unless explicitly reset — see
+  [requirements](docs/requirements/developer-workflow.md) and
+  [design](docs/design/developer-workflow.md#clean-and-fresh-semantics).
+
 - [x] **AFK — Host starts and reads its configuration:** `tts-host --headless`
   launches from a native Windows build with no external runtime, loads and
   schema-validates `config.json`, reloads it on save, and reports configuration
@@ -407,6 +420,10 @@ browser work. Platform ports remain later work, Linux before macOS per ADR 0007.
 
 ## Open decisions
 
+- How to execute the English bake-off before candidate integration: use a
+  consistent external benchmark harness or implement TTS Host runners for the
+  candidates first. Qwen and LuxTTS were evaluated through external pilot paths;
+  neither is integrated in TTS Host.
 - Upstream PyTorch versus llama.cpp for the Qwen quality runner, and the
   quantization level — an output of the bake-off, not an input.
 - Whether a WSL headless distribution is published, or `--headless` merely makes

@@ -21,11 +21,12 @@ git clone <this repo> && cd tts
 .\build\Debug\tts-host.exe --headless --synthesize "Hello from TTS Host." --play --config config.example.json
 ```
 
-`compile-win.ps1` wipes `build/`, configures, builds everything, and runs the
-full CTest suite, logging to `logs/`. CMake dependencies are kept in the
-gitignored `cache/fetchcontent/windows-vs2022/` directory, so later clean
-builds reuse their verified downloads and extracts. The weights fetch is a
-one-time ~330 MB download into `models/kokoro-en-v1/`. First-time toolchain setup is in
+`compile-win.ps1` configures the Windows tree if needed, incrementally builds
+all targets, runs CTest, and launches the desktop app. Use it after code
+changes to recompile, retest, and relaunch. CMake dependencies are kept in the
+gitignored `cache/fetchcontent/windows-vs2022/` directory. For a full
+from-scratch build, use `fresh-win.ps1`. The weights fetch is a one-time ~330 MB
+download into `models/kokoro-en-v1/`. First-time toolchain setup is in
 "Windows setup" below.
 
 Then run it as a desktop app — no flags gives you the tray icon:
@@ -103,20 +104,9 @@ Prompt), CMake's default generator is NMake, which fails with
 the Visual Studio generator explicitly, as shown in "Build and test" below,
 so configuring works from any shell. `compile-win.ps1` already does this.
 
-**Don't mix WSL and native Windows for the same `build/` directory.** CMake
-caches the exact source/build paths and toolchain, so configuring from WSL
-and then building from `cmd.exe`/PowerShell (or vice versa) fails with
-"CMakeCache.txt directory ... is different" or missing-executable errors.
-Likewise, changing generators (e.g. after hitting the NMake error above)
-fails with "Does not match the generator used previously". In both cases,
-delete `build/` and reconfigure from scratch in the environment you intend
-to build with:
-
-```powershell
-rmdir /s /q build
-```
-
-Then reconfigure using the Windows commands in "Build and test" below.
+Windows uses `build/`; WSL/Linux uses `build-linux/`. Keep these binary trees
+separate because CMake records the generator, compiler, and source path in its
+cache. `fresh-win.ps1` removes only the native Windows `build/` tree.
 
 ## Build and test
 
@@ -125,32 +115,53 @@ From the repository root, configure, build, and run the native tests.
 Linux/macOS:
 
 ```sh
-cmake -S . -B build
-cmake --build build --parallel
-ctest --test-dir build --output-on-failure
+cmake -S . -B build-linux
+cmake --build build-linux --parallel
+ctest --test-dir build-linux --output-on-failure
 ```
 
 Windows (after the setup above): the Visual Studio generator is
 multi-configuration, so pass a configuration explicitly to both build and
-test. `.\compile-win.ps1` runs all three as a clean rebuild, reusing its
-Windows-specific FetchContent cache. Pass `-ResetDependencyCache` only to
-discard and redownload the CMake dependencies (for example, after diagnosing a
-corrupt cache or changing a pinned dependency).
+test. The quick edit/retest/relaunch loop is `.\compile-win.ps1`; CMake
+reconfigures only when the Windows build tree has not been configured yet.
 
 ```powershell
-cmake -S . -B build -G "Visual Studio 17 2022"
+$fetchContentDir = Join-Path $PWD "cache\fetchcontent\windows-vs2022"
+cmake -S . -B build -G "Visual Studio 17 2022" "-DFETCHCONTENT_BASE_DIR=$fetchContentDir"
 cmake --build build --config Debug --parallel
 ctest --test-dir build -C Debug --output-on-failure
 ```
 
-After one successful `compile-win.ps1` run, an ordinary edit usually needs
-only the incremental build and relevant test; neither command reconfigures or
-downloads dependencies:
+`compile-win.ps1` runs these actions in order and launches the desktop app after
+they succeed:
 
 ```powershell
 cmake --build build --config Debug --parallel
 ctest --test-dir build -C Debug --output-on-failure
+.\build\Debug\tts-host.exe --config config.example.json
 ```
+
+Close a running TTS Host from its tray menu before rebuilding or launching it
+again.
+
+For a generated clean that keeps the CMake configuration and downloaded
+dependencies, use the generator-independent CMake target:
+
+```powershell
+cmake --build build --config Debug --target clean
+```
+
+The next build recompiles the cleaned targets. To clean and rebuild in one
+command while keeping the configured build tree, add `--clean-first`:
+
+```powershell
+cmake --build build --config Debug --clean-first --parallel
+```
+
+Use `fresh-win.ps1` for a from-scratch configure, build, and test pass. It
+deletes only `build/` and preserves the separate FetchContent cache. Pass
+`-ResetDependencyCache` only when you also want to discard and redownload those
+dependencies.
 
 ## Get a model
 
@@ -179,7 +190,7 @@ Import… button.
 To see what the built-in download catalogue offers and what you already have:
 
 ```sh
-./build/tts-host --headless --list-catalogue --config config.example.json
+./build-linux/tts-host --headless --list-catalogue --config config.example.json
 ```
 
 The catalogue is compiled into the binary with each file's HTTPS URL, pinned
@@ -193,14 +204,14 @@ All CLI usage requires `--headless`. Pick a text source
 
 ```sh
 # Write a WAV file
-./build/tts-host --headless --synthesize "Hello there." --out hello.wav --config config.example.json
+./build-linux/tts-host --headless --synthesize "Hello there." --out hello.wav --config config.example.json
 
 # Play through the configured output device (Windows only)
-./build/tts-host --headless --synthesize "Hello there." --play --config config.example.json
+./build-linux/tts-host --headless --synthesize "Hello there." --play --config config.example.json
 
 # Read a file, or whatever's on the clipboard
-cat notes.md | ./build/tts-host --headless --stdin --play --config config.example.json
-./build/tts-host --headless --clipboard --play --config config.example.json
+cat notes.md | ./build-linux/tts-host --headless --stdin --play --config config.example.json
+./build-linux/tts-host --headless --clipboard --play --config config.example.json
 ```
 
 Long text is split into sentence-scale chunks and played back as each chunk is
@@ -274,22 +285,24 @@ the Kokoro runner and its ONNX Runtime library, the espeak-ng data, `schemas/`,
 does not rebuild for you:
 
 ```sh
-cmake --build build --parallel
-cmake --build build --target package                 # Linux/macOS
+cmake --build build-linux --parallel
+cmake --build build-linux --target package           # Linux/macOS
 cmake --build build --config Debug --target package  # Windows
 ```
 
-The zip lands in `build/dist/`. There is no installer yet; unzip and run.
+The zip lands in `build-linux/dist/` on Linux/macOS and `build/dist/` on
+Windows. There is no installer yet; unzip and run.
 
 ## Other targets
 
 - **Default (`all`)** — builds `tts-host`, every runner, and the test binaries.
-  This is what `cmake --build build ...` does with no `--target`.
+  This is what `cmake --build build-linux ...` or `cmake --build build ...`
+  does with no `--target`.
 - **`list-models`** — rebuilds only `tts-host` and runs it against the registry
   test fixture, for a fast manual edit/build/run loop without a full CTest pass:
 
   ```sh
-  cmake --build build --target list-models                    # Linux/macOS
+  cmake --build build-linux --target list-models               # Linux/macOS
   cmake --build build --config Debug --target list-models     # Windows
   ```
 
@@ -327,8 +340,8 @@ you're changing the fixture itself.
 
 Each platform gets its own venv directory (`.venv-linux/` or
 `.venv-windows/`, both gitignored) so a WSL run and a native Windows run
-never write into the same files — the same reason `build/` can't be shared
-between them.
+never write into the same files. Their CMake trees are separate too:
+`build-linux/` for WSL/Linux and `build/` for Windows.
 
 ## What works today
 

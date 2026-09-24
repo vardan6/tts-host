@@ -66,6 +66,12 @@ class LocalApiServer::Impl {
       throw std::runtime_error("could not bind local API to " + host + ":" +
                                std::to_string(port) + ": " + error.message());
     }
+    // When port is 0, bind assigns an ephemeral port. Keep the actual endpoint
+    // so destruction can connect to it and wake the blocking accept below.
+    endpoint_ = acceptor_.local_endpoint(error);
+    if (error) {
+      throw std::runtime_error("could not query bound local API endpoint: " + error.message());
+    }
     acceptor_.listen(asio::socket_base::max_listen_connections, error);
     if (error) throw std::runtime_error("could not listen on local API socket: " + error.message());
     worker_ = std::thread(&Impl::serve, this);

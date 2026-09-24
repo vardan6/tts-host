@@ -1,16 +1,16 @@
 # Active Context
 
 - Mode: session closed.
-- Phase/slice: Windows desktop prototype sequence.
-- State: Generated-audio seek, browser selected-text reader, and tray shortcut
-  toggle are implemented. Linux host/focused targets compiled for earlier
-  slices; no tests were run for this toggle.
-- Next atomic step: Run the combined native Windows desktop acceptance in
-  [roadmap](roadmap.md), including the tray shortcut toggle; leave it unchecked
-  until the walkthrough passes.
-- Blockers/environment: Native Windows build, WASAPI seek, Chrome interaction,
-  shortcut-toggle interaction, and the combined walkthrough remain unverified.
-  The tree includes older and current uncommitted changes; none were committed.
-- Open questions: English model defaults await the bake-off; Linux capture and
-  release sequencing remain future decisions.
-- Discarded as noise: None this session.
+- Phase/slice: Windows developer build/run workflow.
+- State: The workflow scripts/docs and Local API port-0 shutdown fix are
+  committed. The user reports native `compile-win.ps1` and
+  `fresh-win.ps1` runs succeeded; detailed incremental and generated-clean
+  acceptance remains open.
+- Next atomic step: Confirm the no-change and changed-source incremental runs,
+  execute the generated clean target, then close the two workflow slices.
+- Blockers/environment: Agent environment is WSL2 and has no PowerShell
+  executable; native script runs were reported by the user.
+- Open questions: English bake-off execution path and Qwen runtime/quantization;
+  Linux capture and release sequencing.
+- Discarded as noise: A multi-action/preset script proposal; the requested daily
+  flow is the three-command compile, test, and launch sequence.

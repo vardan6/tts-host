@@ -1,5 +1,16 @@
 # Progress
 
+- 2026-09-25: Bake-off readiness review — confirmed Qwen3-TTS has pilot artifacts
+  and external runtime measurements, but no TTS Host runner or catalogue entry.
+  The exact benchmark corpus is now in `docs/requirements/product.md`; the
+  earlier pilot's measurements remain provisional. The benchmark execution path
+  is recorded as an open roadmap decision.
+
+- 2026-09-25: Windows developer workflow run report — the user reports that
+  native `compile-win.ps1` and `fresh-win.ps1` both ran successfully. A repeated
+  no-change incremental run, changed-source rebuild, and generated clean target
+  were not confirmed, so the two roadmap items remain open pending those checks.
+
 - 2026-09-18: Desktop feedback consolidation — reduced five pending desktop
   HITL checkpoints to one combined Windows acceptance walkthrough; Copy adapter
   verification is AFK, with unsupported adapters disabled and independent work
@@ -142,3 +153,6 @@
 - 2026-09-24: Generated-audio seek — added source-timeline seeking across generated sentence chunks, sample-rate-aware frame mapping, a 64 MiB RAM cache with a 1 GiB per-utterance PCM spool, configurable 1–30 s interval, paused-seek wakeup, enabled-only Now Playing controls, and visible storage errors. Focused host and test targets compile on Linux; tests were not run, and native WASAPI behavior remains for combined acceptance.
 - 2026-09-24: Browser selected-text reader — added a Manifest V3 Chrome extension and loopback Boost.Beast `POST /v1/selection` ingress. The extension reads DOM selection without clipboard access; Host accepts only configured exact CORS origins and submits non-empty text as an interrupting request. Linux host and API test targets compile; tests and browser interaction were not run.
 - 2026-09-24: Global selection shortcut toggle — added a checkable tray menu command that registers or unregisters the configured chord without changing its saved binding; Settings preserves a runtime disable when it closes. Native Windows build/interaction and tests remain unverified, so combined acceptance now includes the toggle. Scoped `git diff --check` passed; the repository-wide check reports CRLF-only whitespace on the pre-existing `config.example.json` edit.
+- 2026-09-25: Windows developer build/run workflow plan — captured incremental verification, app relaunch, clean, and fresh-build requirements/design in docs and roadmap; README documents the CMake commands currently available. Script modes are not implemented yet.
+- 2026-09-25: Local API test shutdown hang — retained the actual bound endpoint after port-0 bind so server teardown wakes the accept loop, and added a 10-second CTest timeout. The focused Windows test remains unrun.
+- 2026-09-25: Windows developer build/run scripts — `compile-win.ps1` now configures when needed, incrementally builds, runs CTest, then launches the app; `fresh-win.ps1` rebuilds the Windows tree while preserving the FetchContent cache unless requested otherwise. Linux commands use a separate `build-linux/` tree. Native Windows acceptance was not run, so the roadmap slices remain unchecked.

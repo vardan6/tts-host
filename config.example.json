@@ -2,8 +2,8 @@
   "$schema": "./schemas/config.schema.json",
   "audio": {
     "outputDevice": "system-default",
-    "speechSpeed": 1.0,
-    "playbackSkipSeconds": 5
+    "playbackSkipSeconds": 5,
+    "speechSpeed": 1.25
   },
   "hotkeys": {
     "readSelection": "Ctrl + F8"
@@ -37,7 +37,9 @@
     "capturePolicy": "clipboardOnly"
   },
   "server": {
-    "allowedOrigins": ["chrome-extension://npjbojajmindlaifibnikkepflkbpnnn"],
+    "allowedOrigins": [
+      "chrome-extension://npjbojajmindlaifibnikkepflkbpnnn"
+    ],
     "authentication": "none",
     "host": "127.0.0.1",
     "port": 7861

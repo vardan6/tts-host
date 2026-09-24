@@ -296,10 +296,11 @@ else()
   target_compile_options(tts-host-kokoro-onnx-runner PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
-# Convenience target for the manual edit/build/run loop: `cmake --build
-# build --config Debug --target list-models` rebuilds only what changed and
-# runs the host against the registry fixture, without a full clean rebuild or
-# the CTest suite (see compile-win.ps1 for the from-scratch verification run).
+# Convenience target for the manual edit/build/run loop. On Linux use
+# `cmake --build build-linux --target list-models`; on Windows use
+# `cmake --build build --config Debug --target list-models`. It rebuilds only
+# what changed and runs the host against the registry fixture, without the full
+# CTest suite (see compile-win.ps1 for the incremental build/test/launch loop).
 add_custom_target(
   list-models
   COMMAND $<TARGET_FILE:tts-host> --headless --list-models
@@ -671,6 +672,7 @@ if(BUILD_TESTING)
     target_compile_options(tts-host-local-api-tests PRIVATE -Wall -Wextra -Wpedantic)
   endif()
   add_test(NAME tts_host_local_api COMMAND tts-host-local-api-tests)
+  set_tests_properties(tts_host_local_api PROPERTIES TIMEOUT 10)
 
   add_executable(
     tts-host-kokoro-phoneme-mapping-tests
