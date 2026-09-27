@@ -43,5 +43,8 @@
     "authentication": "none",
     "host": "127.0.0.1",
     "port": 7861
+  },
+  "startup": {
+    "launchOnLogin": true
   }
 }

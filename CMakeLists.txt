@@ -279,11 +279,24 @@ target_link_libraries(
     ${JSON_SCHEMA_VALIDATOR_TARGET}
 )
 if(WIN32)
+  target_sources(tts-host PRIVATE src/startup_registration.cpp)
   # uuid supplies CLSID_FileOpenDialog for the settings window's Import… folder
   # picker (src/settings_window.cpp); winhttp is catalogue download's outbound
-  # HTTPS client (src/catalogue_download.cpp); the rest are the tray, WASAPI,
-  # and shell APIs already in use.
-  target_link_libraries(tts-host PRIVATE user32 ole32 oleaut32 shell32 uuid winhttp ws2_32 mswsock)
+  # HTTPS client (src/catalogue_download.cpp); advapi32 provides the per-user
+  # Run-key registration (src/startup_registration.cpp).
+  target_link_libraries(
+    tts-host
+    PRIVATE
+      advapi32
+      user32
+      ole32
+      oleaut32
+      shell32
+      uuid
+      winhttp
+      ws2_32
+      mswsock
+  )
 endif()
 
 if(MSVC)

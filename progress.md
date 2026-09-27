@@ -1,5 +1,10 @@
 # Progress
 
+- 2026-09-25: Windows start-at-login — added the default-on
+  `startup.launchOnLogin` setting, per-user Run-key registration/removal, and
+  an immediate Settings checkbox. Native Windows build and login interaction
+  remain unverified in the WSL agent environment.
+
 - 2026-09-25: Bake-off readiness review — confirmed Qwen3-TTS has pilot artifacts
   and external runtime measurements, but no TTS Host runner or catalogue entry.
   The exact benchmark corpus is now in `docs/requirements/product.md`; the

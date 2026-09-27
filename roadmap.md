@@ -383,6 +383,12 @@ Developer workflow:
     re-synthesize audio for a seek — see
     [design](docs/design/architecture.md#playback-control-and-position) and
     [requirements](docs/requirements/product.md#configuration-and-controls).
+  - [ ] **AFK — Windows start at login:** default `startup.launchOnLogin` on,
+    register the tray host under the current user's Run key with its config path,
+    and expose an immediate Settings toggle; native build and login interaction
+    verification remain — see
+    [design](docs/design/architecture.md#desktop-integration) and
+    [requirements](docs/requirements/product.md#configuration-and-controls).
 - [ ] **HITL — Combined Windows desktop acceptance:** after the selection,
   Now Playing, seek, and browser prototypes, run one short native walkthrough:
   selected/empty text in Windows Terminal/Codex, an editor's embedded terminal,

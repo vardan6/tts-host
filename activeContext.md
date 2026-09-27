@@ -1,15 +1,16 @@
 # Active Context
 
 - Mode: session closed.
-- Phase/slice: Windows developer build/run workflow.
-- State: The workflow scripts/docs and Local API port-0 shutdown fix are
-  committed. The user reports native `compile-win.ps1` and
-  `fresh-win.ps1` runs succeeded; detailed incremental and generated-clean
-  acceptance remains open.
-- Next atomic step: Confirm the no-change and changed-source incremental runs,
-  execute the generated clean target, then close the two workflow slices.
+- Phase/slice: Windows start at login.
+- State: The setting, Settings checkbox, and per-user Run-key integration are
+  implemented in the working tree; native build and login interaction are not
+  verified.
+- Next atomic step: Build `tts-host` on native Windows, toggle the setting off
+  and on, and confirm the Run entry uses the same config path.
+- Next after that: Finish the pending incremental and generated-clean Windows
+  workflow acceptance.
 - Blockers/environment: Agent environment is WSL2 and has no PowerShell
-  executable; native script runs were reported by the user.
+  executable.
 - Open questions: English bake-off execution path and Qwen runtime/quantization;
   Linux capture and release sequencing.
 - Discarded as noise: A multi-action/preset script proposal; the requested daily

@@ -56,6 +56,19 @@
         }
       }
     },
+    "startup": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "launchOnLogin"
+      ],
+      "properties": {
+        "launchOnLogin": {
+          "type": "boolean",
+          "default": true
+        }
+      }
+    },
     "audio": {
       "type": "object",
       "additionalProperties": false,

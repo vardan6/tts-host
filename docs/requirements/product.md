@@ -179,6 +179,11 @@ connected prose and sentence transitions.
 - The tray can suspend or resume the configured global selection shortcut for
   the current Host process without clearing its saved `hotkeys.readSelection`
   binding. On startup, the Host attempts to register that saved binding.
+- On Windows, `startup.launchOnLogin` defaults to `true`. The Settings window
+  exposes this setting and immediately adds or removes the current user's login
+  startup entry. The entry starts the tray host with the same config file; it
+  does not install a Windows service or require administrator access. A
+  registration failure is reported without preventing the Host from starting.
 - Default speech speed is configurable from 0.5× to 2.0×, defaults to 1.0×, and
   is also adjustable from Now Playing for the active utterance.
 - Configuration changes take effect without a restart wherever possible.

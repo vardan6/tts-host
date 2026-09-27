@@ -431,6 +431,14 @@ from reaching the user's audio device or showing a tray icon. Autostart is on by
 default with an obvious switch, because a background service that is not running
 when a client calls it is the most likely support complaint.
 
+On Windows, `startup.launchOnLogin` stores this choice in `config.json` and
+defaults to `true`. The Settings checkbox updates the current user's
+`Software\Microsoft\Windows\CurrentVersion\Run` entry immediately. Its
+command points to the current executable and the same config path, and starts
+the normal tray host at sign-in. Turning the setting off removes that entry.
+This uses the user's registry hive and never requires elevation. A registry
+failure is reported but does not prevent the Host from starting.
+
 Three UI surfaces, divided by task:
 
 - **Tray menu** — current model/profile, pause/resume/stop, output device,

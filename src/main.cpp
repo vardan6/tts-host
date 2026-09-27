@@ -13,6 +13,7 @@
 #include "tts_host/runner_launcher.hpp"
 #include "tts_host/runner_protocol.hpp"
 #include "tts_host/settings_window.hpp"
+#include "tts_host/startup_registration.hpp"
 #include "tts_host/text_normalizer.hpp"
 #include "tts_host/text_splitter.hpp"
 #include "tts_host/tray_icon.hpp"
@@ -547,6 +548,18 @@ int main(int argc, char **argv) {
   try {
     tts_host::AudioHistory::clean_abandoned_spools();
     auto document = tts_host::load_config(*options, std::filesystem::path(argv[0]));
+
+#ifdef _WIN32
+    if (!options->headless) {
+      const bool launch_on_login =
+          document.value.value("startup", nlohmann::json::object()).value("launchOnLogin", true);
+      try {
+        tts_host::set_start_at_login(launch_on_login, document.paths.config_path);
+      } catch (const std::exception &error) {
+        std::cerr << "Could not update the Windows login startup entry: " << error.what() << '\n';
+      }
+    }
+#endif
 
     if (!options->headless) {
       if (options->settings_window) {

@@ -21,6 +21,7 @@
 #include "tts_host/model_import.hpp"
 #include "tts_host/model_registry.hpp"
 #include "tts_host/selection_capture.hpp"
+#include "tts_host/startup_registration.hpp"
 #include "tts_host/model_session.hpp"
 #include "tts_host/playback_sink.hpp"
 
@@ -42,6 +43,7 @@ constexpr int kCheckHotkeyButtonId = 112;
 constexpr int kSelectionPolicyComboId = 113;
 constexpr int kSpeechSpeedComboId = 114;
 constexpr int kPlaybackSkipComboId = 115;
+constexpr int kStartAtLoginCheckboxId = 116;
 constexpr int kSettingsHotkeyProbeId = 2;
 
 // Polls ModelSessionManager::unload_if_idle against modelRegistry.idleUnloadSeconds
@@ -441,6 +443,31 @@ void on_server_port_changed(SettingsState &state, HWND edit) {
   save_config(state);
 }
 
+void on_start_at_login_clicked(SettingsState &state, HWND checkbox) {
+  const bool enabled = SendMessageW(checkbox, BM_GETCHECK, 0, 0) == BST_CHECKED;
+  const bool previous = state.document.value
+                            .value("startup", nlohmann::json::object())
+                            .value("launchOnLogin", true);
+  try {
+    set_start_at_login(enabled, state.document.paths.config_path);
+    state.document.value["startup"]["launchOnLogin"] = enabled;
+    save_config(state);
+    append_activity_log(state, enabled ? L"Start at login enabled."
+                                       : L"Start at login disabled.");
+  } catch (const std::exception &error) {
+    state.document.value["startup"]["launchOnLogin"] = previous;
+    SendMessageW(checkbox, BM_SETCHECK, previous ? BST_CHECKED : BST_UNCHECKED, 0);
+    try {
+      set_start_at_login(previous, state.document.paths.config_path);
+    } catch (const std::exception &rollback_error) {
+      append_activity_log(state, L"Could not restore the previous startup registration: " +
+                                     utf8_to_wide(rollback_error.what()));
+    }
+    append_activity_log(state, L"Could not update start at login: " +
+                                   utf8_to_wide(error.what()));
+  }
+}
+
 // Fills the combo box with every discovered package and records the matching
 // model ids, which is what load() actually takes. Selection defaults to the
 // first package so the Load button is meaningful without a pick first.
@@ -756,6 +783,8 @@ LRESULT CALLBACK settings_window_proc(HWND window, UINT message, WPARAM wparam, 
         on_download_model_clicked(*state, GetDlgItem(window, kCatalogueComboId), window);
       } else if (LOWORD(wparam) == kCheckHotkeyButtonId && HIWORD(wparam) == BN_CLICKED) {
         on_check_hotkey_clicked(*state, window, GetDlgItem(window, kReadSelectionHotkeyEditId));
+      } else if (LOWORD(wparam) == kStartAtLoginCheckboxId && HIWORD(wparam) == BN_CLICKED) {
+        on_start_at_login_clicked(*state, reinterpret_cast<HWND>(lparam));
       }
       return 0;
     }
@@ -890,6 +919,19 @@ void run_settings_window(ConfigDocument &document,
   CreateWindowExW(0, L"STATIC",
                   L"Clipboard-only reads existing text; copy first. Automatic Copy may change it.",
                   WS_CHILD | WS_VISIBLE, 16, 264, 460, 20, window, nullptr, instance, nullptr);
+
+  const HWND start_at_login_checkbox = CreateWindowExW(
+      0, L"BUTTON", L"Start TTS Host when I sign in", WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
+      16, 292, 460, 24, window,
+      reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kStartAtLoginCheckboxId)), instance, nullptr);
+  if (start_at_login_checkbox == nullptr) {
+    throw std::runtime_error("failed to create the start-at-login control");
+  }
+  const bool launch_on_login = state.document.value
+                                   .value("startup", nlohmann::json::object())
+                                   .value("launchOnLogin", true);
+  SendMessageW(start_at_login_checkbox, BM_SETCHECK,
+               launch_on_login ? BST_CHECKED : BST_UNCHECKED, 0);
 
   CreateWindowExW(0, L"STATIC", L"Model:", WS_CHILD | WS_VISIBLE, 16, 328, 152, 24, window, nullptr,
                   instance, nullptr);
