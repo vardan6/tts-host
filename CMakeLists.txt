@@ -364,6 +364,10 @@ set(CPACK_PACKAGE_DIRECTORY "${CMAKE_BINARY_DIR}/dist")
 include(CPack)
 
 if(BUILD_TESTING)
+  add_executable(tts-host-selection-hotkey-tests tests/selection_hotkey_tests.cpp)
+  target_include_directories(tts-host-selection-hotkey-tests PRIVATE include)
+  add_test(NAME tts_host_selection_hotkey COMMAND tts-host-selection-hotkey-tests)
+
   if(WIN32)
     add_executable(
       tts-host-startup-registration-tests

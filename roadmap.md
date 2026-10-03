@@ -3,6 +3,10 @@
 Each item is a thin, independently verifiable product slice. Requirements and
 architecture live under `docs/`; this file records sequence only.
 
+Current checkpoint: review/finalize `roadmap-slices` before beginning the Linux
+adapter on a focused feature branch. Pending acceptance and later product slices
+remain unchecked; the checkpoint recommendation does not declare them complete.
+
 Desktop prototype order: Windows direct selection → Now Playing pause/resume/
 stop → generated-audio seek → browser selection → one combined Windows acceptance
 session. Each implementation slice includes automated checks; intermediate demos
@@ -266,10 +270,14 @@ Developer workflow:
       applies the saved binding when it closes. The window routes its
       user-visible status through one scrollable activity log; an empty shortcut
       disables it.
-    - [ ] Global shortcut toggle: the tray menu checks whether the configured
-      selection shortcut is registered and lets the user suspend or resume it
-      for the current process without changing the saved binding; verify it in
-      combined Windows acceptance.
+    - [x] **AFK — Global shortcut lifecycle verification:** use a testable runtime
+      registration state in the tray; cover suspend/resume, Settings preserving
+      suspension, retry after registration conflict, shutdown release, and
+      startup registration. Linux and Windows Release checks pass — see
+      [design](docs/design/architecture.md#desktop-integration) and
+      [requirements](docs/requirements/product.md#configuration-and-controls).
+    - [ ] **HITL — Global shortcut toggle acceptance:** verify the checked tray
+      menu, suspend/resume, and Settings round-trip in combined Windows acceptance.
   - [x] **AFK — Windows direct-selection prototype:** replace unconditional
     synthetic Copy with focused UI Automation capture through the existing
     hotkey-to-speech path. Unsupported/empty/timed-out capture leaves speech and
@@ -395,8 +403,11 @@ Developer workflow:
       preservation of unrelated entries without changing login settings.
     - [ ] Settings toggle and sign-in acceptance in an isolated Windows
       environment; do not enable login startup on the developer machine.
+- [x] **HITL — Now Playing dialog acceptance:** user accepted the native
+  dialog and requested that its testing be considered done (2026-10-03).
 - [ ] **HITL — Combined Windows desktop acceptance:** after the selection,
   Now Playing, seek, and browser prototypes, run one short native walkthrough:
+  Now Playing dialog acceptance is complete; remaining checks cover
   selected/empty text in Windows Terminal/Codex, an editor's embedded terminal,
   OneNote, and a browser; correct source targeting; audible pause/resume and
   Stop clearing the queue; close-to-hide; seek positions and generated boundaries.
@@ -433,11 +444,20 @@ Developer workflow:
     permission/status and focused-selection capture; no synthetic Windows-style
     copy fallback — see [design](docs/design/architecture.md#desktop-integration)
     and [design](docs/design/architecture.md#platform-strategy).
-  - [ ] **AFK — Native Linux selection adapter:** implement a session-aware X11
-    or Wayland capture capability, report unavailable compositor permissions,
-    and never assume Windows active-window or injection behavior — see
+  - [ ] **AFK — Native Linux selection adapter:** implement KDE Plasma Wayland
+    direct accessibility capture and actionable unavailable-capability reporting;
+    use Kubuntu for initial desktop acceptance and retain Rocky 8/9 KDE as
+    compatibility targets. Never assume Windows active-window or injection
+    behavior — see
     [design](docs/design/architecture.md#desktop-integration) and
     [design](docs/design/architecture.md#platform-strategy).
+  - [ ] **HITL — Linux KDE Wayland acceptance:** verify focused/empty/protected
+    selections and unsupported applications on Kubuntu; check compatibility on
+    the user's Rocky 8/9 KDE sessions — see
+    [design](docs/design/architecture.md#platform-strategy).
+  - [ ] **AFK — Linux X11 selection compatibility:** add native X11-session
+    capture after the KDE Wayland adapter; fail closed for unavailable targets —
+    see [design](docs/design/architecture.md#platform-strategy).
 
 ## Open decisions
 
@@ -449,10 +469,6 @@ Developer workflow:
   quantization level — an output of the bake-off, not an input.
 - Whether a WSL headless distribution is published, or `--headless` merely makes
   it possible.
-- The Linux desktop sessions to support for focused-selection capture (X11,
-  Wayland, or both), and therefore the native accessibility/permission route;
-  decide it when the Linux release slice is scheduled rather than encoding a
-  Windows keystroke fallback now.
 
 ## Deliberately deferred
 

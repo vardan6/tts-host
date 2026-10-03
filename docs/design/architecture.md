@@ -617,6 +617,19 @@ console needs a file, or its actionable errors reach nobody.
   injected-input permissions differ materially; a Linux capture adapter must
   use the session's native accessibility/selection mechanism and report an
   unavailable capability rather than emulate the Windows fallback.
+  The first Linux selection target is KDE Plasma on Wayland, with Kubuntu as
+  the primary desktop acceptance environment. Rocky Linux 8/9 with KDE are
+  compatibility targets; detect their actual desktop/session and do not infer
+  it from the distribution version. X11 capture is a later slice. Wayland
+  capture must use application accessibility rather than assuming arbitrary
+  access to other clients' focus, selections, or injected input. Missing
+  accessibility support must produce actionable manual-copy guidance; browser
+  DOM selection remains available independently. KDE-first does not authorize
+  replacing the native-UI decision in ADR 0007 with a Qt UI dependency.
+
+  Basis for session priority: the user prefers KDE/Kubuntu and uses Rocky 8/9;
+  [Kubuntu 25.10 defaults to Plasma Wayland](https://www.kubuntu.com/news/kubuntu-25-10-questing-quokka-released/),
+  and [KDE is prioritizing Wayland](https://blogs.kde.org/2025/11/26/going-all-in-on-a-wayland-future/).
 - **macOS:** designed, not built. Signed and notarized bundle, Apple Silicon and
   Metal first. Its capture adapter uses the macOS accessibility APIs and asks
   for the required Accessibility permission; it does not reuse Windows process

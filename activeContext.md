@@ -1,21 +1,23 @@
 # Active Context
 
 - Mode: session closed.
-- Phase/slice: Browser-local playback controls complete; native acceptance pending.
-- State: Host and three focused CTests pass on Linux and Windows Release.
-  Browser controls show playback state/position and support pause/resume/stop.
-- Next atomic step: Verify the tray icon and browser controls using the rebuilt
-  Windows Host and reload the extension. Use `config.development.json` with
-  login startup disabled. Native Chrome/audible checks remain HITL.
-- Next after that: Combined Windows acceptance and repeated toolbar/article reads;
-  startup Settings/sign-in acceptance requires an isolated Windows environment.
-- Blockers/environment: The running Debug Host prevented executable replacement;
-  Release was built instead. Quit it before rebuilding/relaunching Debug.
-  The agent's Chrome profile disallows Developer mode; use the user's permitted
-  browser. An isolated Windows environment is not provisioned. Never enable
-  developer-machine login startup; see `PROJECT.md`.
-- Open questions: English bake-off execution path and Qwen runtime/quantization;
-  Linux capture and release sequencing.
-- Discarded as noise: Chrome `--load-extension` and WSL-side CDP did not bypass
-  managed policy. Do not retry there. The daily workflow remains the requested
-  compile/test/launch sequence, without extra preset or multi-action scripts.
+- Phase/slice: `roadmap-slices` checkpoint complete; branch review/finalization pending.
+- State: Existing work committed as `d984cdf`; shortcut lifecycle code/tests and
+  session/planning docs remain uncommitted. All 39 Linux CTests pass; Windows
+  Release Host builds and the shortcut CTest passes. Now Playing dialog accepted.
+- Next atomic step: Review `roadmap-slices` against `main`, including the current
+  working tree. Recommendation is to finalize this checkpoint before Linux work;
+  commit/merge has not been requested for the remaining changes.
+- Next after finalization: Create a focused Linux selection branch from updated
+  `main`; implement KDE Plasma Wayland capture per the roadmap. Kubuntu is the
+  primary desktop acceptance target; Rocky 8/9 KDE compatibility and X11 follow.
+- Pending acceptance: Windows tray icon, shortcut/Settings round-trip, seek,
+  browser article/playback, and startup Settings/sign-in in an isolated environment.
+- Blockers/environment: Agent Chrome disallows Developer mode; use the user's
+  permitted browser. Never enable developer-machine login startup (`PROJECT.md`);
+  use `config.development.json`. Running Debug Host blocks replacement; quit it
+  before rebuilding Debug. Release builds are available.
+- Open questions: English bake-off execution, Qwen runtime/quantization, release
+  sequencing. Branch-wide review and merge approval remain pending.
+- Discarded as noise: Do not retry Chrome `--load-extension` or WSL CDP to bypass
+  managed policy. Unchecked product-roadmap items do not define this branch's scope.

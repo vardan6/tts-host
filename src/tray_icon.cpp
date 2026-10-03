@@ -11,6 +11,7 @@
 
 #include "tts_host/clipboard.hpp"
 #include "tts_host/global_hotkey.hpp"
+#include "tts_host/selection_hotkey_state.hpp"
 #include "tts_host/now_playing_window.hpp"
 #include "tts_host/selection_capture.hpp"
 #include "tts_host/settings_window.hpp"
@@ -34,8 +35,7 @@ struct TrayContext {
   PlaybackController *playback_controller;
   std::uint64_t capture_generation = 0;
   bool capture_timed_out = false;
-  bool selection_hotkey_registered = false;
-  bool selection_hotkey_disabled_by_user = false;
+  SelectionHotkeyState selection_hotkey;
 };
 
 struct CaptureCompletion {
@@ -183,7 +183,7 @@ void show_context_menu(HWND window) {
     return;
   }
   UINT hotkey_menu_flags = MF_STRING;
-  if (context->selection_hotkey_registered) {
+  if (context->selection_hotkey.registered()) {
     hotkey_menu_flags |= MF_CHECKED;
   }
   if (!has_valid_read_selection_hotkey(*context->document)) {
@@ -250,32 +250,22 @@ LRESULT CALLBACK tray_window_proc(HWND window, UINT message, WPARAM wparam, LPAR
         // the tray icon simply stops responding to clicks while settings is
         // open rather than needing a second thread.
         auto *context = tray_context(window);
-        const bool reenable_selection_hotkey = !context->selection_hotkey_disabled_by_user;
         // Release our own hotkey while Settings probes candidates. Otherwise
         // testing the active value would always report a conflict with TTS Host.
-        UnregisterHotKey(window, kReadSelectionHotkeyId);
-        context->selection_hotkey_registered = false;
+        context->selection_hotkey.release([&] { UnregisterHotKey(window, kReadSelectionHotkeyId); });
         run_settings_window(*context->document, *context->runner_directory);
         // Settings edits the shared document. Apply its persisted default to
         // the next utterance without changing the active utterance's requested
         // speed; the latter belongs to the Now Playing control.
         context->playback_controller->set_default_speech_speed(
             context->document->value.at("audio").value("speechSpeed", 1.0));
-        if (reenable_selection_hotkey) {
-          context->selection_hotkey_registered =
-              register_read_selection_hotkey(window, *context->document);
-        }
+        context->selection_hotkey.restore(
+            [&] { return register_read_selection_hotkey(window, *context->document); });
       } else if (LOWORD(wparam) == kSelectionHotkeyToggleMenuItemId) {
         auto *context = tray_context(window);
-        if (context->selection_hotkey_registered) {
-          UnregisterHotKey(window, kReadSelectionHotkeyId);
-          context->selection_hotkey_registered = false;
-          context->selection_hotkey_disabled_by_user = true;
-        } else {
-          context->selection_hotkey_disabled_by_user = false;
-          context->selection_hotkey_registered =
-              register_read_selection_hotkey(window, *context->document);
-        }
+        context->selection_hotkey.toggle(
+            [&] { return register_read_selection_hotkey(window, *context->document); },
+            [&] { UnregisterHotKey(window, kReadSelectionHotkeyId); });
       } else if (LOWORD(wparam) == kReadClipboardMenuItemId) {
         speak_clipboard(window);
       } else if (LOWORD(wparam) == kQueueClipboardMenuItemId) {
@@ -285,7 +275,7 @@ LRESULT CALLBACK tray_window_proc(HWND window, UINT message, WPARAM wparam, LPAR
       }
       return 0;
     case WM_HOTKEY:
-      if (wparam == kReadSelectionHotkeyId && tray_context(window)->selection_hotkey_registered) {
+      if (wparam == kReadSelectionHotkeyId && tray_context(window)->selection_hotkey.registered()) {
         request_selection_capture(window);
       }
       return 0;
@@ -302,7 +292,8 @@ LRESULT CALLBACK tray_window_proc(HWND window, UINT message, WPARAM wparam, LPAR
       }
       return 0;
     case WM_DESTROY: {
-      UnregisterHotKey(window, kReadSelectionHotkeyId);
+      tray_context(window)->selection_hotkey.release(
+          [&] { UnregisterHotKey(window, kReadSelectionHotkeyId); });
       PostQuitMessage(0);
       return 0;
     }
@@ -357,7 +348,8 @@ void run_tray_icon(ConfigDocument &document,
     throw std::runtime_error("failed to add the tray icon (Shell_NotifyIcon NIM_ADD)");
   }
 
-  mutable_context.selection_hotkey_registered = register_read_selection_hotkey(window, document);
+  mutable_context.selection_hotkey.restore(
+      [&] { return register_read_selection_hotkey(window, document); });
 
   MSG message;
   while (GetMessageW(&message, nullptr, 0, 0) > 0) {
