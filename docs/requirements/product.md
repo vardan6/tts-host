@@ -209,6 +209,9 @@ connected prose and sentence transitions.
 - Portable mode keeps configuration, model packages, logs, and other mutable
   data in user-visible portable locations. Installed mode uses normal per-user
   OS data directories.
+- A future Windows installer must offer a launch-at-login choice using the same
+  `startup.launchOnLogin` setting as the application; the application can change
+  that choice afterward. Portable users have the same application setting.
 - Windows releases should distinguish CPU/generic and NVIDIA-capable packages if
   bundling every acceleration runtime would make one distribution unreasonably
   large.
@@ -232,7 +235,9 @@ connected prose and sentence transitions.
   plus a settings window reachable independently of the tray.
 - A global shortcut that reads the current selection from whatever application
   has focus.
-- A browser extension client.
+- A browser extension client that reads selected page text from its toolbar
+  action or readable article text from the page context menu, without touching
+  the clipboard.
 
 ## Explicit non-goals for the first release
 

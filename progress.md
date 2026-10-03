@@ -1,5 +1,68 @@
 # Progress
 
+- 2026-10-02: TTS application icon — added original document/speaker artwork
+  inspired by the supplied examples, embedded a multi-resolution Windows ICO,
+  and replaced the generic tray icon with the embedded resource at the system
+  small-icon size. Native Windows rebuild and visual tray acceptance remain.
+
+- 2026-09-30: Windows startup option verification and developer-launch protection
+  — added a native test of the real registration function using a process-local
+  HKCU override, covering enable/disable, config updates, Unicode/space quoting,
+  and unrelated-entry preservation. All 34 Windows CTests pass; the actual login
+  Run key remains unchanged and isolated test keys are cleaned up. Developer
+  launches now preserve a separate local config while forcing autostart off;
+  first/repeat PowerShell probes passed and the native Host validated the config.
+  Settings/sign-in acceptance remains for an isolated environment. The future
+  installer choice is captured as the same application setting.
+
+- 2026-09-30: Developer-machine startup preference — removed the login startup
+  entry created by launching the Host with the example config, verified its
+  absence, and recorded the user's local-development constraint in `PROJECT.md`.
+  The application startup option and portable-first release plan remain in place.
+
+- 2026-09-30: Explicit Windows clean and fresh operations — the generated Visual
+  Studio clean target had already been verified to retain the configured tree.
+  A native `fresh-win.ps1` run reconfigured and rebuilt the Windows tree, then
+  passed all 33 CTests. `build-linux/` and the separate FetchContent cache
+  remained intact; the reset switch was verified in an isolated PowerShell run.
+
+- 2026-09-30: Windows clean/fresh isolated verification — a native Visual Studio
+  `clean` probe removed its executable while retaining `CMakeCache.txt`.
+  PowerShell runs of `fresh-win.ps1` with mocked build tools confirmed that the
+  normal path removes only `build/`, preserves `build-linux/` and the FetchContent
+  cache, and calls configure, build, then CTest; `-ResetDependencyCache` removes
+  that cache. The full TTS fresh build and CTest run remain pending because the
+  tray Host was running from `build/Debug`.
+
+- 2026-09-30: Browser repeat-injection fix — after the user loaded the unpacked
+  extension, repeat actions on one page failed. Reproduced top-level `const`
+  redeclaration in both injected scripts and scoped each invocation; a Node VM
+  check now sends fresh selection and article text twice on one page. Browser
+  reload and native retest remain pending.
+
+- 2026-09-28: Incremental Windows build and run loop — native MSBuild made no
+  compiler invocation on an unchanged rebuild, then compiled only the affected
+  text-splitter test after its source timestamp changed. The generated clean
+  retained the Windows CMake cache, FetchContent directory, and separate Linux
+  tree; a full rebuild and all 33 CTests passed. A native `compile-win.ps1`
+  run then built, passed 33 CTests, and launched the tray Host process. Fresh
+  rebuild acceptance remains separate.
+
+- 2026-09-28: Native Windows/browser follow-up — `compile-win.ps1` built the
+  Windows Host and all 33 CTests passed. Chrome 153 launched in an isolated
+  profile, but Developer mode is managed by an administrator and off; the
+  unpacked extension did not load, so toolbar selection and **Read article**
+  were not exercised. Browser verification remains open.
+
+- 2026-09-27: Native browser speech check — TTS Host was listening on Windows,
+  but Computer Use stopped before the extension could be loaded or the toolbar
+  selection and **Read article** actions could be observed. Verification remains
+  open.
+
+- 2026-09-27: Browser article reading — added a page context-menu action that
+  sends semantic article/page text through the existing local API; at
+  implementation time, Chrome-to-Host interaction was unverified.
+
 - 2026-09-25: Windows start-at-login — added the default-on
   `startup.launchOnLogin` setting, per-user Run-key registration/removal, and
   an immediate Settings checkbox. Native Windows build and login interaction
@@ -161,3 +224,4 @@
 - 2026-09-25: Windows developer build/run workflow plan — captured incremental verification, app relaunch, clean, and fresh-build requirements/design in docs and roadmap; README documents the CMake commands currently available. Script modes are not implemented yet.
 - 2026-09-25: Local API test shutdown hang — retained the actual bound endpoint after port-0 bind so server teardown wakes the accept loop, and added a 10-second CTest timeout. The focused Windows test remains unrun.
 - 2026-09-25: Windows developer build/run scripts — `compile-win.ps1` now configures when needed, incrementally builds, runs CTest, then launches the app; `fresh-win.ps1` rebuilds the Windows tree while preserving the FetchContent cache unless requested otherwise. Linux commands use a separate `build-linux/` tree. Native Windows acceptance was not run, so the roadmap slices remain unchecked.
+- 2026-10-03: Browser-local playback controls — added a Chrome control page with Host state, played/generated position, Pause/Resume/Stop, disconnect recovery, and close-without-stop. Native `/v1/playback` WebSocket validates exact origins and commands; asynchronous API connections keep selection requests and shutdown responsive. Stop clears pending reads. Linux and Windows Release Host builds and all three focused CTests pass; native Chrome/audible acceptance remains. The running Debug Host was left running; developer login startup was not changed.

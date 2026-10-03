@@ -1,4 +1,6 @@
 #include "tts_host/local_api_server.hpp"
+#include "tts_host/playback_controller.hpp"
+#include <nlohmann/json.hpp>
 
 #include <boost/asio.hpp>
 #include <boost/beast.hpp>
@@ -13,6 +15,7 @@ namespace {
 namespace asio = boost::asio;
 namespace beast = boost::beast;
 namespace http = beast::http;
+namespace websocket = beast::websocket;
 using tcp = asio::ip::tcp;
 
 void require(bool condition, const std::string &message) {
@@ -66,11 +69,93 @@ void only_allowlisted_extension_can_submit_selection() {
   require(rejected.find(http::field::access_control_allow_origin) == rejected.end(),
           "host sent CORS permission to an unlisted origin");
 }
+void playback_controls_and_connection_isolation() {
+  tts_host::PlaybackController controller;
+  auto control = controller.begin();
+  controller.mark_playing(control.get());
+  controller.set_generated_seconds(control.get(), 12.0);
+  control->update_position(3.0);
+  int commands = 0;
+  auto server = std::make_unique<tts_host::LocalApiServer>(
+      "127.0.0.1", static_cast<unsigned short>(0), std::vector<std::string>{"chrome-extension://approved"},
+      [](std::string) {}, [&controller, &commands](const std::string &command) {
+        ++commands;
+        if (command == "pause") controller.pause();
+        if (command == "resume") controller.resume();
+        if (command == "stop") controller.stop();
+        const auto status = controller.status();
+        return nlohmann::json{{"state", static_cast<int>(status.state)},
+                              {"positionSeconds", status.position_seconds},
+                              {"generatedSeconds", status.generated_seconds}}.dump();
+      });
+  asio::io_context context;
+  // CORS does not protect a WebSocket handshake: reject the actual Origin.
+  for (const std::string origin : {"chrome-extension://other", "https://untrusted.example"}) {
+    websocket::stream<tcp::socket> denied(context);
+    denied.next_layer().connect({asio::ip::address_v4::loopback(), server->port()});
+    denied.set_option(websocket::stream_base::decorator([origin](websocket::request_type &req) {
+      req.set(http::field::origin, origin);
+    }));
+    websocket::response_type response;
+    boost::system::error_code error;
+    denied.handshake(response, "127.0.0.1", "/v1/playback", error);
+    require(error && response.result() == http::status::forbidden,
+            "unlisted WebSocket origin was accepted");
+  }
+  require(commands == 0, "rejected handshake changed playback");
+  websocket::stream<tcp::socket> ws(context);
+  ws.next_layer().connect({asio::ip::address_v4::loopback(), server->port()});
+  ws.set_option(websocket::stream_base::decorator([](websocket::request_type &req) {
+    req.set(http::field::origin, "chrome-extension://approved");
+  }));
+  ws.handshake("127.0.0.1", "/v1/playback");
+  auto exchange = [&ws](const std::string &message) {
+    ws.write(asio::buffer(message));
+    beast::flat_buffer buffer;
+    ws.read(buffer);
+    return nlohmann::json::parse(beast::buffers_to_string(buffer.data()));
+  };
+  auto status = exchange(R"({"command":"status"})");
+  require(status.at("positionSeconds") == 3.0 && status.at("generatedSeconds") == 12.0,
+          "status lost source-audio position");
+  exchange(R"({"command":"pause"})");
+  require(control->paused(), "browser pause did not pause active playback");
+  exchange(R"({"command":"resume"})");
+  require(!control->paused(), "browser resume did not resume active playback");
+  const int before_invalid = commands;
+  for (const std::string message : {"{", R"({"command":"seek"})", R"({"command":3})"}) {
+    require(exchange(message).contains("error"), "invalid command was accepted");
+  }
+  ws.binary(true);
+  require(exchange(R"({"command":"stop"})").contains("error"), "binary command was accepted");
+  ws.text(true);
+  require(commands == before_invalid && !control->cancelled(),
+          "invalid command reached playback handler");
+  auto accepted = request(server->port(), http::verb::post, "chrome-extension://approved",
+                          R"({"text":"concurrent selection"})");
+  require(accepted.result() == http::status::accepted,
+          "open WebSocket blocked selection ingress");
+  exchange(R"({"command":"stop"})");
+  require(control->cancelled(), "browser stop did not cancel playback");
+  // Closing the browser control page must leave the utterance alone.
+  auto next = controller.begin();
+  ws.close(websocket::close_code::normal);
+  require(!next->cancelled(), "closing control page cancelled speech");
+  websocket::stream<tcp::socket> idle(context);
+  idle.next_layer().connect({asio::ip::address_v4::loopback(), server->port()});
+  idle.handshake("127.0.0.1", "/v1/playback");
+  // Host shutdown must also finish with an idle upgraded socket and a partial HTTP request.
+  tcp::socket partial(context);
+  partial.connect({asio::ip::address_v4::loopback(), server->port()});
+  asio::write(partial, asio::buffer(std::string("GET /v1/selection HTTP/1.1\r\n")));
+  server.reset();
+}
 }  // namespace
 
 int main() {
   try {
     only_allowlisted_extension_can_submit_selection();
+    playback_controls_and_connection_isolation();
   } catch (const std::exception &error) {
     std::cerr << error.what() << '\n';
     return 1;

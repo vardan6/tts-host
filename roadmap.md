@@ -14,12 +14,12 @@ browser work. Platform ports remain later work, Linux before macOS per ADR 0007.
 
 Developer workflow:
 
-- [ ] **AFK — Incremental Windows build and run loop:** keep separate `build/`
+- [x] **AFK — Incremental Windows build and run loop:** keep separate `build/`
   and `build-linux/` trees; make `compile-win.ps1` configure when needed, then
   incrementally build, run CTest, and launch the desktop app — see
   [requirements](docs/requirements/developer-workflow.md) and
   [design](docs/design/developer-workflow.md#incremental-windows-build-and-run).
-- [ ] **AFK — Explicit Windows clean and fresh operations:** expose a generated
+- [x] **AFK — Explicit Windows clean and fresh operations:** expose a generated
   clean target and a `fresh-win.ps1` full build that preserves the separate
   FetchContent cache unless explicitly reset — see
   [requirements](docs/requirements/developer-workflow.md) and
@@ -91,6 +91,8 @@ Developer workflow:
     and blocks on a message loop until Quit is chosen; non-Windows throws a
     clear not-implemented error — see
     [design](docs/design/architecture.md#desktop-integration).
+  - [ ] TTS document/speaker icon: embedded application and tray artwork is
+    implemented; verify its appearance after a native Windows rebuild.
   - [x] Tray "Settings…" menu item: opens the settings window
     (`run_settings_window`) from the tray, blocking the tray's own message
     loop until it closes — no threading yet, so the tray icon stops
@@ -385,10 +387,14 @@ Developer workflow:
     [requirements](docs/requirements/product.md#configuration-and-controls).
   - [ ] **AFK — Windows start at login:** default `startup.launchOnLogin` on,
     register the tray host under the current user's Run key with its config path,
-    and expose an immediate Settings toggle; native build and login interaction
-    verification remain — see
+    and expose an immediate Settings toggle — see
     [design](docs/design/architecture.md#desktop-integration) and
     [requirements](docs/requirements/product.md#configuration-and-controls).
+    - [x] Application option and isolated native registry verification:
+      enable/disable, quoted executable/config paths, repeated changes, and
+      preservation of unrelated entries without changing login settings.
+    - [ ] Settings toggle and sign-in acceptance in an isolated Windows
+      environment; do not enable login startup on the developer machine.
 - [ ] **HITL — Combined Windows desktop acceptance:** after the selection,
   Now Playing, seek, and browser prototypes, run one short native walkthrough:
   selected/empty text in Windows Terminal/Codex, an editor's embedded terminal,
@@ -404,6 +410,15 @@ Developer workflow:
   browser-local playback controls after the selected-text extension/loopback
   path is proven — see [design](docs/design/architecture.md#local-api) and
   [design](docs/design/architecture.md#desktop-integration).
+  - [ ] Article reading: add a page context-menu action that submits the
+    longest non-empty visible `<article>`/`<main>` text, falling back to page
+    body text. The implementation is present; native Chrome-to-Host interaction
+    verification remains.
+  - [x] **AFK — Browser-local playback controls:** extension control page shows active
+    Host state and played/generated position, with pause/resume/stop through
+    native WebSocket; Stop clears queued reads and closing the page keeps speech.
+  - [ ] **HITL — Browser-local controls acceptance:** verify native Chrome state updates,
+    pause/resume/stop, reconnect, and close-without-stop during Windows acceptance.
 - [ ] **HITL — Russian and Armenian acceptance:** compare Qwen Russian and the
   offline Armenian candidate with native-speaker samples; confirm best-effort
   quality is adequate and that English defaults are unaffected.

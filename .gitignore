@@ -48,6 +48,7 @@ models/
 
 # Runtime and user state
 config.json
+config.development.json
 portable.marker
 runtimes/
 logs/

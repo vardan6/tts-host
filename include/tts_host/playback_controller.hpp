@@ -41,6 +41,13 @@ class PlaybackControl {
 
 enum class PlaybackState { Idle, Preparing, Playing, Paused, Stopping, Error };
 
+struct PlaybackStatus {
+  PlaybackState state;
+  double position_seconds;
+  double generated_seconds;
+  std::string error;
+};
+
 // Owns the observable lifecycle and generated-audio seek position of the one
 // active desktop utterance. The scheduler owns runner work; this shared token
 // lets runner work and WASAPI playback observe cancellation, pause, and seek.
@@ -57,6 +64,7 @@ class PlaybackController {
   void fail(const std::shared_ptr<PlaybackControl> &control, std::string message);
   std::string error_message() const;
   PlaybackState state() const;
+  PlaybackStatus status() const;
   // A speed change is observed by the host at a sentence boundary. The
   // generation lets it discard already-synthesized, not-yet-played lookahead.
   void set_default_speech_speed(double speed);

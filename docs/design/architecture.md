@@ -209,13 +209,36 @@ Two surfaces:
   playback control, and status — over WebSocket. It must not inherit the
   limitations of the compatibility endpoint.
 
-The browser-selection prototype also accepts `POST /v1/selection` with a JSON
-`{"text":"..."}` body. A non-empty selection submits one interrupting Host
-request; an empty selection is rejected without changing playback. The route
-is loopback-only and returns `Access-Control-Allow-Origin` only when the
-request's exact origin appears in `server.allowedOrigins`. The Chrome extension
-uses the configured Host port (default 7861); it reads `window.getSelection()`
-in the active page and never accesses the clipboard.
+The browser extension accepts `POST /v1/selection` with a JSON
+`{"text":"..."}` body. Non-empty text submits one interrupting Host request;
+empty text is rejected without changing playback. The route is loopback-only
+and returns `Access-Control-Allow-Origin` only when the request's exact origin
+appears in `server.allowedOrigins`. The Chrome toolbar action reads
+`window.getSelection()`; the page context menu's **Read article** action sends
+the longest non-empty visible text from an `<article>` or `<main>` element, with
+visible `body` text as a fallback. Both use the configured Host port (default
+7861), do not access the clipboard, and reject request bodies over 1 MiB rather
+than truncating page text.
+
+Browser-local controls use the native WebSocket route `/v1/playback`. Each text
+message is a JSON object with `command`: `status`, `pause`, `resume`, or `stop`.
+Each valid command returns the current `state` (preparing/playing/paused/stopping/
+idle/error), `positionSeconds`, `generatedSeconds`, and `error`. These are Host
+playback controls, including speech started from desktop sources; this route
+does not deliver PCM to the browser. Stop cancels active playback and clears
+pending reads. Closing a connection has no playback effect. Unknown commands,
+malformed JSON, and binary messages return an error without changing playback.
+Commands are limited to 4 KiB; idle connections expire after 15 seconds.
+
+WebSocket handshakes enforce the exact origin allowlist before upgrading;
+HTTP CORS headers alone cannot protect WebSockets. Requests without an Origin
+remain available to local non-browser clients, per ADR 0003. Asynchronous
+connections share one API worker so an open control socket does not block read
+requests or Host shutdown. The browser playback page polls status every 500 ms,
+disables unavailable controls, and reconnects after a dropped connection.
+Open it from the page or extension context menu, or from extension settings;
+the toolbar continues to read selected text. Closing the page keeps speech
+running. See `extension/playback.html` and `extension/playback.js`.
 
 The service binds `127.0.0.1:7861` by default. The port is configurable; on
 collision the host fails to start with a clear error rather than moving, because
@@ -556,7 +579,9 @@ two is pending a decision on per-engine runner isolation (raised but not yet
 confirmed) — do not silently pick one shape when next touching this area.
 
 The first release ships the zip only. An installer — shortcuts, start-at-login,
-uninstall entry — comes with the cross-platform release work. Unzip-and-run
+uninstall entry — comes with the cross-platform release work. Its startup choice
+uses the application's `startup.launchOnLogin` setting rather than a separate
+installer preference. Unzip-and-run
 needs no code signing, whereas an unsigned installer triggers SmartScreen, which
 is worse for a non-developer than a folder they double-click.
 

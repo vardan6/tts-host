@@ -488,6 +488,29 @@ class TraySpeechScheduler {
 
   tts_host::PlaybackController &playback_controller() { return playback_controller_; }
 
+  std::string playback_command(const std::string &command) {
+    if (command == "pause") playback_controller_.pause();
+    if (command == "resume") playback_controller_.resume();
+    if (command == "stop") {
+      std::lock_guard lock(mutex_);
+      pending_.clear();
+      playback_controller_.stop();
+    }
+    const auto status = playback_controller_.status();
+    const char *state = "idle";
+    switch (status.state) {
+      case tts_host::PlaybackState::Idle: state = "idle"; break;
+      case tts_host::PlaybackState::Preparing: state = "preparing"; break;
+      case tts_host::PlaybackState::Playing: state = "playing"; break;
+      case tts_host::PlaybackState::Paused: state = "paused"; break;
+      case tts_host::PlaybackState::Stopping: state = "stopping"; break;
+      case tts_host::PlaybackState::Error: state = "error"; break;
+    }
+    return nlohmann::json{{"state", state}, {"positionSeconds", status.position_seconds},
+                          {"generatedSeconds", status.generated_seconds},
+                          {"error", status.error}}.dump();
+  }
+
  private:
   void run() {
     while (true) {
@@ -588,6 +611,9 @@ int main(int argc, char **argv) {
           static_cast<unsigned short>(server.at("port").get<int>()), std::move(allowed_origins),
           [&tray_speech_scheduler](std::string text) {
             tray_speech_scheduler.submit(std::move(text), tts_host::SpeechQueueMode::Interrupt);
+          },
+          [&tray_speech_scheduler](const std::string &command) {
+            return tray_speech_scheduler.playback_command(command);
           });
       std::cout << "Local API listening on " << server.at("host") << ':' << server.at("port")
                 << '\n';

@@ -8,8 +8,8 @@ no cloud service is involved.
 
 **Maturity.** Speech works end to end today and the desktop UI is usable, but
 this is not a packaged consumer release: playback and the UI are Windows-only,
-there is no installer (the release artifact is a zip), and the local HTTP API,
-global hotkeys, and browser extension are not built yet. See
+there is no installer (the release artifact is a zip), and native browser and
+desktop acceptance checks remain. See
 "What works today" below for the exact line, and `roadmap.md` for the sequence.
 
 ## Quick start (Windows)
@@ -22,7 +22,9 @@ git clone <this repo> && cd tts
 ```
 
 `compile-win.ps1` configures the Windows tree if needed, incrementally builds
-all targets, runs CTest, and launches the desktop app. Use it after code
+all targets, runs CTest, and launches the desktop app with a separate, gitignored
+`config.development.json`. It preserves other local settings and disables login
+startup for every developer launch. Use it after code
 changes to recompile, retest, and relaunch. CMake dependencies are kept in the
 gitignored `cache/fetchcontent/windows-vs2022/` directory. For a full
 from-scratch build, use `fresh-win.ps1`. The weights fetch is a one-time ~330 MB
@@ -32,7 +34,7 @@ download into `models/kokoro-en-v1/`. First-time toolchain setup is in
 Then run it as a desktop app — no flags gives you the tray icon:
 
 ```powershell
-.\build\Debug\tts-host.exe --config config.example.json
+.\build\Debug\tts-host.exe --config config.development.json
 ```
 
 ## Prerequisites
@@ -138,7 +140,7 @@ they succeed:
 ```powershell
 cmake --build build --config Debug --parallel
 ctest --test-dir build -C Debug --output-on-failure
-.\build\Debug\tts-host.exe --config config.example.json
+.\build\Debug\tts-host.exe --config config.development.json
 ```
 
 Close a running TTS Host from its tray menu before rebuilding or launching it
@@ -265,6 +267,21 @@ The settings window edits `config.json` in place and covers:
 Note that a model loaded from the settings window is resident only for that
 process — CLI synthesis in another terminal still launches its own runner.
 
+## Browser playback controls
+
+Load `extension/` as an unpacked Chrome extension and allow its exact
+`chrome-extension://<id>` origin in `server.allowedOrigins` in the Host config.
+Restart the Host after changing the allowlist. Use the extension options to set
+its port to match `server.port` (default 7861).
+
+The toolbar reads selected page text. Right-click a page for **Read article with
+TTS Host** or **TTS Host playback controls**. Playback controls are also available
+by right-clicking the extension icon or opening the link in extension settings.
+They show Host playback state and played/generated seconds. Pause, Resume, and
+Stop control the current read; Stop also clears queued reads. Closing the
+control page leaves speech running. On connection failure, the page disables
+controls and retries automatically.
+
 ## Configuration
 
 `config.example.json` at the repository root is a working starting point and is
@@ -363,17 +380,18 @@ Working end to end:
   default profile, installed-model status and licences, load/unload, import,
   idle unload
 - The compiled-in download catalogue (listing only)
+- Browser selection/article submission through the loopback API, plus browser
+  playback state and Pause/Resume/Stop controls through WebSocket
 - Zip release packaging via CPack
 
 Not built yet:
 
 - Downloading from the catalogue (listing works; the fetch does not)
-- The local HTTP API server, and with it the browser extension
 - Global hotkeys and Windows selection reading
 - Interrupt and queue semantics for playback
 - Playback and the desktop UI on Linux and macOS — both are Windows-only, and
   other platforms fail with a clear not-implemented error
-- An installer, and start-at-login
+- An installer
 - Russian and Armenian models; the English model bake-off (Kokoro vs. Qwen3-TTS
   and alternatives) that settles the fast/quality defaults
 

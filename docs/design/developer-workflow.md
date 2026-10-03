@@ -5,8 +5,13 @@
 CMake owns dependency tracking. `compile-win.ps1` configures the Windows tree
 when it is missing, then invokes `cmake --build build --config Debug --parallel`,
 `ctest --test-dir build -C Debug --output-on-failure`, and finally launches
-`build/Debug/tts-host.exe` with the example config. It should not compare source
-timestamps itself or terminate an existing host. `cmake --build` delegates to
+`build/Debug/tts-host.exe` with the gitignored `config.development.json` at the
+repo root. Create that document from the example when absent; otherwise retain
+the local document. Before launch, set `startup.launchOnLogin` to `false` so
+the development executable is never registered to run at login. Keeping the
+config beside the example preserves relative schema and model paths.
+It should not compare source timestamps itself or terminate an existing host.
+`cmake --build` delegates to
 the selected generator and rebuilds changed sources and their dependents
 ([CMake build manual, 3.28](https://cmake.org/cmake/help/v3.28/manual/cmake.1.html#build-a-project)).
 

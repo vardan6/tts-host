@@ -148,6 +148,12 @@ PlaybackState PlaybackController::state() const {
   return state_;
 }
 
+PlaybackStatus PlaybackController::status() const {
+  std::lock_guard lock(mutex_);
+  return {state_, active_ ? active_->position_seconds() : 0.0,
+          active_ ? active_->generated_seconds() : 0.0, error_message_};
+}
+
 namespace {
 void require_speech_speed(double speed) {
   if (speed < 0.5 || speed > 2.0) {

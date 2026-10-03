@@ -10,8 +10,11 @@ second timestamp or dependency scanner.
 
 `compile-win.ps1` must configure the Windows tree if it does not exist, then run
 the following actions in order: build all targets incrementally, run CTest, and
-launch `tts-host` with `config.example.json`. It must stop after a failed build
-or test and must not terminate an already-running host.
+launch `tts-host` with a separate, gitignored `config.development.json` beside
+the example. Create it from `config.example.json` when missing; preserve its
+other settings and set `startup.launchOnLogin` to `false` before each developer
+launch. Developer launches must not enable Windows login startup. It must stop
+after a failed build or test and must not terminate an already-running host.
 
 Windows uses `build/`; WSL/Linux uses `build-linux/`. Their generator, compiler,
 and CMake cache state must stay isolated.
@@ -31,6 +34,8 @@ FetchContent cache must remain intact unless the user passes
   dependency graph; changing CMake configuration causes CMake to regenerate.
 - The desktop launch happens only after the build and tests pass, and leaves an
   already-running process for the user to close normally.
+- The developer configuration disables login startup without changing the
+  shipped example or discarding other local settings.
 - The clean command makes the next build recompile generated targets without
   deleting CMake's configured tree or the dependency cache.
 - The fresh command reconstructs the Windows tree and verifies the full build

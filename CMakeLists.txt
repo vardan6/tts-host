@@ -279,7 +279,9 @@ target_link_libraries(
     ${JSON_SCHEMA_VALIDATOR_TARGET}
 )
 if(WIN32)
-  target_sources(tts-host PRIVATE src/startup_registration.cpp)
+  enable_language(RC)
+  target_sources(tts-host PRIVATE src/startup_registration.cpp resources/tts-host.rc)
+  target_include_directories(tts-host PRIVATE resources)
   # uuid supplies CLSID_FileOpenDialog for the settings window's Import… folder
   # picker (src/settings_window.cpp); winhttp is catalogue download's outbound
   # HTTPS client (src/catalogue_download.cpp); advapi32 provides the per-user
@@ -297,6 +299,12 @@ if(WIN32)
       ws2_32
       mswsock
   )
+endif()
+
+# Beast's asynchronous HTTP/WebSocket instantiations exceed the COFF section
+# limit in MSVC Debug builds; keep the larger object format scoped to this file.
+if(MSVC)
+  set_source_files_properties(src/local_api_server.cpp PROPERTIES COMPILE_OPTIONS /bigobj)
 endif()
 
 if(MSVC)
@@ -356,6 +364,20 @@ set(CPACK_PACKAGE_DIRECTORY "${CMAKE_BINARY_DIR}/dist")
 include(CPack)
 
 if(BUILD_TESTING)
+  if(WIN32)
+    add_executable(
+      tts-host-startup-registration-tests
+      src/startup_registration.cpp
+      tests/startup_registration_tests.cpp
+    )
+    target_include_directories(tts-host-startup-registration-tests PRIVATE include)
+    target_link_libraries(tts-host-startup-registration-tests PRIVATE advapi32)
+    if(MSVC)
+      target_compile_options(tts-host-startup-registration-tests PRIVATE /W4 /permissive-)
+    endif()
+    add_test(NAME tts_host_startup_registration COMMAND tts-host-startup-registration-tests)
+  endif()
+
   add_executable(
     tts-host-selection-capture-tests
     src/selection_capture.cpp
@@ -672,7 +694,8 @@ if(BUILD_TESTING)
   endif()
   add_test(NAME tts_host_audio_history COMMAND tts-host-audio-history-tests)
 
-  add_executable(tts-host-local-api-tests src/local_api_server.cpp tests/local_api_server_tests.cpp)
+  add_executable(tts-host-local-api-tests src/local_api_server.cpp src/playback_controller.cpp
+    tests/local_api_server_tests.cpp)
   target_include_directories(tts-host-local-api-tests PRIVATE include ${boost_headers_SOURCE_DIR})
   target_compile_definitions(tts-host-local-api-tests PRIVATE BOOST_ERROR_CODE_HEADER_ONLY)
   target_link_libraries(tts-host-local-api-tests PRIVATE nlohmann_json::nlohmann_json)
@@ -686,6 +709,13 @@ if(BUILD_TESTING)
   endif()
   add_test(NAME tts_host_local_api COMMAND tts-host-local-api-tests)
   set_tests_properties(tts_host_local_api PROPERTIES TIMEOUT 10)
+
+  find_program(TTS_HOST_NODE_EXECUTABLE NAMES node)
+  if(TTS_HOST_NODE_EXECUTABLE)
+    add_test(NAME tts_host_browser_playback
+      COMMAND ${TTS_HOST_NODE_EXECUTABLE} --test
+        ${CMAKE_SOURCE_DIR}/tests/extension_playback_tests.js)
+  endif()
 
   add_executable(
     tts-host-kokoro-phoneme-mapping-tests

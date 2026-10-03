@@ -7,6 +7,8 @@
 
 #include <shellapi.h>
 
+#include "resource.h"
+
 #include "tts_host/clipboard.hpp"
 #include "tts_host/global_hotkey.hpp"
 #include "tts_host/now_playing_window.hpp"
@@ -342,7 +344,13 @@ void run_tray_icon(ConfigDocument &document,
   icon_data.uID = kTrayIconId;
   icon_data.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
   icon_data.uCallbackMessage = kTrayCallbackMessage;
-  icon_data.hIcon = LoadIconW(nullptr, MAKEINTRESOURCEW(32512));  // IDI_APPLICATION, forced wide
+  icon_data.hIcon = static_cast<HICON>(LoadImageW(
+      instance, MAKEINTRESOURCEW(IDI_TTS_HOST), IMAGE_ICON,
+      GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_SHARED));
+  if (!icon_data.hIcon) {
+    DestroyWindow(window);
+    throw std::runtime_error("failed to load the TTS Host tray icon resource");
+  }
   wcscpy_s(icon_data.szTip, L"TTS Host — global selection shortcut in menu");
 
   if (!Shell_NotifyIconW(NIM_ADD, &icon_data)) {

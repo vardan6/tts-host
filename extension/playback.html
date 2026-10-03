@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TTS Host playback</title>
+  <style>
+    body { font: 16px system-ui, sans-serif; margin: 2rem; max-width: 32rem; }
+    button { padding: .6rem 1rem; margin-right: .5rem; }
+    #error { color: #a43b32; }
+  </style>
+</head>
+<body>
+  <h1>TTS Host playback</h1>
+  <p id="state" role="status">Connecting to TTS Host…</p>
+  <p id="position"></p>
+  <button id="pause" type="button" disabled>Pause</button>
+  <button id="resume" type="button" disabled>Resume</button>
+  <button id="stop" type="button" disabled>Stop</button>
+  <p id="error" role="alert"></p>
+  <p>These controls affect the current Host read, including reads started outside the browser.
+     Closing this page keeps speech running.</p>
+  <p><a href="options.html">Host connection settings</a></p>
+  <script src="playback.js"></script>
+</body>
+</html>
