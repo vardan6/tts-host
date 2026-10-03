@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <condition_variable>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -37,6 +38,10 @@ class PlaybackControl {
   mutable std::mutex mutex_;
   std::condition_variable condition_;
   bool paused_ = false;
+  // Runs under mutex_ when a waiter's predicate is false, just before it
+  // blocks; lets tests probe the predicate-to-wait window.
+  std::function<void()> before_wait_for_test_;
+  friend struct PlaybackControlTestAccess;
 };
 
 enum class PlaybackState { Idle, Preparing, Playing, Paused, Stopping, Error };

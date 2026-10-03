@@ -459,6 +459,41 @@ Developer workflow:
     capture after the KDE Wayland adapter; fail closed for unavailable targets —
     see [design](docs/design/architecture.md#platform-strategy).
 
+## Branch review follow-up
+
+Complete blockers before checkpoint finalization or beginning the Linux adapter.
+Priority, validation qualifications, and planning constraints live in the
+[review triage](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#triage--2026-10-03)
+and [captured plan](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#captured-implementation-plan).
+Each fix includes regressions for its failure mode; #17 audits remaining gaps.
+
+### Correctness blockers
+
+- [x] **AFK — Stop and seek reliably wake paused playback:** Prove cancellation/seek cannot be lost at the predicate-to-wait boundary. See [finding 4](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-4) and [governing spec](docs/design/architecture.md#playback-control-and-position).
+- [ ] **AFK — Speech uses a consistent configuration snapshot:** Publish Settings changes safely and keep each in-flight request consistent. See [finding 1](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-1) and [governing spec](docs/design/architecture.md#live-reload).
+- [ ] **AFK — Settings and tray shutdown preserve window lifetimes:** Prevent reentrant Settings and safely handle tray Quit while Settings is open. See [finding 6](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-6) and [governing spec](docs/design/architecture.md#desktop-integration).
+- [ ] **AFK — Settings preserves valid configuration on save failure:** Validate before atomic replacement and retain a usable last-valid copy. See [finding 8](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-8) and [governing spec](docs/design/architecture.md#configuration).
+- [ ] **AFK — A conflicting Windows API listener fails clearly:** Enforce exclusive port ownership and verify a second Host cannot serve that endpoint. See [finding 2](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-2) and [governing spec](docs/design/architecture.md#local-api).
+- [ ] **AFK — Runner inherits only its own required handles:** Verify concurrent sessions do not keep each other's pipe writers alive. See [finding 10](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-10) and [governing spec](docs/adr/0002-runner-protocol.md).
+- [ ] **AFK — Runner hang and death recover without hanging shutdown:** Bound I/O/process waits; restart and retry the failed chunk once with logs and actionable repeated-failure reporting. See [finding 3](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-3) and [governing spec](docs/adr/0002-runner-protocol.md#runner-failure).
+- [ ] **AFK — Unicode Windows paths work end to end:** Cover process launch, model/voice protocol paths, tray synthesis, and Settings loading. See [finding 9](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-9) and [governing spec](docs/requirements/product.md#supported-environments).
+- [ ] **AFK — Saved skip interval applies to the next press:** Apply Settings changes to both running seek controls. See [finding 7](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-7) and [governing spec](docs/requirements/product.md#configuration-and-controls).
+
+### Remaining phase work
+
+- [ ] **HITL — Decide startup registration synchronization:** Decide when launch may repoint the login entry; preserve default-on behavior and the developer-machine restriction. See [finding 5](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-5) and [governing spec](docs/design/architecture.md#desktop-integration).
+- [ ] **AFK — Desktop launch and fatal error reporting:** Keep headless diagnostics usable while making tray launch and fatal errors appropriate for desktop users. See [finding 11](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-11) and [governing spec](docs/requirements/product.md#distribution-and-usability).
+- [ ] **AFK — Prompt playback after seek:** Resume retained audio without waiting for unrelated lookahead synthesis. See [finding 12](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-12) and [governing spec](docs/design/architecture.md#playback-control-and-position).
+- [ ] **AFK — Resident synthesis lifecycle:** Reuse the tray model session, honor loadPolicy, and use actual activity for idle unloading before performance acceptance. See [finding 13](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-13) and [governing spec](docs/requirements/product.md#models).
+- [ ] **AFK — Audit runtime regression coverage:** Close concurrent config, wait-race, native Windows collision, and runner hang/death coverage gaps left after owning fixes. See [finding 17](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-17) and [governing spec](docs/adr/0002-runner-protocol.md#runner-failure).
+
+### Review backlog and disposition
+
+- [x] **AFK — Correct catalogue verification note:** verification ordering now matches code; documentation-only correction. See [finding 15](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-15).
+- [ ] **AFK — Measure sentence transitions:** quantify endpoint restart gaps before deciding whether a continuous utterance stream is justified. See [finding 16](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-16).
+
+Finding #14 is rejected; no implementation slice. See [validation](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-14).
+
 ## Open decisions
 
 - How to execute the English bake-off before candidate integration: use a

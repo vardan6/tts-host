@@ -60,8 +60,8 @@ Windows-only. Verified against the FIPS test vector for `"abc"` in
 `catalogue_download_tests.cpp`.
 
 `download_catalogue_entry` treats a file already at its pinned `size_bytes` on
-disk as complete and skips fetching it — it does not re-verify the checksum
-until after every file in the entry has reached its expected size. A file
+disk as complete and skips fetching it, but still verifies its checksum immediately
+after checking that file's size, before proceeding to the next file. A file
 smaller than pinned resumes via HTTP Range from that byte offset; a file that
 fails checksum verification after a full download is deleted outright (not
 resumed), since a corrupt byte's position is unknown and the safe recovery is

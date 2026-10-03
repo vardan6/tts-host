@@ -4,8 +4,13 @@
 
 namespace tts_host {
 
+// Predicate state changes under mutex_ so a waiter cannot test it, miss the
+// update, and then block on a notification that has already fired.
 void PlaybackControl::cancel() {
-  cancelled_.store(true);
+  {
+    std::lock_guard lock(mutex_);
+    cancelled_.store(true);
+  }
   condition_.notify_all();
 }
 
@@ -31,14 +36,21 @@ bool PlaybackControl::paused() const {
 
 bool PlaybackControl::wait_until_resumed() {
   std::unique_lock lock(mutex_);
-  condition_.wait(lock, [this] { return cancelled_.load() || !paused_; });
+  condition_.wait(lock, [this] {
+    const bool ready = cancelled_.load() || !paused_;
+    if (!ready && before_wait_for_test_) before_wait_for_test_();
+    return ready;
+  });
   return !cancelled_.load();
 }
 
 bool PlaybackControl::wait_until_resumed_or_seek(std::uint64_t expected_seek_generation) {
   std::unique_lock lock(mutex_);
   condition_.wait(lock, [this, expected_seek_generation] {
-    return cancelled_.load() || !paused_ || seek_generation_.load() != expected_seek_generation;
+    const bool ready =
+        cancelled_.load() || !paused_ || seek_generation_.load() != expected_seek_generation;
+    if (!ready && before_wait_for_test_) before_wait_for_test_();
+    return ready;
   });
   return !cancelled_.load() && seek_generation_.load() == expected_seek_generation;
 }
@@ -49,8 +61,11 @@ double PlaybackControl::requested_seek_seconds() const { return seek_seconds_.lo
 
 bool PlaybackControl::request_seek(double seconds) {
   if (seconds < 0.0 || seconds > generated_seconds_.load()) return false;
-  seek_seconds_.store(seconds);
-  seek_generation_.fetch_add(1);
+  {
+    std::lock_guard lock(mutex_);
+    seek_seconds_.store(seconds);
+    seek_generation_.fetch_add(1);
+  }
   condition_.notify_all();
   return true;
 }

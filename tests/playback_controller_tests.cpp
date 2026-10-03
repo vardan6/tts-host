@@ -6,6 +6,15 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <thread>
+
+namespace tts_host {
+struct PlaybackControlTestAccess {
+  static void set_before_wait(PlaybackControl &control, std::function<void()> hook) {
+    control.before_wait_for_test_ = std::move(hook);
+  }
+};
+}  // namespace tts_host
 
 namespace {
 
@@ -102,6 +111,83 @@ void paused_seek_wakes_playback_without_resuming_it() {
   controller.finish(control);
 }
 
+// Fires `action` from another thread after the paused waiter has found its
+// predicate false but before it blocks. Without the predicate update being
+// coupled to the wait mutex, the notification is lost and the waiter hangs.
+template <typename Wait, typename Action>
+bool wakes_across_predicate_to_wait_window(tts_host::PlaybackControl &control, Wait wait,
+                                           Action action) {
+  std::thread actor;
+  bool fired = false;
+  tts_host::PlaybackControlTestAccess::set_before_wait(control, [&] {
+    if (fired) return;
+    fired = true;
+    actor = std::thread(action);
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  });
+  auto waiter = std::async(std::launch::async, wait);
+  const bool woke = waiter.wait_for(std::chrono::seconds(2)) == std::future_status::ready;
+  if (!woke) {
+    // Unblock the hung waiter so the test can report instead of hanging.
+    control.resume();
+    waiter.wait();
+  }
+  actor.join();
+  tts_host::PlaybackControlTestAccess::set_before_wait(control, nullptr);
+  require(fired, "waiter should have reached the predicate-to-wait window");
+  return woke;
+}
+
+void stop_cannot_be_lost_before_a_paused_wait_blocks() {
+  tts_host::PlaybackController controller;
+  const auto control = controller.begin();
+  controller.prepare_sentence_for_playback(control.get(), controller.speech_speed_generation());
+  controller.pause();
+  bool result = true;
+  require(wakes_across_predicate_to_wait_window(
+              *control, [&] { result = control->wait_until_resumed(); },
+              [&] { controller.stop(); }),
+          "stop during the predicate-to-wait window should wake paused playback");
+  require(!result, "stop should report cancellation to the paused waiter");
+  controller.finish(control);
+}
+
+void stop_cannot_be_lost_before_a_paused_seek_wait_blocks() {
+  tts_host::PlaybackController controller;
+  const auto control = controller.begin();
+  controller.prepare_sentence_for_playback(control.get(), controller.speech_speed_generation());
+  controller.pause();
+  const auto generation = control->seek_generation();
+  bool result = true;
+  require(wakes_across_predicate_to_wait_window(
+              *control, [&] { result = control->wait_until_resumed_or_seek(generation); },
+              [&] { controller.stop(); }),
+          "stop during the predicate-to-wait window should wake a paused seek wait");
+  require(!result, "stop should report cancellation to the paused seek waiter");
+  controller.finish(control);
+}
+
+void seek_cannot_be_lost_before_a_paused_wait_blocks() {
+  tts_host::PlaybackController controller;
+  controller.set_seek_interval_seconds(5);
+  const auto control = controller.begin();
+  controller.prepare_sentence_for_playback(control.get(), controller.speech_speed_generation());
+  controller.set_generated_seconds(control.get(), 20.0);
+  control->update_position(10.0);
+  controller.pause();
+  const auto generation = control->seek_generation();
+  bool result = true;
+  bool accepted = false;
+  require(wakes_across_predicate_to_wait_window(
+              *control, [&] { result = control->wait_until_resumed_or_seek(generation); },
+              [&] { accepted = controller.seek_by_interval(-1); }),
+          "seek during the predicate-to-wait window should wake paused playback");
+  require(accepted, "backward seek should be accepted while paused");
+  require(!result, "seek should wake the sink without reporting resume");
+  require(control->paused(), "seek should preserve paused state");
+  controller.finish(control);
+}
+
 }  // namespace
 
 int main() {
@@ -110,6 +196,9 @@ int main() {
     replacement_cancels_stale_work_without_erasing_the_new_state();
     speech_speed_changes_identify_stale_lookahead();
     paused_seek_wakes_playback_without_resuming_it();
+    stop_cannot_be_lost_before_a_paused_wait_blocks();
+    stop_cannot_be_lost_before_a_paused_seek_wait_blocks();
+    seek_cannot_be_lost_before_a_paused_wait_blocks();
   } catch (const std::exception &error) {
     std::cerr << error.what() << '\n';
     return EXIT_FAILURE;
