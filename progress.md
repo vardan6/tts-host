@@ -256,3 +256,7 @@
 - 2026-10-04: Resident synthesis lifecycle (#13) — tray/browser/hotkey speech and tray Settings share one resident recovering runner. Sequential reads and explicit Settings loads reuse model weights; eager/on-demand policies, profile idle overrides, actual utterance activity, busy UI controls, model switching, recovery, and warm-up cancellation have regressions. Closing Settings preserves the tray session; standalone Settings remains independent. Linux 45/45 CTests and Windows 43/43 checks outside the two existing ONNX/API failures pass. Architecture and obsolete idle note reconciled; native listening/performance acceptance remains pending. No commits or developer login-startup changes.
 
 - 2026-10-04: Unicode temp-directory startup regression — parallel native checks exposed spool cleanup narrowing unrelated Armenian/Cyrillic filenames and failing Host bootstrap. Use UTF-8 filename inspection and prove cleanup preserves an unrelated Unicode directory. Durable-doc check: restoration of supported Windows behavior; no new contract.
+
+- 2026-10-05: Branch-review remediation checkpoint committed (`b733ad1`) — blockers #1–#4 and #6–#10 plus #11/#12/#13/#17; 45/45 Linux CTests.
+
+- 2026-10-05: Measure sentence transitions (#16) — Windows loopback probe (`tools/playback_gap_probe.cpp`) shows each per-sentence `play()` adds ~80 ms (p95 ~90 ms) of silence; validated against a 20 ms control gap (measured 23 ms). Continuous-stream fix is justified but not scheduled.
