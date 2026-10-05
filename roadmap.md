@@ -484,7 +484,7 @@ Each fix includes regressions for its failure mode; #17 audits remaining gaps.
 ### Review backlog and disposition
 
 - [x] **AFK — Correct catalogue verification note:** verification ordering now matches code; documentation-only correction. See [finding 15](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-15).
-- [ ] **AFK — Measure sentence transitions:** quantify endpoint restart gaps before deciding whether a continuous utterance stream is justified. See [finding 16](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-16).
+- [x] **AFK — Measure sentence transitions:** about 80 ms (p95 about 90 ms) of added silence per sentence boundary on Windows; a continuous utterance stream is justified, but not scheduled yet. See [finding 16](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-16).
 
 Finding #14 is rejected; no implementation slice. See [validation](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-14).
 

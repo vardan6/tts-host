@@ -188,6 +188,34 @@ Triage: `backlog`. Code hashes each file after its size check; correct the inacc
 
 Triage: `backlog`. Per-call activation and drain are confirmed; measure boundary gaps before a stream redesign.
 
+Measured 2026-10-05 on the developer Windows machine (default endpoint, 48 kHz
+shared mix) with `tts-host-playback-gap-probe` (`tools/playback_gap_probe.cpp`,
+Windows-only, audible). It plays 0.4 s 440 Hz tones at Kokoro's 24 kHz mono
+format and records the endpoint by WASAPI loopback, detecting the tone by
+frequency so other applications' audio is ignored.
+
+| Condition | Boundaries | Gap median | p95 | max |
+|---|---|---|---|---|
+| Control: one `play()` with a 20 ms silence between tones | 30/30 | 23 ms | 23 ms | 23 ms |
+| One `play()` per tone on a fresh thread, as the pipeline does | 30 (+6 short dropouts of ~4 ms) | 83 ms | 93 ms | 93 ms |
+| Wall-clock `play()` time beyond audio duration | 31 calls | 81 ms | 87 ms | 88 ms |
+
+The control reads about 3 ms high (fade edges), so the audible gap the sink adds
+per sentence boundary is about 80 ms (p95 about 90 ms). That matches the
+per-call wall-clock overhead: endpoint resolution, activation, and Initialize on
+every call, plus the 50 ms drain poll detecting an empty buffer late. Three
+earlier runs with a broadband detector gave 66–88 ms median wall-clock
+overhead; their audible counts were unreliable because of other system audio,
+so the detector was replaced. The pipeline adds at most one 10 ms lookahead
+pump before launching retained audio. The model's own pauses between
+sentences come on top of this. The short dropouts within tones on the
+per-call path are unexplained and were not seen in the control.
+
+Conclusion: the gap is systematic and audible, not jitter. A continuous
+utterance stream (or at least a reused, pre-started client per utterance with
+event-driven feeding) is justified on evidence; whether to schedule it is a
+roadmap decision.
+
 ### Finding 14
 
 Triage: `invalid`. append throws and run_synthesis aborts; no subsequent append reuses this utterance history.

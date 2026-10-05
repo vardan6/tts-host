@@ -240,6 +240,14 @@ target_link_libraries(
 if(WIN32)
   target_link_libraries(tts-host-kokoro-onnx-runner PRIVATE psapi)
 endif()
+
+# Manual measurement tool for review finding #16; plays audible tones.
+if(WIN32)
+  add_executable(tts-host-playback-gap-probe tools/playback_gap_probe.cpp
+    src/playback_sink.cpp src/playback_controller.cpp src/audio_conversion.cpp)
+  target_include_directories(tts-host-playback-gap-probe PRIVATE include)
+  target_link_libraries(tts-host-playback-gap-probe PRIVATE ole32 uuid)
+endif()
 if(NOT WIN32)
   set_target_properties(
     tts-host-kokoro-onnx-runner PROPERTIES

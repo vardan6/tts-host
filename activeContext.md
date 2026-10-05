@@ -6,7 +6,8 @@
   implemented, mostly uncommitted. Canonical [triage/plan](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#captured-implementation-plan).
 - Next action: settle #5 startup registration ownership/triggers, then checkpoint
   code review and combined Windows acceptance. No remaining unblocked phase
-  implementation slice; #16 sentence-transition measurement stays in backlog.
+  implementation slice. #16 measured: about 80 ms per sentence boundary on Windows;
+  scheduling a continuous-stream fix is an open roadmap decision.
 - Verification: 45/45 Linux CTests; 43/43 Windows checks excluding the two existing
   ONNX 1.17.1/API-29 failures. Resident reuse, warm-up cancellation, shared Settings
   lifetime, desktop fatal dialog, and Unicode spool cleanup covered. Native
