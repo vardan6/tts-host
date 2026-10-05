@@ -124,7 +124,7 @@ Developer workflow:
     language, its source, the profile, and the model — see
     [design](docs/design/architecture.md#speech-pipeline) and
     [requirements](docs/requirements/product.md#speech-behaviour). The
-    settings window and tray still resolve models by id only.
+    Settings loads models by id; tray speech follows the request profile.
   - [x] Windows settings-window shell: `tts-host --settings` opens a plain
     native window and blocks until closed (`settings_window.hpp/cpp`),
     independent of the tray; non-Windows throws a clear not-implemented
@@ -191,16 +191,10 @@ Developer workflow:
     picker), which refreshes the model combo and licence display. A copied
     manifest's relative `$schema` would not resolve at the new depth, so import
     repoints it at the installation's own `schemas/model.schema.json`.
-  - [x] Idle timeout: `ModelSessionManager::unload_if_idle`
-    (`model_session.hpp/cpp`) unloads the resident model once it has been
-    loaded for at least `modelRegistry.idleUnloadSeconds` without being
-    reloaded (`idleUnloadSeconds <= 0` disables it); the settings window
-    polls it every 5 s via a `WM_TIMER`, since it is the only process that
-    currently loads a model — see
-    [design](docs/design/architecture.md#desktop-integration). There is no
-    synthesis activity to reset the clock yet, so "idle" means time since
-    load, not time since last use, until CLI synthesis or the local API
-    server become long-lived consumers of the resident session.
+  - [x] Idle timeout: unload the resident model after actual speech activity
+    ends, with a global timeout and optional profile override; active/paused
+    speech stays resident and the tray polls even with Settings closed — see
+    [design](docs/design/architecture.md#desktop-integration).
   - [x] Directory watching: `registry_scan_changed` (`model_registry.hpp/cpp`)
     compares two registry scans by discovered package id/path and unsupported
     entry path/reason; when `modelRegistry.watchForChanges` is true, the
@@ -470,22 +464,22 @@ Each fix includes regressions for its failure mode; #17 audits remaining gaps.
 ### Correctness blockers
 
 - [x] **AFK — Stop and seek reliably wake paused playback:** Prove cancellation/seek cannot be lost at the predicate-to-wait boundary. See [finding 4](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-4) and [governing spec](docs/design/architecture.md#playback-control-and-position).
-- [ ] **AFK — Speech uses a consistent configuration snapshot:** Publish Settings changes safely and keep each in-flight request consistent. See [finding 1](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-1) and [governing spec](docs/design/architecture.md#live-reload).
-- [ ] **AFK — Settings and tray shutdown preserve window lifetimes:** Prevent reentrant Settings and safely handle tray Quit while Settings is open. See [finding 6](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-6) and [governing spec](docs/design/architecture.md#desktop-integration).
-- [ ] **AFK — Settings preserves valid configuration on save failure:** Validate before atomic replacement and retain a usable last-valid copy. See [finding 8](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-8) and [governing spec](docs/design/architecture.md#configuration).
-- [ ] **AFK — A conflicting Windows API listener fails clearly:** Enforce exclusive port ownership and verify a second Host cannot serve that endpoint. See [finding 2](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-2) and [governing spec](docs/design/architecture.md#local-api).
-- [ ] **AFK — Runner inherits only its own required handles:** Verify concurrent sessions do not keep each other's pipe writers alive. See [finding 10](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-10) and [governing spec](docs/adr/0002-runner-protocol.md).
-- [ ] **AFK — Runner hang and death recover without hanging shutdown:** Bound I/O/process waits; restart and retry the failed chunk once with logs and actionable repeated-failure reporting. See [finding 3](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-3) and [governing spec](docs/adr/0002-runner-protocol.md#runner-failure).
-- [ ] **AFK — Unicode Windows paths work end to end:** Cover process launch, model/voice protocol paths, tray synthesis, and Settings loading. See [finding 9](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-9) and [governing spec](docs/requirements/product.md#supported-environments).
-- [ ] **AFK — Saved skip interval applies to the next press:** Apply Settings changes to both running seek controls. See [finding 7](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-7) and [governing spec](docs/requirements/product.md#configuration-and-controls).
+- [x] **AFK — Speech uses a consistent configuration snapshot:** Publish Settings changes safely and keep each in-flight request consistent. See [finding 1](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-1) and [governing spec](docs/design/architecture.md#live-reload).
+- [x] **AFK — Settings and tray shutdown preserve window lifetimes:** Prevent reentrant Settings and safely handle tray Quit while Settings is open. See [finding 6](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-6) and [governing spec](docs/design/architecture.md#desktop-integration).
+- [x] **AFK — Settings preserves valid configuration on save failure:** Validate before atomic replacement and retain a usable last-valid copy. See [finding 8](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-8) and [governing spec](docs/design/architecture.md#configuration).
+- [x] **AFK — A conflicting Windows API listener fails clearly:** Enforce exclusive port ownership and verify a second Host cannot serve that endpoint. See [finding 2](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-2) and [governing spec](docs/design/architecture.md#local-api).
+- [x] **AFK — Runner inherits only its own required handles:** Verify concurrent sessions do not keep each other's pipe writers alive. See [finding 10](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-10) and [governing spec](docs/adr/0002-runner-protocol.md).
+- [x] **AFK — Runner hang and death recover without hanging shutdown:** Bound I/O/process waits; restart and retry the failed chunk once with logs and actionable repeated-failure reporting. See [finding 3](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-3) and [governing spec](docs/adr/0002-runner-protocol.md#runner-failure).
+- [x] **AFK — Unicode Windows paths work end to end:** Cover process launch, model/voice protocol paths, tray synthesis, and Settings loading. See [finding 9](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-9) and [governing spec](docs/requirements/product.md#supported-environments).
+- [x] **AFK — Saved skip interval applies to the next press:** Apply Settings changes to both running seek controls. See [finding 7](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-7) and [governing spec](docs/requirements/product.md#configuration-and-controls).
 
 ### Remaining phase work
 
 - [ ] **HITL — Decide startup registration synchronization:** Decide when launch may repoint the login entry; preserve default-on behavior and the developer-machine restriction. See [finding 5](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-5) and [governing spec](docs/design/architecture.md#desktop-integration).
-- [ ] **AFK — Desktop launch and fatal error reporting:** Keep headless diagnostics usable while making tray launch and fatal errors appropriate for desktop users. See [finding 11](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-11) and [governing spec](docs/requirements/product.md#distribution-and-usability).
-- [ ] **AFK — Prompt playback after seek:** Resume retained audio without waiting for unrelated lookahead synthesis. See [finding 12](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-12) and [governing spec](docs/design/architecture.md#playback-control-and-position).
-- [ ] **AFK — Resident synthesis lifecycle:** Reuse the tray model session, honor loadPolicy, and use actual activity for idle unloading before performance acceptance. See [finding 13](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-13) and [governing spec](docs/requirements/product.md#models).
-- [ ] **AFK — Audit runtime regression coverage:** Close concurrent config, wait-race, native Windows collision, and runner hang/death coverage gaps left after owning fixes. See [finding 17](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-17) and [governing spec](docs/adr/0002-runner-protocol.md#runner-failure).
+- [x] **AFK — Desktop launch and fatal error reporting:** Keep headless diagnostics usable while making tray launch and fatal errors appropriate for desktop users. See [finding 11](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-11) and [governing spec](docs/requirements/product.md#distribution-and-usability).
+- [x] **AFK — Prompt playback after seek:** Resume retained audio without waiting for unrelated lookahead synthesis. See [finding 12](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-12) and [governing spec](docs/design/architecture.md#playback-control-and-position).
+- [x] **AFK — Resident synthesis lifecycle:** Reuse the tray model session, honor loadPolicy, and use actual activity for idle unloading before performance acceptance. See [finding 13](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-13) and [governing spec](docs/requirements/product.md#models).
+- [x] **AFK — Audit runtime regression coverage:** Close concurrent config, wait-race, native Windows collision, and runner hang/death coverage gaps left after owning fixes. See [finding 17](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-17) and [governing spec](docs/adr/0002-runner-protocol.md#runner-failure).
 
 ### Review backlog and disposition
 

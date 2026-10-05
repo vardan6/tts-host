@@ -21,6 +21,22 @@ The layout is fixed-pixel and not DPI-aware. Coordinates assume the shell font
 at 96 DPI; the label column is sized to the longest caption. Changing a caption
 can therefore clip it even with the correct font.
 
+## The tray thread owns the editable config; the speech worker reads snapshots
+
+In tray mode, `main` hands `run_tray_icon` a mutable `ConfigDocument` that
+Settings edits in place. Only the tray thread may touch it. The speech worker
+(`TraySpeechScheduler` in `main.cpp`) never reads it: each request takes
+`ConfigSnapshot::current()` once (`config_snapshot.hpp`) and uses that immutable
+document for the whole utterance, so a Settings edit can neither race the
+worker nor mix old and new values within one request.
+
+Publication happens when Settings closes, via the tray's `publish_config`
+callback. That is also where `apply_playback_settings` pushes the default
+speech speed and seek interval into the running `PlaybackController`. A new
+live setting that the worker or controller needs must be read from the
+published document there, not from the tray's copy. Changes made while
+Settings is still open reach speech only after it closes.
+
 ## Import repoints a copied manifest's `$schema`
 
 `import_model_package` (`model_import.cpp`) copies a package directory into a
@@ -28,18 +44,6 @@ registry directory, where the manifest sits at a different depth than it did in
 its source tree — so a relative `$schema` would no longer resolve. Import
 rewrites it to the installation's own `schemas/model.schema.json`. The copied
 `model.json` is therefore not byte-identical to the source.
-
-## `unload_if_idle` measures time since load, not since last use
-
-`ModelSessionManager::unload_if_idle` (`model_session.cpp`) compares
-`modelRegistry.idleUnloadSeconds` against the time the model was **loaded**,
-not the time it was last used. Nothing resets the clock on synthesis, because
-no long-lived consumer of the resident session exists yet — the settings window
-is currently the only process that loads a model, and CLI synthesis spawns its
-own runner. A model in active use will still unload on schedule.
-
-Revisit when the local API server or a synthesizing tray session becomes a
-resident consumer; that is the point at which "idle" must start meaning "idle".
 
 ## The Kokoro catalogue entry duplicates the weights fetcher
 

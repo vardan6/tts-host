@@ -5,6 +5,8 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <mutex>
+#include "tts_host/recovering_runner.hpp"
 
 #include "tts_host/config_loader.hpp"
 #include "tts_host/runner_launcher.hpp"
@@ -43,60 +45,50 @@ struct ModelSessionStatus {
   std::string engine;
 };
 
-// Keeps at most one model resident in a live runner process, which is what the
-// settings window's Load/Unload controls act on
-// (docs/design/architecture.md#desktop-integration, "model manager (install,
-// download, remove, load/unload, idle timeout)").
-//
-// Unload sends the protocol's `unload` request and then terminates the runner
-// process. With one runner process per model (docs/adr/0002-runner-protocol.md)
-// process exit is what ultimately frees the weights, so the request is
-// best-effort: it lets the runner release them cleanly first, and a runner that
-// cannot answer is terminated regardless.
-//
-// The residency lasts as long as the owning process, so a model loaded from
-// the settings window is not yet reused by CLI synthesis, which runs one-shot
-// and launches its own runner. That gap closes once a long-lived request
-// source exists (the local API server, or a tray session that synthesizes).
-// Config's maximumLoadedGpuModels is not honored yet; this manager holds
-// exactly one model until told otherwise.
+// One resident runner shared by tray speech and Settings. A speech lease
+// serializes runner I/O across the entire utterance, including lookahead and
+// playback. UI load/unload fails promptly while busy; timer polling never waits.
 class ModelSessionManager {
  public:
   explicit ModelSessionManager(std::filesystem::path runner_directory);
   ~ModelSessionManager();
-
   ModelSessionManager(const ModelSessionManager &) = delete;
   ModelSessionManager &operator=(const ModelSessionManager &) = delete;
 
-  // Launches the model's runner and completes the initialize/load handshake.
-  // Any model already resident is unloaded first, including when the load
-  // fails, so a failed load never leaves a stale session behind.
-  void load(const std::string &model_id, const ConfigDocument &config);
+  class Lease {
+   public:
+    Lease(Lease &&other) noexcept;
+    ~Lease();
+    RecoveringRunner &runner() { return *owner_->session_; }
+   private:
+    friend class ModelSessionManager;
+    Lease(ModelSessionManager &owner, std::unique_lock<std::mutex> lock);
+    ModelSessionManager *owner_;
+    std::unique_lock<std::mutex> lock_;
+  };
 
-  // Terminates the resident runner process. Does nothing when none is loaded.
+  void load(const std::string &model_id, const ConfigDocument &config,
+            std::optional<std::chrono::seconds> idle_override = {});
+  void load_eager(const ConfigDocument &config, std::function<bool()> cancelled = {});
   void unload();
-
-  // Unloads the resident model if it has been loaded for at least
-  // idle_unload_seconds without being reloaded, per
-  // modelRegistry.idleUnloadSeconds and
-  // docs/design/architecture.md#desktop-integration ("model manager ...
-  // idle timeout"). idle_unload_seconds <= 0 disables idle unloading, since
-  // the schema's minimum of 0 otherwise has no meaning. There is no
-  // synthesis activity to reset the clock yet (docs/requirements/product.md
-  // "Models"), so "idle" currently means "time since load", not "time since
-  // last use" -- the intended default caller is a timer in whatever process
-  // called load(), since that is the only thing that can know it should
-  // check. Returns whether it unloaded.
+  Lease acquire(const ModelRunnerSelection &selection, std::function<bool()> cancelled = {},
+                std::optional<std::chrono::seconds> idle_override = {});
   bool unload_if_idle(std::chrono::seconds idle_unload_seconds,
                       std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now());
-
-  const ModelSessionStatus &status() const { return status_; }
+  ModelSessionStatus status() const;
 
  private:
+  void unload_locked();
+  void select_locked(const ModelRunnerSelection &selection, bool force);
+  void publish_status(ModelSessionStatus status);
   std::filesystem::path runner_directory_;
-  std::unique_ptr<RunnerSession> session_;
+  std::mutex operation_mutex_;
+  mutable std::mutex status_mutex_;
+  std::unique_ptr<RecoveringRunner> session_;
+  std::optional<ModelRunnerSelection> selection_;
   ModelSessionStatus status_;
-  std::chrono::steady_clock::time_point loaded_at_;
+  std::chrono::steady_clock::time_point last_used_;
+  std::optional<std::chrono::seconds> idle_override_;
 };
 
 }  // namespace tts_host

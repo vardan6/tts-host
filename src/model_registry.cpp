@@ -1,4 +1,5 @@
 #include "tts_host/model_registry.hpp"
+#include "tts_host/path_encoding.hpp"
 
 #include <algorithm>
 #include <fstream>
@@ -34,13 +35,13 @@ void add_unsupported(ModelRegistryScan &scan, std::filesystem::path path, std::s
 json load_json_file(const std::filesystem::path &path, const std::string &label) {
   std::ifstream input(path);
   if (!input) {
-    throw std::runtime_error("Unable to open " + label + ": " + path.string());
+    throw std::runtime_error("Unable to open " + label + ": " + path_to_utf8(path));
   }
 
   try {
     return json::parse(input);
   } catch (const json::parse_error &error) {
-    throw std::runtime_error("Invalid " + label + " JSON in " + path.string() + ": " +
+    throw std::runtime_error("Invalid " + label + " JSON in " + path_to_utf8(path) + ": " +
                              error.what());
   }
 }
@@ -49,7 +50,7 @@ std::filesystem::path resolve_schema_path(const json &manifest,
                                           const std::filesystem::path &manifest_path) {
   const auto schema_it = manifest.find("$schema");
   if (schema_it != manifest.end() && schema_it->is_string()) {
-    const auto candidate = std::filesystem::path(schema_it->get<std::string>());
+    const auto candidate = path_from_utf8(schema_it->get<std::string>());
     if (candidate.is_absolute()) {
       return candidate.lexically_normal();
     }
@@ -102,7 +103,7 @@ void validate_manifest_file_paths(const json &manifest,
   }
 
   for (const auto &[key, value] : manifest.at("files").items()) {
-    const auto declared_path = std::filesystem::path(value.get<std::string>());
+    const auto declared_path = path_from_utf8(value.get<std::string>());
     if (declared_path.is_absolute()) {
       throw std::runtime_error("manifest file path /files/" + key +
                                " must be relative to the package root");
@@ -146,7 +147,7 @@ ModelPackageCandidate load_manifest_candidate(const std::filesystem::path &packa
 
 std::filesystem::path resolve_registry_directory(const std::filesystem::path &config_path,
                                                  const std::string &entry) {
-  const auto candidate = std::filesystem::path(entry);
+  const auto candidate = path_from_utf8(entry);
   if (candidate.is_absolute()) {
     return candidate.lexically_normal();
   }
@@ -159,7 +160,7 @@ ModelPackageCandidate validate_model_package(const std::filesystem::path &packag
 
   std::error_code ec;
   if (!std::filesystem::is_directory(normalized, ec) || ec) {
-    throw std::runtime_error("model package path is not a directory: " + normalized.string());
+    throw std::runtime_error("model package path is not a directory: " + path_to_utf8(normalized));
   }
 
   const auto manifest_path = normalized / "model.json";

@@ -1,4 +1,6 @@
 #include "tts_host/model_session.hpp"
+#include "tts_host/model_registry.hpp"
+#include "tts_host/path_encoding.hpp"
 
 #include "tts_host/runner_protocol.hpp"
 
@@ -92,6 +94,78 @@ int main(int argc, char **argv) {
               "the runner did not synthesize after being unloaded and loaded again");
       static_cast<void>(session.read_audio_stream_until_end());
       require(session.finish() == 0, "the runner exited with a failure after unload");
+    }
+
+    // Settings and tray share this resolution/load path. Exercise native paths
+    // and UTF-8 JSON independently of the machine's active ANSI code page.
+    {
+      const auto root = std::filesystem::temp_directory_path() /
+          tts_host::path_from_utf8("tts-unicode-" + std::to_string(
+              std::chrono::steady_clock::now().time_since_epoch().count()) +
+              "-\xd5\x80\xd5\xa1\xd5\xb5-\xd0\xa0\xd1\x83\xd1\x81");
+      struct Cleanup {
+        std::filesystem::path root;
+        ~Cleanup() { std::error_code error; std::filesystem::remove_all(root, error); }
+      } cleanup{root};
+      const auto models = root / tts_host::path_from_utf8("\xd0\xbc\xd0\xbe\xd0\xb4\xd0\xb5\xd0\xbb\xd0\xb8");
+      const auto package = models / "package";
+      std::filesystem::create_directories(package);
+      const auto model_name = std::string("\xd5\xb4\xd5\xb8\xd5\xa4\xd5\xa5\xd5\xac.bin");
+      const auto voice_name = std::string("\xd0\xb3\xd0\xbe\xd0\xbb\xd0\xbe\xd1\x81.bin");
+      auto manifest = tts_host::scan_model_registry(config).discovered_packages.front().manifest;
+      manifest["id"] = "unicode-package";
+      manifest["engine"] = "stub";
+      manifest["$schema"] = tts_host::path_to_utf8(std::filesystem::absolute(
+          std::filesystem::path(argv[2]).parent_path() / "../../../schemas/model.schema.json"));
+      manifest["files"] = {{"model", model_name}, {"voice", voice_name}};
+      std::ofstream(package / "model.json") << manifest.dump();
+      std::ofstream(package / tts_host::path_from_utf8(model_name)) << "model";
+      std::ofstream(package / tts_host::path_from_utf8(voice_name)) << "voice";
+      std::filesystem::copy_file(stub_runner, root / stub_runner.filename());
+      auto unicode_config = config;
+      unicode_config.paths.config_path = root / "config.json";
+      unicode_config.value["modelRegistry"]["directories"] =
+          nlohmann::json::array({tts_host::path_to_utf8(models)});
+      const auto selected = tts_host::resolve_model_runner_selection(
+          "unicode-package", unicode_config, root);
+      require(selected.model_path == package / tts_host::path_from_utf8(model_name) &&
+                  *selected.voice_path == package / tts_host::path_from_utf8(voice_name),
+              "Unicode manifest paths changed during resolution");
+      const auto wire = tts_host::parse_runner_load_request(tts_host::make_runner_load_request(
+          2, tts_host::path_to_utf8(selected.model_path),
+          tts_host::path_to_utf8(*selected.voice_path)));
+      require(tts_host::path_from_utf8(wire.model_path) == selected.model_path &&
+                  tts_host::path_from_utf8(*wire.voice_path) == *selected.voice_path,
+              "UTF-8 load paths did not round trip");
+      tts_host::ModelSessionManager unicode_sessions(root);
+      unicode_sessions.load("unicode-package", unicode_config);
+      require(unicode_sessions.status().loaded, "Unicode Settings model did not load");
+      unicode_sessions.unload();
+#ifndef _WIN32
+      // Exercise the production decoder and voice-file reader as well as the
+      // stub handshake. Native Windows ONNX loading has a separately tracked
+      // DLL/API-version mismatch; its runner still compiles in that build.
+      const auto kokoro = tts_host::runner_path_for_engine("kokoro-onnx", runner_directory);
+      std::filesystem::copy_file(kokoro, root / kokoro.filename());
+      std::filesystem::copy_file(runner_directory / "libonnxruntime.so.1",
+                                 root / "libonnxruntime.so.1");
+      std::filesystem::copy_file(std::filesystem::path(argv[2]).parent_path() /
+                                    "../kokoro_runner/placeholder.onnx", selected.model_path,
+                                std::filesystem::copy_options::overwrite_existing);
+      std::vector<float> voice(256, 0.0f);
+      {
+        std::ofstream output(*selected.voice_path, std::ios::binary);
+        output.write(reinterpret_cast<const char *>(voice.data()), voice.size() * sizeof(float));
+      }
+      tts_host::RunnerSession kokoro_session(root / kokoro.filename());
+      tts_host::parse_runner_initialize_response(
+          kokoro_session.send_request(tts_host::make_runner_initialize_request(1)));
+      tts_host::parse_runner_load_response(kokoro_session.send_request(
+          tts_host::make_runner_load_request(2, tts_host::path_to_utf8(selected.model_path),
+                                           tts_host::path_to_utf8(*selected.voice_path))));
+      require(kokoro_session.finish() == 0, "Kokoro Unicode model/voice load failed");
+#endif
+
     }
 
     tts_host::ModelSessionManager sessions(runner_directory);

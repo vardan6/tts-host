@@ -1,4 +1,5 @@
 #include "tts_host/config_loader.hpp"
+#include "tts_host/path_encoding.hpp"
 
 #include <cstdlib>
 #include <fstream>
@@ -34,13 +35,13 @@ class ValidationErrorHandler final : public nlohmann::json_schema::basic_error_h
 json load_json_file(const std::filesystem::path &path, std::string_view label) {
   std::ifstream input(path);
   if (!input) {
-    throw std::runtime_error("Unable to open " + std::string(label) + ": " + path.string());
+    throw std::runtime_error("Unable to open " + std::string(label) + ": " + path_to_utf8(path));
   }
 
   try {
     return json::parse(input);
   } catch (const json::parse_error &error) {
-    throw std::runtime_error("Invalid " + std::string(label) + " JSON in " + path.string() +
+    throw std::runtime_error("Invalid " + std::string(label) + " JSON in " + path_to_utf8(path) +
                              ": " + error.what());
   }
 }
@@ -60,12 +61,12 @@ std::filesystem::path executable_dir(const std::filesystem::path &argv0) {
 
 std::filesystem::path home_dir() {
 #ifdef _WIN32
-  if (const char *profile = std::getenv("USERPROFILE")) {
+  if (const wchar_t *profile = _wgetenv(L"USERPROFILE")) {
     return std::filesystem::path(profile);
   }
-  if (const char *drive = std::getenv("HOMEDRIVE")) {
-    if (const char *path = std::getenv("HOMEPATH")) {
-      return std::filesystem::path(std::string(drive) + path);
+  if (const wchar_t *drive = _wgetenv(L"HOMEDRIVE")) {
+    if (const wchar_t *path = _wgetenv(L"HOMEPATH")) {
+      return std::filesystem::path(std::wstring(drive) + path);
     }
   }
 #else
@@ -78,7 +79,7 @@ std::filesystem::path home_dir() {
 
 std::filesystem::path installed_config_dir() {
 #ifdef _WIN32
-  if (const char *local_app_data = std::getenv("LOCALAPPDATA")) {
+  if (const wchar_t *local_app_data = _wgetenv(L"LOCALAPPDATA")) {
     return std::filesystem::path(local_app_data) / "TTS Host";
   }
   return home_dir() / "AppData" / "Local" / "TTS Host";
@@ -119,7 +120,7 @@ std::filesystem::path resolve_schema_path(const json &config,
                                           const std::filesystem::path &config_path) {
   const auto schema_it = config.find("$schema");
   if (schema_it != config.end() && schema_it->is_string()) {
-    const auto candidate = std::filesystem::path(schema_it->get<std::string>());
+    const auto candidate = path_from_utf8(schema_it->get<std::string>());
     if (candidate.is_absolute()) {
       return candidate;
     }
@@ -183,7 +184,7 @@ std::optional<CliOptions> parse_cli(int argc, char **argv, std::string &error_me
         error_message = "--import-model requires a path";
         return std::nullopt;
       }
-      options.import_model_path = argv[++index];
+      options.import_model_path = path_from_utf8(argv[++index]);
       continue;
     }
 
@@ -201,7 +202,7 @@ std::optional<CliOptions> parse_cli(int argc, char **argv, std::string &error_me
         error_message = "--model-directory requires a path";
         return std::nullopt;
       }
-      options.download_destination_dir = argv[++index];
+      options.download_destination_dir = path_from_utf8(argv[++index]);
       continue;
     }
 
@@ -210,7 +211,7 @@ std::optional<CliOptions> parse_cli(int argc, char **argv, std::string &error_me
         error_message = "--config requires a path";
         return std::nullopt;
       }
-      options.config_path_override = argv[++index];
+      options.config_path_override = path_from_utf8(argv[++index]);
       continue;
     }
 
@@ -219,7 +220,7 @@ std::optional<CliOptions> parse_cli(int argc, char **argv, std::string &error_me
         error_message = "--data-dir requires a path";
         return std::nullopt;
       }
-      options.data_dir_override = argv[++index];
+      options.data_dir_override = path_from_utf8(argv[++index]);
       continue;
     }
 
@@ -247,7 +248,7 @@ std::optional<CliOptions> parse_cli(int argc, char **argv, std::string &error_me
         error_message = "--out requires a path";
         return std::nullopt;
       }
-      options.output_path = argv[++index];
+      options.output_path = path_from_utf8(argv[++index]);
       continue;
     }
 
@@ -261,7 +262,7 @@ std::optional<CliOptions> parse_cli(int argc, char **argv, std::string &error_me
         error_message = "--runner requires a path";
         return std::nullopt;
       }
-      options.runner_path_override = argv[++index];
+      options.runner_path_override = path_from_utf8(argv[++index]);
       continue;
     }
 
@@ -408,6 +409,11 @@ std::optional<CliOptions> parse_cli(int argc, char **argv, std::string &error_me
   }
 
   return options;
+}
+
+void validate_config(const ConfigDocument &document) {
+  enforce_supported_schema_version(document.value);
+  validate_against_schema(load_json_file(document.paths.schema_path, "schema"), document.value);
 }
 
 ConfigDocument load_config(const CliOptions &options, const std::filesystem::path &argv0) {

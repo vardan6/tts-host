@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "tts_host/catalogue_download.hpp"
+#include "tts_host/config_persistence.hpp"
 #include "tts_host/global_hotkey.hpp"
 #include "tts_host/model_catalogue.hpp"
 #include "tts_host/model_import.hpp"
@@ -46,11 +47,8 @@ constexpr int kPlaybackSkipComboId = 115;
 constexpr int kStartAtLoginCheckboxId = 116;
 constexpr int kSettingsHotkeyProbeId = 2;
 
-// Polls ModelSessionManager::unload_if_idle against modelRegistry.idleUnloadSeconds
-// (docs/design/architecture.md#desktop-integration). The settings window is the
-// only place a model is loaded today, so its own message loop is the idle clock
-// (tts_host/model_session.hpp); a 5 s poll trades timeout precision the config
-// does not promise for not waking this process needlessly.
+// Poll actual speech activity when sharing the tray manager; busy sessions
+// are never unloaded. Standalone Settings uses the same five-second poll.
 constexpr UINT_PTR kIdleTimerId = 1;
 constexpr UINT kIdleTimerIntervalMs = 5000;
 
@@ -64,16 +62,19 @@ constexpr UINT kIdleTimerIntervalMs = 5000;
 constexpr UINT_PTR kDirectoryWatchTimerId = 2;
 constexpr UINT kDirectoryWatchTimerIntervalMs = 5000;
 
-// Owns the mutable working copy of the config the window edits; the ConfigDocument
-// passed to run_settings_window is const, so control handlers write here instead.
-// It also owns the resident model session, so closing the window unloads
-// whatever the user loaded from it.
+// Edits the tray-owned document and retains the last successfully saved value.
+// Tray sessions outlive this window; standalone Settings owns its own manager.
 struct SettingsState {
-  SettingsState(ConfigDocument &config, const std::filesystem::path &runner_directory)
-      : document(config), sessions(runner_directory) {}
+  SettingsState(ConfigDocument &config, const std::filesystem::path &runner_directory,
+                ModelSessionManager *shared_sessions)
+      : document(config), saved_value(config.value),
+        owned_sessions(shared_sessions ? nullptr : std::make_unique<ModelSessionManager>(runner_directory)),
+        sessions(shared_sessions ? *shared_sessions : *owned_sessions) {}
 
   ConfigDocument &document;
-  ModelSessionManager sessions;
+  nlohmann::json saved_value;
+  std::unique_ptr<ModelSessionManager> owned_sessions;
+  ModelSessionManager &sessions;
   // Model ids in combo-box order; the combo itself shows display names.
   std::vector<std::string> model_ids;
   // Catalogue entry ids in combo-box order, mirroring model_ids above.
@@ -112,16 +113,14 @@ std::string wide_to_utf8(const wchar_t *wide_text) {
   return text;
 }
 
-// Writes the settings window's edits back to the config file
-// (docs/design/architecture.md#desktop-integration's "Live reload" -- the
-// host-side file watcher that applies these live is a separate, not-yet-built
-// piece).
-void save_config(const SettingsState &state) {
-  std::ofstream output(state.document.paths.config_path);
-  if (!output) {
-    throw std::runtime_error("failed to write " + state.document.paths.config_path.string());
+void save_config(SettingsState &state) {
+  try {
+    save_config_document(state.document);
+    state.saved_value = state.document.value;
+  } catch (...) {
+    state.document.value = state.saved_value;
+    throw;
   }
-  output << state.document.value.dump(2) << '\n';
 }
 
 // Fills the combo box with "System Default" plus every enumerated output
@@ -359,6 +358,25 @@ std::wstring captured_hotkey_text(WPARAM virtual_key) {
   return control_down || alt_down || shift_down || windows_down ? text : std::wstring();
 }
 
+// Restore controls after a rejected save so the form matches the live document.
+void restore_saved_controls(SettingsState &state, HWND window) {
+  auto reset = [&](int id) {
+    const auto control = GetDlgItem(window, id);
+    SendMessageW(control, CB_RESETCONTENT, 0, 0);
+    return control;
+  };
+  const auto &value = state.document.value;
+  populate_output_device_combo(reset(kOutputDeviceComboId), value["audio"]["outputDevice"].get<std::string>());
+  populate_speech_speed_combo(reset(kSpeechSpeedComboId), value["audio"].value("speechSpeed", 1.0));
+  populate_playback_skip_combo(reset(kPlaybackSkipComboId), value["audio"].value("playbackSkipSeconds", 5));
+  populate_selection_policy_combo(reset(kSelectionPolicyComboId), state.document);
+  populate_default_profile_combo(reset(kDefaultProfileComboId), state.document);
+  SetDlgItemTextW(window, kServerHostEditId, utf8_to_wide(value["server"]["host"].get<std::string>()).c_str());
+  SetDlgItemTextW(window, kServerPortEditId, std::to_wstring(value["server"]["port"].get<int>()).c_str());
+  SetDlgItemTextW(window, kReadSelectionHotkeyEditId,
+                  utf8_to_wide(value["hotkeys"].value("readSelection", "")).c_str());
+}
+
 LRESULT CALLBACK hotkey_edit_proc(HWND edit, UINT message, WPARAM wparam, LPARAM lparam) {
   if (message == WM_KEYDOWN || message == WM_SYSKEYDOWN) {
     const auto captured = captured_hotkey_text(wparam);
@@ -445,6 +463,7 @@ void on_server_port_changed(SettingsState &state, HWND edit) {
 
 void on_start_at_login_clicked(SettingsState &state, HWND checkbox) {
   const bool enabled = SendMessageW(checkbox, BM_GETCHECK, 0, 0) == BST_CHECKED;
+  const auto previous_document = state.document.value;
   const bool previous = state.document.value
                             .value("startup", nlohmann::json::object())
                             .value("launchOnLogin", true);
@@ -455,7 +474,7 @@ void on_start_at_login_clicked(SettingsState &state, HWND checkbox) {
     append_activity_log(state, enabled ? L"Start at login enabled."
                                        : L"Start at login disabled.");
   } catch (const std::exception &error) {
-    state.document.value["startup"]["launchOnLogin"] = previous;
+    state.document.value = previous_document;
     SendMessageW(checkbox, BM_SETCHECK, previous ? BST_CHECKED : BST_UNCHECKED, 0);
     try {
       set_start_at_login(previous, state.document.paths.config_path);
@@ -580,9 +599,11 @@ void on_download_model_clicked(SettingsState &state, HWND combo, HWND window) {
 void on_idle_timer(SettingsState &state) {
   const auto idle_unload_seconds =
       state.document.value["modelRegistry"]["idleUnloadSeconds"].get<int>();
-  if (state.sessions.unload_if_idle(std::chrono::seconds(idle_unload_seconds))) {
+  const auto before = state.sessions.status();
+  state.sessions.unload_if_idle(std::chrono::seconds(idle_unload_seconds));
+  const auto after = state.sessions.status();
+  if (before.loaded != after.loaded || before.model_id != after.model_id)
     report_session_status(state);
-  }
 }
 
 void on_unload_model_clicked(SettingsState &state) {
@@ -740,7 +761,6 @@ LRESULT CALLBACK settings_window_proc(HWND window, UINT message, WPARAM wparam, 
     case WM_DESTROY:
       KillTimer(window, kIdleTimerId);
       KillTimer(window, kDirectoryWatchTimerId);
-      PostQuitMessage(0);
       return 0;
     case WM_TIMER: {
       auto *state = reinterpret_cast<SettingsState *>(GetWindowLongPtrW(window, GWLP_USERDATA));
@@ -759,32 +779,38 @@ LRESULT CALLBACK settings_window_proc(HWND window, UINT message, WPARAM wparam, 
       if (state == nullptr) {
         return 0;
       }
-      if (LOWORD(wparam) == kOutputDeviceComboId && HIWORD(wparam) == CBN_SELCHANGE) {
-        on_output_device_selected(*state, reinterpret_cast<HWND>(lparam));
-      } else if (LOWORD(wparam) == kSpeechSpeedComboId && HIWORD(wparam) == CBN_SELCHANGE) {
-        on_speech_speed_selected(*state, reinterpret_cast<HWND>(lparam));
-      } else if (LOWORD(wparam) == kPlaybackSkipComboId && HIWORD(wparam) == CBN_SELCHANGE) {
-        on_playback_skip_selected(*state, reinterpret_cast<HWND>(lparam));
-      } else if (LOWORD(wparam) == kSelectionPolicyComboId && HIWORD(wparam) == CBN_SELCHANGE) {
-        on_selection_policy_selected(*state, reinterpret_cast<HWND>(lparam));
-      } else if (LOWORD(wparam) == kServerHostEditId && HIWORD(wparam) == EN_KILLFOCUS) {
-        on_server_host_changed(*state, reinterpret_cast<HWND>(lparam));
-      } else if (LOWORD(wparam) == kServerPortEditId && HIWORD(wparam) == EN_KILLFOCUS) {
-        on_server_port_changed(*state, reinterpret_cast<HWND>(lparam));
-      } else if (LOWORD(wparam) == kDefaultProfileComboId && HIWORD(wparam) == CBN_SELCHANGE) {
-        on_default_profile_selected(*state, reinterpret_cast<HWND>(lparam));
-      } else if (LOWORD(wparam) == kLoadModelButtonId && HIWORD(wparam) == BN_CLICKED) {
-        on_load_model_clicked(*state, GetDlgItem(window, kModelComboId));
-      } else if (LOWORD(wparam) == kUnloadModelButtonId && HIWORD(wparam) == BN_CLICKED) {
-        on_unload_model_clicked(*state);
-      } else if (LOWORD(wparam) == kImportModelButtonId && HIWORD(wparam) == BN_CLICKED) {
-        on_import_model_clicked(*state, window);
-      } else if (LOWORD(wparam) == kDownloadModelButtonId && HIWORD(wparam) == BN_CLICKED) {
-        on_download_model_clicked(*state, GetDlgItem(window, kCatalogueComboId), window);
-      } else if (LOWORD(wparam) == kCheckHotkeyButtonId && HIWORD(wparam) == BN_CLICKED) {
-        on_check_hotkey_clicked(*state, window, GetDlgItem(window, kReadSelectionHotkeyEditId));
-      } else if (LOWORD(wparam) == kStartAtLoginCheckboxId && HIWORD(wparam) == BN_CLICKED) {
-        on_start_at_login_clicked(*state, reinterpret_cast<HWND>(lparam));
+      try {
+        if (LOWORD(wparam) == kOutputDeviceComboId && HIWORD(wparam) == CBN_SELCHANGE) {
+          on_output_device_selected(*state, reinterpret_cast<HWND>(lparam));
+        } else if (LOWORD(wparam) == kSpeechSpeedComboId && HIWORD(wparam) == CBN_SELCHANGE) {
+          on_speech_speed_selected(*state, reinterpret_cast<HWND>(lparam));
+        } else if (LOWORD(wparam) == kPlaybackSkipComboId && HIWORD(wparam) == CBN_SELCHANGE) {
+          on_playback_skip_selected(*state, reinterpret_cast<HWND>(lparam));
+        } else if (LOWORD(wparam) == kSelectionPolicyComboId && HIWORD(wparam) == CBN_SELCHANGE) {
+          on_selection_policy_selected(*state, reinterpret_cast<HWND>(lparam));
+        } else if (LOWORD(wparam) == kServerHostEditId && HIWORD(wparam) == EN_KILLFOCUS) {
+          on_server_host_changed(*state, reinterpret_cast<HWND>(lparam));
+        } else if (LOWORD(wparam) == kServerPortEditId && HIWORD(wparam) == EN_KILLFOCUS) {
+          on_server_port_changed(*state, reinterpret_cast<HWND>(lparam));
+        } else if (LOWORD(wparam) == kDefaultProfileComboId && HIWORD(wparam) == CBN_SELCHANGE) {
+          on_default_profile_selected(*state, reinterpret_cast<HWND>(lparam));
+        } else if (LOWORD(wparam) == kLoadModelButtonId && HIWORD(wparam) == BN_CLICKED) {
+          on_load_model_clicked(*state, GetDlgItem(window, kModelComboId));
+        } else if (LOWORD(wparam) == kUnloadModelButtonId && HIWORD(wparam) == BN_CLICKED) {
+          on_unload_model_clicked(*state);
+        } else if (LOWORD(wparam) == kImportModelButtonId && HIWORD(wparam) == BN_CLICKED) {
+          on_import_model_clicked(*state, window);
+        } else if (LOWORD(wparam) == kDownloadModelButtonId && HIWORD(wparam) == BN_CLICKED) {
+          on_download_model_clicked(*state, GetDlgItem(window, kCatalogueComboId), window);
+        } else if (LOWORD(wparam) == kCheckHotkeyButtonId && HIWORD(wparam) == BN_CLICKED) {
+          on_check_hotkey_clicked(*state, window, GetDlgItem(window, kReadSelectionHotkeyEditId));
+        } else if (LOWORD(wparam) == kStartAtLoginCheckboxId && HIWORD(wparam) == BN_CLICKED) {
+          on_start_at_login_clicked(*state, reinterpret_cast<HWND>(lparam));
+        }
+      } catch (const std::exception &error) {
+        restore_saved_controls(*state, window);
+        append_activity_log(*state, L"Settings change failed; previous settings retained: " +
+                                   utf8_to_wide(error.what()));
       }
       return 0;
     }
@@ -796,7 +822,7 @@ LRESULT CALLBACK settings_window_proc(HWND window, UINT message, WPARAM wparam, 
 }  // namespace
 
 void run_settings_window(ConfigDocument &document,
-                         const std::filesystem::path &runner_directory) {
+                         const std::filesystem::path &runner_directory, ModelSessionManager *sessions) {
   const wchar_t *kClassName = L"TtsHostSettingsWindow";
   const HINSTANCE instance = GetModuleHandleW(nullptr);
 
@@ -820,7 +846,7 @@ void run_settings_window(ConfigDocument &document,
     throw std::runtime_error("failed to register the settings window class");
   }
 
-  SettingsState state(document, runner_directory);
+  SettingsState state(document, runner_directory, sessions);
 
   // A plain visible top-level window with output-device, selection-hotkey,
   // server host/port, default-English-profile, model load/unload/import,
@@ -831,6 +857,10 @@ void run_settings_window(ConfigDocument &document,
   if (!window) {
     throw std::runtime_error("failed to create the settings window");
   }
+  struct WindowLifetime {
+    HWND handle;
+    ~WindowLifetime() { if (IsWindow(handle)) DestroyWindow(handle); }
+  } lifetime{window};
   SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(&state));
 
   // Layout: a 152 px label column at x=16 (wide enough for the longest caption,
@@ -988,8 +1018,7 @@ void run_settings_window(ConfigDocument &document,
   for (const auto &diagnostic : selection_capture_diagnostics()) {
     append_activity_log(state, utf8_to_wide(diagnostic));
   }
-  // A loaded model stays resident only while this window is open, so the
-  // window always opens with nothing loaded (see tts_host/model_session.hpp).
+  // Tray Settings shows the existing resident model and does not unload on close.
   report_session_status(state);
 
   CreateWindowExW(0, L"STATIC", L"Default speech speed:", WS_CHILD | WS_VISIBLE, 16, 700, 152, 24,
@@ -1027,8 +1056,17 @@ void run_settings_window(ConfigDocument &document,
   ShowWindow(window, SW_SHOWNORMAL);
   UpdateWindow(window);
 
-  MSG message;
-  while (GetMessageW(&message, nullptr, 0, 0) > 0) {
+  MSG message{};
+  while (IsWindow(window)) {
+    const auto result = GetMessageW(&message, nullptr, 0, 0);
+    if (result <= 0) {
+      // The tray may have quit inside this nested loop. Tear down Settings
+      // before its stack state dies, then return WM_QUIT to the owning loop.
+      DestroyWindow(window);
+      if (result == 0) PostQuitMessage(static_cast<int>(message.wParam));
+      else throw std::runtime_error("failed to read Settings window messages");
+      break;
+    }
     TranslateMessage(&message);
     DispatchMessageW(&message);
   }
@@ -1040,7 +1078,7 @@ void run_settings_window(ConfigDocument &document,
 
 namespace tts_host {
 
-void run_settings_window(ConfigDocument &, const std::filesystem::path &) {
+void run_settings_window(ConfigDocument &, const std::filesystem::path &, ModelSessionManager *) {
   throw std::runtime_error(
       "the settings window is not implemented on this platform yet (Windows only, see "
       "docs/adr/0007-native-ui-per-platform.md)");

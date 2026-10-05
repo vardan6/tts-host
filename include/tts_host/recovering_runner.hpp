@@ -1,0 +1,40 @@
+#pragma once
+
+#include "tts_host/runner_launcher.hpp"
+#include <memory>
+#include <optional>
+
+namespace tts_host {
+struct SynthesizedChunk {
+  RunnerSynthesizeResponse format;
+  std::vector<std::uint8_t> pcm;
+};
+
+// Publishes only complete chunks. Recovery cannot duplicate audible PCM.
+class RecoveringRunner {
+ public:
+  RecoveringRunner(std::filesystem::path executable,
+                   std::optional<std::filesystem::path> model = {},
+                   std::optional<std::filesystem::path> voice = {},
+                   RunnerDeadlines deadlines = {}, std::function<bool()> cancelled = {},
+                   std::function<void(const std::string &)> log = {});
+  void prepare();
+  void unload();
+  bool loaded() const { return session_ != nullptr; }
+  void set_state_callback(std::function<void(bool)> callback) { state_callback_ = std::move(callback); }
+  void set_cancelled(std::function<bool()> cancelled) { cancelled_ = std::move(cancelled); }
+  SynthesizedChunk synthesize(const std::string &text, double speed);
+  RunnerStatsResponse stats();
+  int finish();
+ private:
+  void start();
+  std::filesystem::path executable_;
+  std::optional<std::filesystem::path> model_, voice_;
+  RunnerDeadlines deadlines_;
+  std::function<bool()> cancelled_;
+  std::function<void(const std::string &)> log_;
+  std::function<void(bool)> state_callback_;
+  std::unique_ptr<RunnerSession> session_;
+  int request_id_ = 3;
+};
+}  // namespace tts_host

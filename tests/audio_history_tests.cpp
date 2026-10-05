@@ -1,4 +1,6 @@
 #include "tts_host/audio_history.hpp"
+#include "tts_host/path_encoding.hpp"
+#include <chrono>
 
 #include <iostream>
 #include <stdexcept>
@@ -30,6 +32,16 @@ void retains_pcm_and_reports_spool_exhaustion() {
 
 int main() {
   try {
+    const auto unrelated = std::filesystem::temp_directory_path() /
+        tts_host::path_from_utf8("tts-unrelated-\xd5\x80\xd5\xa1\xd5\xb5-\xd0\xa0\xd1\x83\xd1\x81-" + std::to_string(
+            std::chrono::steady_clock::now().time_since_epoch().count()));
+    std::filesystem::create_directory(unrelated);
+    struct Cleanup {
+      std::filesystem::path path;
+      ~Cleanup() { std::error_code error; std::filesystem::remove_all(path, error); }
+    } cleanup{unrelated};
+    tts_host::AudioHistory::clean_abandoned_spools();
+    require(std::filesystem::exists(unrelated), "spool cleanup removed an unrelated Unicode directory");
     retains_pcm_and_reports_spool_exhaustion();
   } catch (const std::exception &error) {
     std::cerr << error.what() << '\n';

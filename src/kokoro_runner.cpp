@@ -1,4 +1,5 @@
 #include "tts_host/kokoro_runner.hpp"
+#include "tts_host/path_encoding.hpp"
 
 #include "tts_host/espeak_phonemizer.hpp"
 #include "tts_host/kokoro_batching.hpp"
@@ -35,18 +36,18 @@ inline constexpr std::size_t kKokoroStyleWidth = 256;
 std::vector<float> load_voice_style_table(const std::filesystem::path &voice_path) {
   std::ifstream stream(voice_path, std::ios::binary | std::ios::ate);
   if (!stream) {
-    throw RunnerProtocolError("kokoro-onnx runner could not open voice file: " + voice_path.string());
+    throw RunnerProtocolError("kokoro-onnx runner could not open voice file: " + path_to_utf8(voice_path));
   }
   const auto byte_size = static_cast<std::size_t>(stream.tellg());
   if (byte_size == 0 || byte_size % (kKokoroStyleWidth * sizeof(float)) != 0) {
     throw RunnerProtocolError("kokoro-onnx runner voice file is not a multiple of " +
-                              std::to_string(kKokoroStyleWidth) + " floats: " + voice_path.string());
+                              std::to_string(kKokoroStyleWidth) + " floats: " + path_to_utf8(voice_path));
   }
   stream.seekg(0);
   std::vector<float> table(byte_size / sizeof(float));
   stream.read(reinterpret_cast<char *>(table.data()), static_cast<std::streamsize>(byte_size));
   if (static_cast<std::size_t>(stream.gcount()) != byte_size) {
-    throw RunnerProtocolError("kokoro-onnx runner failed to read voice file: " + voice_path.string());
+    throw RunnerProtocolError("kokoro-onnx runner failed to read voice file: " + path_to_utf8(voice_path));
   }
   return table;
 }
@@ -79,10 +80,10 @@ nlohmann::json KokoroOnnxRunner::handle_control_message(const nlohmann::json &me
 
 nlohmann::json KokoroOnnxRunner::handle_load_message(const nlohmann::json &message) {
   const auto request = parse_runner_load_request(message);
-  session_.emplace(open_session(env_, request.model_path));
+  session_.emplace(open_session(env_, path_from_utf8(request.model_path)));
   voice_style_.clear();
   if (request.voice_path.has_value()) {
-    voice_style_ = load_voice_style_table(*request.voice_path);
+    voice_style_ = load_voice_style_table(path_from_utf8(*request.voice_path));
   }
   return make_runner_load_response(request);
 }

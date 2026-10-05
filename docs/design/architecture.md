@@ -77,10 +77,9 @@ numbers, and building it later means building throwaway tooling first.
 A stub runner emitting synthetic audio with no model is a permanent in-repo
 fixture and the basis of the end-to-end test.
 
-On runner death mid-synthesis the host restarts the runner and retries the
-failed chunk once, then fails with an actionable error. Every restart is logged.
-
-Full rationale: `docs/adr/0002-runner-protocol.md`.
+Runner death and deadline recovery, complete-chunk publication, and cancellation
+follow [ADR 0002](../adr/0002-runner-protocol.md#runner-failure). Operation and
+shutdown limits are defined by `RunnerDeadlines` in `runner_launcher.hpp`.
 
 ## Speech pipeline
 
@@ -93,9 +92,8 @@ text ── normalize ── split ── synthesize (lookahead) ── play or 
   links reduced to their text, tables skipped with a marker, headings given a
   leading pause. Number, date, and abbreviation expansion is left to the models
   in the first release.
-- **Split.** The host splits into sentence-scale chunks. Splitting lives here,
-  not in clients, because it is what makes playback start in under a second and
-  makes cancellation cheap — stop after the current chunk.
+- **Split.** The host splits into sentence-scale chunks so playback can begin
+  before the whole utterance is synthesized.
 - **Synthesize.** Chunks are synthesized with a small lookahead and streamed
   back-to-back.
 - **Play or stream.** The host plays audio through the system default output
@@ -139,8 +137,15 @@ stop generating additional audio and show an actionable error rather than
 silently evicting history. Delete the spool on stop, replacement, completion,
 and orderly exit, and clean abandoned host-owned spools on startup. Pause also
 applies backpressure: finish at most the in-flight synthesis request, then stop
-lookahead until playback resumes. Synchronous runner cancellation still waits
-for the current request; audio stop and UI feedback must not wait for it.
+lookahead until playback resumes. Runner waits observe Stop and replacement;
+terminate the pending session without retry, per
+[ADR 0002](../adr/0002-runner-protocol.md#runner-failure).
+
+The portable coordinator in `synthesis_pipeline.cpp` keeps one lookahead task
+owning runner I/O while the caller services retained playback and seek. Restart
+retained audio without waiting for unrelated synthesis; preserve pause state
+and join the previous endpoint before launching another. On failure, cancel
+pending synthesis and join playback before destroying their shared resources.
 
 The controller publishes preparing/playing/paused/stopping/idle/error state and
 source metadata to the UI. Capture failure leaves current speech untouched;
@@ -461,6 +466,30 @@ command points to the current executable and the same config path, and starts
 the normal tray host at sign-in. Turning the setting off removes that entry.
 This uses the user's registry hive and never requires elevation. A registry
 failure is reported but does not prevent the Host from starting.
+
+Windows Host launch uses the GUI subsystem: Explorer and login launches create
+no console. Headless/help invocations preserve inherited pipes/files and attach
+to the parent's console when available; fatal desktop launch errors appear in a
+native dialog and return a failing exit code.
+
+Tray, browser, and hotkey reads share the Host's resident model manager with tray
+Settings. Closing Settings leaves that session resident; independent `--settings`
+owns its own temporary session. Successful sequential reads reuse the loaded
+runner. A different model replaces the single resident slot. A speech lease
+holds the slot through synthesis, lookahead, and playback; Settings load/unload
+reports that the model is in use rather than blocking on the utterance. Stop or
+runner failure follows ADR 0002's cancellation/recovery contract.
+
+`loadPolicy: eager` warms a model before the first tray read; `onDemand` waits for
+speech. With the current single slot, choose the first eager language-default
+profile in configuration-key order, otherwise the first eager profile. Other
+profiles load on demand. A failed warm-up reports the error without preventing
+the Host from starting. Changes to profiles schedule warm-up between utterances;
+an unchanged selection reuses its runner. Explicit Settings Load remains available
+for either policy. Idle unloading runs while the tray is open, even with Settings
+closed, and measures time since load or the end of the last utterance. Active or
+paused speech never counts as idle. Optional profile `idleUnloadSeconds` overrides
+`modelRegistry.idleUnloadSeconds` for that profile; zero disables unloading.
 
 Three UI surfaces, divided by task:
 

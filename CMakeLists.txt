@@ -171,6 +171,8 @@ add_executable(
   src/catalogue_download.cpp
   src/clipboard.cpp
   src/config_loader.cpp
+  src/config_persistence.cpp
+  src/config_snapshot.cpp
   src/global_hotkey.cpp
   src/language_selection.cpp
   src/local_api_server.cpp
@@ -178,11 +180,13 @@ add_executable(
   src/model_import.cpp
   src/model_registry.cpp
   src/model_session.cpp
+  src/recovering_runner.cpp
   src/now_playing_window.cpp
   src/playback_controller.cpp
   src/playback_sink.cpp
   src/runner_protocol.cpp
   src/runner_launcher.cpp
+  src/synthesis_pipeline.cpp
   src/selection_capture.cpp
   src/settings_window.cpp
   src/text_normalizer.cpp
@@ -279,6 +283,7 @@ target_link_libraries(
     ${JSON_SCHEMA_VALIDATOR_TARGET}
 )
 if(WIN32)
+  set_target_properties(tts-host PROPERTIES WIN32_EXECUTABLE TRUE)
   enable_language(RC)
   target_sources(tts-host PRIVATE src/startup_registration.cpp resources/tts-host.rc)
   target_include_directories(tts-host PRIVATE resources)
@@ -364,6 +369,14 @@ set(CPACK_PACKAGE_DIRECTORY "${CMAKE_BINARY_DIR}/dist")
 include(CPack)
 
 if(BUILD_TESTING)
+  if(WIN32)
+    add_executable(tts-host-desktop-launch-tests tests/desktop_launch_tests.cpp)
+    add_dependencies(tts-host-desktop-launch-tests tts-host)
+    target_link_libraries(tts-host-desktop-launch-tests PRIVATE user32)
+    add_test(NAME tts_host_desktop_launch COMMAND tts-host-desktop-launch-tests $<TARGET_FILE:tts-host>)
+    set_tests_properties(tts_host_desktop_launch PROPERTIES TIMEOUT 20)
+  endif()
+
   add_executable(tts-host-selection-hotkey-tests tests/selection_hotkey_tests.cpp)
   target_include_directories(tts-host-selection-hotkey-tests PRIVATE include)
   add_test(NAME tts_host_selection_hotkey COMMAND tts-host-selection-hotkey-tests)
@@ -447,6 +460,92 @@ if(BUILD_TESTING)
   endif()
   add_test(NAME tts_host_cli_text_sources COMMAND tts-host-config-loader-tests)
 
+  add_executable(tts-host-config-persistence-tests
+    src/config_loader.cpp src/config_persistence.cpp tests/config_persistence_tests.cpp)
+  target_include_directories(tts-host-config-persistence-tests PRIVATE include)
+  target_link_libraries(tts-host-config-persistence-tests PRIVATE
+    nlohmann_json::nlohmann_json ${JSON_SCHEMA_VALIDATOR_TARGET})
+  add_test(NAME tts_host_config_persistence COMMAND tts-host-config-persistence-tests
+    ${CMAKE_SOURCE_DIR}/config.example.json ${CMAKE_SOURCE_DIR}/schemas/config.schema.json)
+
+  if(WIN32)
+    # Exercise the real UI entrypoints without main's startup registration.
+    get_target_property(host_ui_sources tts-host SOURCES)
+    list(REMOVE_ITEM host_ui_sources src/main.cpp)
+    get_target_property(host_ui_libraries tts-host LINK_LIBRARIES)
+    add_executable(tts-host-settings-lifetime-tests
+      ${host_ui_sources} tests/settings_lifetime_tests.cpp)
+    target_include_directories(tts-host-settings-lifetime-tests PRIVATE
+      include resources ${boost_headers_SOURCE_DIR})
+    target_compile_definitions(tts-host-settings-lifetime-tests PRIVATE BOOST_ERROR_CODE_HEADER_ONLY)
+    target_link_libraries(tts-host-settings-lifetime-tests PRIVATE ${host_ui_libraries})
+    add_test(NAME tts_host_settings_lifetime COMMAND tts-host-settings-lifetime-tests
+      ${CMAKE_SOURCE_DIR}/config.example.json
+      ${CMAKE_SOURCE_DIR}/tests/fixtures/model_session/config.json)
+    add_dependencies(tts-host-settings-lifetime-tests tts-host-stub-runner)
+    set_tests_properties(tts_host_settings_lifetime PROPERTIES TIMEOUT 30)
+  endif()
+
+  if(WIN32)
+    add_executable(tts-host-runner-inheritance-tests src/runner_launcher.cpp
+      src/runner_protocol.cpp tests/runner_inheritance_tests.cpp)
+    target_include_directories(tts-host-runner-inheritance-tests PRIVATE include)
+    target_link_libraries(tts-host-runner-inheritance-tests PRIVATE nlohmann_json::nlohmann_json)
+    add_test(NAME tts_host_runner_inheritance COMMAND tts-host-runner-inheritance-tests
+      $<TARGET_FILE:tts-host-stub-runner>)
+    set_tests_properties(tts_host_runner_inheritance PROPERTIES TIMEOUT 15)
+  endif()
+
+  add_test(NAME tts_host_unicode_cli_paths COMMAND ${CMAKE_COMMAND}
+    -Dexe=$<TARGET_FILE:tts-host> -Drunner=$<TARGET_FILE:tts-host-stub-runner>
+    -Dschemas=${CMAKE_SOURCE_DIR}/schemas -Dconfig=${CMAKE_SOURCE_DIR}/config.example.json
+    -Dwork=${CMAKE_CURRENT_BINARY_DIR}/unicode-cli-paths
+    -P ${CMAKE_SOURCE_DIR}/tests/assert_unicode_paths.cmake)
+  set_tests_properties(tts_host_unicode_cli_paths PROPERTIES TIMEOUT 20)
+
+  add_executable(tts-host-synthesis-pipeline-tests tests/synthesis_pipeline_tests.cpp
+    src/synthesis_pipeline.cpp src/recovering_runner.cpp src/runner_launcher.cpp
+    src/runner_protocol.cpp src/playback_controller.cpp src/playback_sink.cpp
+    src/audio_conversion.cpp src/audio_history.cpp src/text_splitter.cpp src/wav_writer.cpp)
+  target_include_directories(tts-host-synthesis-pipeline-tests PRIVATE include)
+  target_link_libraries(tts-host-synthesis-pipeline-tests PRIVATE nlohmann_json::nlohmann_json)
+  if(WIN32)
+    target_link_libraries(tts-host-synthesis-pipeline-tests PRIVATE ole32 uuid)
+  endif()
+  add_test(NAME tts_host_synthesis_pipeline COMMAND tts-host-synthesis-pipeline-tests
+    $<TARGET_FILE:tts-host-runner-failure-fixture> ${CMAKE_CURRENT_BINARY_DIR})
+  set_tests_properties(tts_host_synthesis_pipeline PROPERTIES TIMEOUT 15)
+
+  add_executable(tts-host-runner-failure-fixture tests/runner_failure_fixture.cpp
+    src/runner_audio_output.cpp src/runner_control_io.cpp src/runner_protocol.cpp src/stub_runner.cpp)
+  target_include_directories(tts-host-runner-failure-fixture PRIVATE include)
+  target_link_libraries(tts-host-runner-failure-fixture PRIVATE nlohmann_json::nlohmann_json)
+  add_executable(tts-host-runner-recovery-tests tests/runner_recovery_tests.cpp
+    src/runner_launcher.cpp src/recovering_runner.cpp src/runner_protocol.cpp src/stub_runner.cpp)
+  target_include_directories(tts-host-runner-recovery-tests PRIVATE include)
+  target_link_libraries(tts-host-runner-recovery-tests PRIVATE nlohmann_json::nlohmann_json)
+  add_test(NAME tts_host_runner_recovery COMMAND tts-host-runner-recovery-tests
+    $<TARGET_FILE:tts-host-runner-failure-fixture> ${CMAKE_CURRENT_BINARY_DIR})
+  set_tests_properties(tts_host_runner_recovery PROPERTIES TIMEOUT 15)
+
+  add_executable(tts-host-resident-synthesis-tests tests/resident_synthesis_tests.cpp
+    src/model_session.cpp src/model_registry.cpp src/recovering_runner.cpp
+    src/synthesis_pipeline.cpp src/runner_launcher.cpp src/runner_protocol.cpp
+    src/playback_controller.cpp src/playback_sink.cpp src/audio_conversion.cpp
+    src/audio_history.cpp src/text_splitter.cpp src/wav_writer.cpp)
+  target_include_directories(tts-host-resident-synthesis-tests PRIVATE include)
+  target_link_libraries(tts-host-resident-synthesis-tests PRIVATE
+    nlohmann_json::nlohmann_json ${JSON_SCHEMA_VALIDATOR_TARGET})
+  if(WIN32)
+    target_link_libraries(tts-host-resident-synthesis-tests PRIVATE ole32 uuid)
+  endif()
+  add_dependencies(tts-host-resident-synthesis-tests tts-host-runner-failure-fixture)
+  add_test(NAME tts_host_resident_synthesis COMMAND tts-host-resident-synthesis-tests
+    $<TARGET_FILE:tts-host-runner-failure-fixture>
+    ${CMAKE_SOURCE_DIR}/tests/fixtures/model_session/config.json
+    ${CMAKE_CURRENT_BINARY_DIR}/resident-synthesis-tests)
+  set_tests_properties(tts_host_resident_synthesis PROPERTIES TIMEOUT 20)
+
   # Drives ModelSessionManager (src/model_session.cpp) against a real runner
   # process: the fixture package declares engine "stub", which the
   # tts-host-<engine>-runner naming convention resolves to the stub runner
@@ -455,10 +554,15 @@ if(BUILD_TESTING)
     tts-host-model-session-tests
     src/model_registry.cpp
     src/model_session.cpp
+    src/recovering_runner.cpp
     src/runner_launcher.cpp
     src/runner_protocol.cpp
     tests/model_session_tests.cpp
   )
+  add_dependencies(tts-host-model-session-tests tts-host-stub-runner)
+  if(NOT WIN32)
+    add_dependencies(tts-host-model-session-tests tts-host-kokoro-onnx-runner)
+  endif()
   target_include_directories(tts-host-model-session-tests PRIVATE include)
   target_link_libraries(
     tts-host-model-session-tests
@@ -688,6 +792,21 @@ if(BUILD_TESTING)
     target_compile_options(tts-host-playback-controller-tests PRIVATE -Wall -Wextra -Wpedantic)
   endif()
   add_test(NAME tts_host_playback_controller COMMAND tts-host-playback-controller-tests)
+
+  add_executable(
+    tts-host-config-snapshot-tests
+    src/config_snapshot.cpp
+    src/playback_controller.cpp
+    tests/config_snapshot_tests.cpp
+  )
+  target_include_directories(tts-host-config-snapshot-tests PRIVATE include)
+  target_link_libraries(tts-host-config-snapshot-tests PRIVATE nlohmann_json::nlohmann_json)
+  if(MSVC)
+    target_compile_options(tts-host-config-snapshot-tests PRIVATE /W4 /permissive-)
+  else()
+    target_compile_options(tts-host-config-snapshot-tests PRIVATE -Wall -Wextra -Wpedantic)
+  endif()
+  add_test(NAME tts_host_config_snapshot COMMAND tts-host-config-snapshot-tests)
 
   add_executable(tts-host-audio-history-tests src/audio_history.cpp tests/audio_history_tests.cpp)
   target_include_directories(tts-host-audio-history-tests PRIVATE include)

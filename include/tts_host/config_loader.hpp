@@ -45,6 +45,7 @@ struct ConfigError {
 };
 
 std::optional<CliOptions> parse_cli(int argc, char **argv, std::string &error_message);
+void validate_config(const ConfigDocument &document);
 ConfigDocument load_config(const CliOptions &options, const std::filesystem::path &argv0);
 
 }  // namespace tts_host

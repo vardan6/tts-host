@@ -248,3 +248,30 @@ launch and protocol decoding, including both tray and Settings model loading.
 Sequence is canonical in roadmap.md: safety/correctness blockers first, remaining
 phase work next, measured playback polish in backlog. Startup policy can be decided
 without delaying unrelated blocker fixes. No parallel tracks were requested.
+
+## Runtime regression audit — 2026-10-04
+
+Finding #17's owning regressions now cover the identified gaps:
+
+| Failure mode | Automated evidence |
+|---|---|
+| Concurrent Settings publication / in-flight consistency | `tts_host_config_snapshot` |
+| Stop/seek at the paused predicate-to-wait boundary | `tts_host_playback_controller` |
+| Native Windows listener collision / continued original service | `tts_host_local_api` |
+| Concurrent Windows runner handle isolation / independent EOF | `tts_host_runner_inheritance` |
+| Runner death, partial PCM then death, control/audio/load hangs, blocked write, slow control bytes, closed input, stuck exit, repeated failure, cancellation without retry | `tts_host_runner_recovery` |
+| Seek during blocked lookahead, paused seek, Stop joining workers, repeated runner failure during playback | `tts_host_synthesis_pipeline` (production coordinator, fake endpoint, real child process) |
+
+The same recovery fixture verifies restart/reload, exactly one failed-chunk
+retry, and complete PCM publication without duplicating partial output. Limits
+are total operation deadlines rather than timeouts refreshed by each byte.
+Current defaults allow 30 s control, 10 min load/synthesis, and 1 s unload/exit;
+short injected limits make hang regressions deterministic. Linux real Kokoro
+initialize/load measured 0.118/2.088 s. Full synthesis deadline tuning for future
+models remains part of performance acceptance: Linux lacks espeak-ng and native
+Windows still resolves ONNX 1.17.1 rather than API 29.
+
+Verification: 44/44 Linux CTests; Windows Release Host and new harnesses build,
+41/43 native CTests pass. The two pre-existing ONNX mismatch failures remain.
+Hardware-independent tests do not complete audible playback, native browser,
+or Settings-to-Now-Playing acceptance. No developer startup registration changed.

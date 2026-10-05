@@ -60,7 +60,15 @@ class LocalApiServer::Impl {
     boost::system::error_code error;
     acceptor_.open(endpoint_.protocol(), error);
     if (error) throw std::runtime_error("could not open local API socket: " + error.message());
+#ifdef _WIN32
+    const BOOL exclusive = TRUE;
+    if (::setsockopt(acceptor_.native_handle(), SOL_SOCKET, SO_EXCLUSIVEADDRUSE,
+                     reinterpret_cast<const char *>(&exclusive), sizeof(exclusive)) == SOCKET_ERROR) {
+      error.assign(::WSAGetLastError(), asio::error::get_system_category());
+    }
+#else
     acceptor_.set_option(tcp::acceptor::reuse_address(true), error);
+#endif
     if (error) throw std::runtime_error("could not configure local API socket: " + error.message());
     acceptor_.bind(endpoint_, error);
     if (error) {

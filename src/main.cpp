@@ -1,8 +1,11 @@
 #include "tts_host/catalogue_download.hpp"
+#include "tts_host/path_encoding.hpp"
 #include "tts_host/audio_history.hpp"
 #include "tts_host/clipboard.hpp"
 #include "tts_host/config_loader.hpp"
+#include "tts_host/config_snapshot.hpp"
 #include "tts_host/language_selection.hpp"
+#include "tts_host/synthesis_pipeline.hpp"
 #include "tts_host/local_api_server.hpp"
 #include "tts_host/model_catalogue.hpp"
 #include "tts_host/model_import.hpp"
@@ -11,6 +14,7 @@
 #include "tts_host/playback_controller.hpp"
 #include "tts_host/playback_sink.hpp"
 #include "tts_host/runner_launcher.hpp"
+#include "tts_host/recovering_runner.hpp"
 #include "tts_host/runner_protocol.hpp"
 #include "tts_host/settings_window.hpp"
 #include "tts_host/startup_registration.hpp"
@@ -36,23 +40,30 @@
 #include <utility>
 #include <vector>
 
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <shellapi.h>
+#include <cstdio>
+#include <fcntl.h>
+#include <io.h>
+#endif
+
 namespace {
 
-class SynthesisInterrupted final : public std::exception {
- public:
-  const char *what() const noexcept override { return "synthesis interrupted by a newer request"; }
-};
-
-void throw_if_cancelled(const tts_host::PlaybackControl *control) {
-  if (control != nullptr && control->cancelled()) {
-    throw SynthesisInterrupted();
+void report_fatal_error(const std::string &message, bool desktop) {
+  std::cerr << message << '\n';
+#ifdef _WIN32
+  if (desktop) {
+    const auto wide_message = tts_host::path_from_utf8(message).wstring();
+    MessageBoxW(nullptr, wide_message.c_str(), L"TTS Host — unable to start",
+                MB_OK | MB_ICONERROR);
   }
-}
-
-double configured_speech_speed(const tts_host::ConfigDocument &document) {
-  // Older valid config documents did not carry this optional schema property;
-  // absence deliberately means the documented 1.0 default.
-  return document.value.at("audio").value("speechSpeed", 1.0);
+#else
+  (void)desktop;
+#endif
 }
 
 std::filesystem::path executable_dir(const std::filesystem::path &argv0) {
@@ -80,11 +91,7 @@ std::string join_languages(const std::vector<std::string> &languages) {
   return joined;
 }
 
-struct RunnerSelection {
-  std::filesystem::path runner_path;
-  std::optional<std::filesystem::path> model_path;
-  std::optional<std::filesystem::path> voice_path;
-};
+using tts_host::RunnerSelection;
 
 // Model-id resolution lives in model_session.cpp so the settings window's
 // Load/Unload controls and this CLI path agree on which runner and files a
@@ -94,7 +101,8 @@ RunnerSelection resolve_runner_selection_for_model(const std::string &model_id,
                                                    const std::filesystem::path &argv0) {
   const auto selection =
       tts_host::resolve_model_runner_selection(model_id, document, executable_dir(argv0));
-  return {selection.runner_path, selection.model_path, selection.voice_path};
+  return {selection.runner_path, selection.model_path, selection.voice_path,
+          selection.model_id, selection.display_name, selection.engine, {}};
 }
 
 // With no --model/--runner override, synthesis follows the same path a
@@ -113,7 +121,7 @@ RunnerSelection resolve_default_runner_selection(const tts_host::SelectedLanguag
     if (language.source == tts_host::LanguageSource::Explicit) {
       throw std::runtime_error("languageDefaults has no entry for language: " + language.tag);
     }
-    return {default_runner_path(argv0), std::nullopt, std::nullopt};
+    return {default_runner_path(argv0), std::nullopt, std::nullopt, {}, {}, {}, {}};
   }
   const auto profile_name = language_defaults.at(language.tag).get<std::string>();
   const auto &profiles = document.value.at("profiles");
@@ -127,7 +135,10 @@ RunnerSelection resolve_default_runner_selection(const tts_host::SelectedLanguag
             << tts_host::describe_language_source(language.source) << "), profile " << profile_name
             << ", model " << model_id << '\n';
   try {
-    return resolve_runner_selection_for_model(model_id, document, argv0);
+    auto selected = resolve_runner_selection_for_model(model_id, document, argv0);
+    if (profile.contains("idleUnloadSeconds"))
+      selected.idle_override = std::chrono::seconds(profile.at("idleUnloadSeconds").get<int>());
+    return selected;
   } catch (const std::exception &primary_error) {
     if (!profile.contains("fallbackProfile")) {
       throw;
@@ -149,7 +160,10 @@ RunnerSelection resolve_default_runner_selection(const tts_host::SelectedLanguag
               << "); using fallback profile " << fallback_profile_name << ", model "
               << fallback_model_id << '\n';
     try {
-      return resolve_runner_selection_for_model(fallback_model_id, document, argv0);
+      auto selected = resolve_runner_selection_for_model(fallback_model_id, document, argv0);
+      if (fallback_profile.contains("idleUnloadSeconds"))
+        selected.idle_override = std::chrono::seconds(fallback_profile.at("idleUnloadSeconds").get<int>());
+      return selected;
     } catch (const std::exception &fallback_error) {
       throw std::runtime_error("Profile " + profile_name + " is unavailable (" + primary_error.what() +
                                "); fallback profile " + fallback_profile_name + " is also unavailable (" +
@@ -165,7 +179,7 @@ RunnerSelection resolve_runner_selection(const tts_host::CliOptions &options,
                                          const tts_host::ConfigDocument &document,
                                          const std::filesystem::path &argv0) {
   if (options.runner_path_override.has_value()) {
-    return {*options.runner_path_override, std::nullopt, std::nullopt};
+    return {*options.runner_path_override, std::nullopt, std::nullopt, {}, {}, {}, {}};
   }
 
   if (options.model_id.has_value()) {
@@ -198,7 +212,8 @@ std::string resolve_input_text(const tts_host::CliOptions &options) {
 void run_synthesis(const tts_host::CliOptions &options, const tts_host::ConfigDocument &document,
                    const std::filesystem::path &argv0,
                    tts_host::PlaybackControl *control = nullptr,
-                   tts_host::PlaybackController *playback_controller = nullptr) {
+                   tts_host::PlaybackController *playback_controller = nullptr,
+                   tts_host::ModelSessionManager *sessions = nullptr) {
   // Normalization is the host's job, not each client's, so every surface gets
   // it (docs/design/architecture.md#speech-pipeline). Runners receive speakable
   // text and never see markup. It happens before runner selection because the
@@ -211,243 +226,17 @@ void run_synthesis(const tts_host::CliOptions &options, const tts_host::ConfigDo
 
   const auto selection = resolve_runner_selection(options, spoken_text, document, argv0);
 
-  tts_host::RunnerSession session(selection.runner_path);
-
-  const auto initialize_response =
-      session.send_request(tts_host::make_runner_initialize_request(1));
-  const auto initialize_result = tts_host::parse_runner_initialize_response(initialize_response);
-  if (initialize_result.protocol_version != tts_host::kRunnerProtocolVersion) {
-    throw std::runtime_error("runner reported an unsupported protocol version");
-  }
-
-  if (selection.model_path.has_value()) {
-    const auto load_response = session.send_request(tts_host::make_runner_load_request(
-        2, selection.model_path->string(),
-        selection.voice_path.has_value() ? std::optional<std::string>(selection.voice_path->string())
-                                         : std::nullopt));
-    tts_host::parse_runner_load_response(load_response);
-  }
-
-  // Splitting into sentence-scale chunks and synthesizing them as separate
-  // back-to-back requests is what lets a chunk start playing before the rest
-  // of a long text is synthesized, and makes future cancellation cheap --
-  // stop after the current chunk (docs/design/architecture.md#speech-pipeline).
-  const auto chunks = tts_host::split_into_sentences(spoken_text);
-
-  tts_host::SystemPlaybackSink playback_sink;
-  const std::string output_device = document.value.at("audio").at("outputDevice").get<std::string>();
-  const double default_speech_speed = configured_speech_speed(document);
-  std::unique_ptr<tts_host::AudioHistory> audio_history;
-  if (options.play_audio && control != nullptr && playback_controller != nullptr) {
-    audio_history = std::make_unique<tts_host::AudioHistory>();
-  }
-
-  struct RetainedChunk {
-    std::uint64_t byte_offset;
-    std::uint64_t byte_length;
-    std::uint32_t sample_rate_hz;
-    std::uint16_t channels;
-    std::uint64_t frames;
-    double start_seconds;
-    double duration_seconds;
-  };
-  std::vector<RetainedChunk> retained_chunks;
-  double generated_seconds = 0.0;
-
-  std::vector<std::uint8_t> pcm_payload;
-  std::uint32_t sample_rate_hz = 0;
-  std::uint32_t channels = 0;
-  std::uint64_t total_sample_frames = 0;
-
-  // Plays each chunk on a background thread so the next chunk's runner round
-  // trip (the send_request/read_audio_stream_until_end below) overlaps with
-  // playback instead of waiting for it -- the "small lookahead" in
-  // docs/design/architecture.md#speech-pipeline. Joining the previous
-  // playback thread before starting the next one keeps the "two utterances
-  // never play simultaneously" guarantee from the same doc.
-  std::thread playback_thread;
-  std::exception_ptr playback_error;
-  bool playback_interrupted_for_seek = false;
-  std::size_t playback_chunk_index = 0;
-  std::uint64_t handled_seek_generation = control == nullptr ? 0 : control->seek_generation();
-  std::size_t next_playback_chunk = 0;
-  std::uint64_t next_playback_frame = 0;
-  const auto join_playback = [&playback_thread, &playback_error]() {
-    if (playback_thread.joinable()) {
-      playback_thread.join();
-    }
-    if (playback_error) {
-      std::rethrow_exception(std::exchange(playback_error, nullptr));
-    }
-  };
-
-  const auto apply_pending_seek = [&]() {
-    if (control == nullptr || playback_controller == nullptr || retained_chunks.empty()) return;
-    const auto generation = control->seek_generation();
-    if (generation == handled_seek_generation) return;
-    const double target = std::clamp(control->requested_seek_seconds(), 0.0, generated_seconds);
-    std::size_t index = 0;
-    while (index + 1 < retained_chunks.size() &&
-           target >= retained_chunks[index].start_seconds + retained_chunks[index].duration_seconds) {
-      ++index;
-    }
-    const auto &segment = retained_chunks[index];
-    const double within = std::max(0.0, target - segment.start_seconds);
-    next_playback_chunk = index;
-    next_playback_frame = std::min<std::uint64_t>(
-        segment.frames, static_cast<std::uint64_t>(within * segment.sample_rate_hz));
-    control->update_position(target);
-    handled_seek_generation = generation;
-  };
-
-  const auto launch_retained_chunk = [&]() {
-    if (audio_history == nullptr || next_playback_chunk >= retained_chunks.size()) return false;
-    const auto index = next_playback_chunk;
-    const auto segment = retained_chunks[index];
-    const auto payload = audio_history->read(segment.byte_offset, segment.byte_length);
-    const auto start_frame = next_playback_frame;
-    next_playback_frame = 0;
-    playback_chunk_index = index;
-    playback_interrupted_for_seek = false;
-    const auto generation = handled_seek_generation;
-    playback_thread = std::thread(
-        [&playback_sink, segment, payload, start_frame, &output_device, &playback_error,
-         &playback_interrupted_for_seek, control, generation]() {
-          try {
-            playback_interrupted_for_seek = playback_sink.play_from(
-                segment.sample_rate_hz, segment.channels, payload, output_device, start_frame,
-                segment.start_seconds, control, generation);
-          } catch (...) {
-            playback_error = std::current_exception();
-          }
-        });
-    return true;
-  };
-
-  int next_request_id = 3;
-  for (const auto &chunk : chunks) {
-  retry_chunk:
-    // Runner control is synchronous today, so cancellation takes effect at a
-    // sentence boundary if synthesis is in flight; playback itself observes
-    // the same flag and stops promptly within its current audio buffer.
-    throw_if_cancelled(control);
-    // Keep at most one sentence of lookahead. If Now Playing changes speed
-    // while it is being prepared or waiting behind audible PCM, discard it and
-    // regenerate this exact sentence. This preserves text order without PCM
-    // resampling or an audio-to-word alignment guess.
-    tts_host::RunnerSynthesizeResponse synthesize_result;
-    std::vector<std::uint8_t> chunk_payload;
-    std::uint64_t speed_generation = 0;
-    while (true) {
-      const double speech_speed = playback_controller == nullptr
-                                      ? default_speech_speed
-                                      : playback_controller->speech_speed();
-      speed_generation = playback_controller == nullptr
-                             ? 0
-                             : playback_controller->speech_speed_generation();
-      const auto synthesize_response = session.send_request(
-          tts_host::make_runner_synthesize_request(next_request_id++, chunk, speech_speed));
-      synthesize_result = tts_host::parse_runner_synthesize_response(synthesize_response);
-      const auto frames = session.read_audio_stream_until_end();
-      chunk_payload.clear();
-      for (const auto &frame : frames) {
-        chunk_payload.insert(chunk_payload.end(), frame.payload.begin(), frame.payload.end());
-      }
-      // The lookahead remains unplayed until join_playback returns. A changed
-      // generation means it was synthesized at a stale requested speed.
-      if (playback_controller == nullptr ||
-          playback_controller->speech_speed_generation() == speed_generation) {
-        break;
-      }
-      throw_if_cancelled(control);
-    }
-    if (options.play_audio) {
-      const bool had_playback = playback_thread.joinable();
-      join_playback();
-      if (had_playback && !playback_interrupted_for_seek) {
-        next_playback_chunk = playback_chunk_index + 1;
-      }
-      apply_pending_seek();
-      throw_if_cancelled(control);
-      // A speed change may have arrived while this sentence waited as
-      // lookahead. Regenerate it before playback, leaving audible PCM alone.
-      if (playback_controller != nullptr &&
-          !playback_controller->prepare_sentence_for_playback(control, speed_generation)) {
-        goto retry_chunk;
-      }
-    }
-
-    sample_rate_hz = synthesize_result.sample_rate_hz;
-    channels = synthesize_result.channels;
-    total_sample_frames += synthesize_result.total_sample_frames;
-
-    if (audio_history != nullptr) {
-      const auto byte_offset = audio_history->append(chunk_payload);
-      const auto duration = synthesize_result.sample_rate_hz == 0
-                                ? 0.0
-                                : static_cast<double>(synthesize_result.total_sample_frames) /
-                                      synthesize_result.sample_rate_hz;
-      retained_chunks.push_back({byte_offset, chunk_payload.size(), synthesize_result.sample_rate_hz,
-                                 static_cast<std::uint16_t>(synthesize_result.channels),
-                                 synthesize_result.total_sample_frames, generated_seconds, duration});
-      generated_seconds += duration;
-      playback_controller->set_generated_seconds(control, generated_seconds);
-      launch_retained_chunk();
-    } else if (options.play_audio) {
-      const auto sample_rate = synthesize_result.sample_rate_hz;
-      const auto channel_count = static_cast<std::uint16_t>(synthesize_result.channels);
-      playback_thread = std::thread(
-          [&playback_sink, sample_rate, channel_count, chunk_payload, &output_device,
-           &playback_error, control]() {
-            try {
-              playback_sink.play(sample_rate, channel_count, chunk_payload, output_device, control);
-            } catch (...) {
-              playback_error = std::current_exception();
-            }
-          });
-    }
-
-    if (options.output_path.has_value()) {
-      pcm_payload.insert(pcm_payload.end(), chunk_payload.begin(), chunk_payload.end());
-    }
-  }
-  while (playback_thread.joinable()) {
-    join_playback();
-    const bool was_interrupted = playback_interrupted_for_seek;
-    if (!was_interrupted) next_playback_chunk = playback_chunk_index + 1;
-    apply_pending_seek();
-    throw_if_cancelled(control);
-    if (!launch_retained_chunk()) break;
-  }
-  throw_if_cancelled(control);
-
-  std::optional<tts_host::RunnerStatsResponse> stats;
-  if (options.report_stats) {
-    const auto stats_response = session.send_request(tts_host::make_runner_stats_request(next_request_id++));
-    stats = tts_host::parse_runner_stats_response(stats_response);
-  }
-
-  const auto exit_code = session.finish();
-  if (exit_code != 0) {
-    throw std::runtime_error("runner process exited with code " + std::to_string(exit_code));
-  }
-
-  if (options.output_path.has_value()) {
-    tts_host::write_wav_file(*options.output_path, sample_rate_hz,
-                             static_cast<std::uint16_t>(channels), 16, pcm_payload);
-    std::cout << "Synthesized " << total_sample_frames << " sample frames to "
-              << options.output_path->string() << '\n';
-  }
-
-  if (options.play_audio) {
-    std::cout << "Played " << total_sample_frames << " sample frames\n";
-  }
-
-  if (stats.has_value()) {
-    std::cout << "Stats: peak RSS " << stats->peak_rss_bytes << " bytes, peak VRAM "
-              << stats->peak_vram_bytes << " bytes, time to first chunk "
-              << stats->time_to_first_chunk_ms << " ms, sample count " << stats->sample_count
-              << '\n';
+  if (sessions) {
+    const tts_host::ModelRunnerSelection model{selection.model_id, selection.display_name,
+        selection.engine, selection.runner_path, selection.model_path.value_or(std::filesystem::path{}),
+        selection.voice_path};
+    auto lease = sessions->acquire(model,
+        [control] { return control && control->cancelled(); }, selection.idle_override);
+    tts_host::run_synthesis_pipeline(spoken_text, options, document, selection,
+                                     control, playback_controller, nullptr, {}, &lease.runner());
+  } else {
+    tts_host::run_synthesis_pipeline(spoken_text, options, document, selection,
+                                     control, playback_controller);
   }
 }
 
@@ -456,11 +245,15 @@ void run_synthesis(const tts_host::CliOptions &options, const tts_host::ConfigDo
 // clipboard command is the explicit opt-in path that preserves it.
 class TraySpeechScheduler {
  public:
-  TraySpeechScheduler(const tts_host::ConfigDocument &document, std::filesystem::path argv0)
-      : document_(document), argv0_(std::move(argv0)), worker_(&TraySpeechScheduler::run, this) {
-    playback_controller_.set_default_speech_speed(configured_speech_speed(document_));
-    playback_controller_.set_seek_interval_seconds(
-        document_.value.at("audio").value("playbackSkipSeconds", 5));
+  TraySpeechScheduler(tts_host::ConfigDocument document, std::filesystem::path argv0)
+      : config_(std::move(document)), argv0_(std::move(argv0)),
+        sessions_(executable_dir(argv0_)) {
+    tts_host::apply_playback_settings(*config_.current(), playback_controller_);
+    try { sessions_.load_eager(*config_.current()); }
+    catch (const std::exception &error) {
+      std::cerr << "Eager model load failed: " << error.what() << '\n';
+    }
+    worker_ = std::thread(&TraySpeechScheduler::run, this);
   }
 
   ~TraySpeechScheduler() {
@@ -486,7 +279,23 @@ class TraySpeechScheduler {
     condition_.notify_one();
   }
 
+  tts_host::ModelSessionManager &sessions() { return sessions_; }
+
   tts_host::PlaybackController &playback_controller() { return playback_controller_; }
+
+  // Called on the tray thread after Settings edits its own document. The next
+  // request sees the copy; an in-flight request keeps the snapshot it took.
+  void publish_config(const tts_host::ConfigDocument &document) {
+    tts_host::apply_playback_settings(document, playback_controller_);
+    const auto previous = config_.current();
+    const bool profiles_changed = previous->value.at("profiles") != document.value.at("profiles") ||
+        previous->value.at("languageDefaults") != document.value.at("languageDefaults");
+    config_.publish(document);
+    if (profiles_changed) {
+      { std::lock_guard lock(mutex_); eager_pending_ = true; }
+      condition_.notify_one();
+    }
+  }
 
   std::string playback_command(const std::string &command) {
     if (command == "pause") playback_controller_.pause();
@@ -516,24 +325,47 @@ class TraySpeechScheduler {
     while (true) {
       std::string text;
       std::shared_ptr<tts_host::PlaybackControl> control;
+      std::shared_ptr<const tts_host::ConfigDocument> config;
       {
         std::unique_lock lock(mutex_);
-        condition_.wait(lock, [this] { return stopping_ || !pending_.empty(); });
+        condition_.wait_for(lock, std::chrono::seconds(5),
+                            [this] { return stopping_ || !pending_.empty() || eager_pending_; });
         if (stopping_) {
           return;
+        }
+        if (pending_.empty()) {
+          config = config_.current();
+          const bool eager = std::exchange(eager_pending_, false);
+          lock.unlock();
+          if (eager) {
+            try {
+              sessions_.load_eager(*config, [this] {
+                std::lock_guard lock(mutex_);
+                return stopping_ || !pending_.empty();
+              });
+            } catch (const tts_host::RunnerCancelled &) {
+              // A new read or Quit cancels background warming immediately.
+            } catch (const std::exception &error) {
+              std::cerr << "Eager model load failed: " << error.what() << '\n';
+            }
+          }
+          sessions_.unload_if_idle(std::chrono::seconds(
+              config->value.at("modelRegistry").at("idleUnloadSeconds").get<int>()));
+          continue;
         }
         text = std::move(pending_.front());
         pending_.pop_front();
         control = playback_controller_.begin();
+        config = config_.current();
       }
 
       try {
         tts_host::CliOptions options;
         options.synthesize_text = std::move(text);
         options.play_audio = true;
-        run_synthesis(options, document_, argv0_, control.get(), &playback_controller_);
-      } catch (const SynthesisInterrupted &) {
-        // A newer interrupting request is already pending.
+        run_synthesis(options, *config, argv0_, control.get(), &playback_controller_, &sessions_);
+      } catch (const tts_host::RunnerCancelled &) {
+        // Stop/replacement terminates runner I/O without retry or an error state.
       } catch (const std::exception &error) {
         playback_controller_.fail(control, error.what());
         std::cerr << "Tray speech request failed: " << error.what() << '\n';
@@ -543,26 +375,33 @@ class TraySpeechScheduler {
     }
   }
 
-  const tts_host::ConfigDocument &document_;
+  tts_host::ConfigSnapshot config_;
   std::filesystem::path argv0_;
+  tts_host::ModelSessionManager sessions_;
   std::mutex mutex_;
   std::condition_variable condition_;
   std::deque<std::string> pending_;
   tts_host::PlaybackController playback_controller_;
   bool stopping_ = false;
+  bool eager_pending_ = false;
   std::thread worker_;
 };
 
 }  // namespace
 
-int main(int argc, char **argv) {
+int run_main(int argc, char **argv) {
   std::string cli_message;
   const auto options = tts_host::parse_cli(argc, argv, cli_message);
   if (!options.has_value()) {
     if (!cli_message.empty()) {
       const bool is_help = cli_message.rfind("Usage:", 0) == 0;
       std::ostream &stream = is_help ? std::cout : std::cerr;
-      stream << cli_message << '\n';
+      if (is_help) stream << cli_message << '\n';
+      else {
+        const bool headless = std::any_of(argv + 1, argv + argc,
+            [](const char *argument) { return std::string(argument) == "--headless"; });
+        report_fatal_error(cli_message, !headless);
+      }
       return is_help ? EXIT_SUCCESS : EXIT_FAILURE;
     }
     return EXIT_FAILURE;
@@ -570,7 +409,7 @@ int main(int argc, char **argv) {
 
   try {
     tts_host::AudioHistory::clean_abandoned_spools();
-    auto document = tts_host::load_config(*options, std::filesystem::path(argv[0]));
+    auto document = tts_host::load_config(*options, tts_host::path_from_utf8(argv[0]));
 
 #ifdef _WIN32
     if (!options->headless) {
@@ -589,14 +428,14 @@ int main(int argc, char **argv) {
         // Settings window (docs/design/architecture.md#desktop-integration):
         // opens independently of the tray, blocks until closed. Windows only
         // in this slice -- see docs/adr/0007-native-ui-per-platform.md.
-        tts_host::run_settings_window(document, executable_dir(argv[0]));
+        tts_host::run_settings_window(document, executable_dir(tts_host::path_from_utf8(argv[0])));
         return EXIT_SUCCESS;
       }
 
       // Tray mode (docs/design/architecture.md#desktop-integration): blocks
       // until the user chooses Quit. Windows only in this slice -- see
       // docs/adr/0007-native-ui-per-platform.md.
-      TraySpeechScheduler tray_speech_scheduler(document, std::filesystem::path(argv[0]));
+      TraySpeechScheduler tray_speech_scheduler(document, tts_host::path_from_utf8(argv[0]));
       const auto &server = document.value.at("server");
       if (server.value("authentication", "none") != "none") {
         throw std::runtime_error(
@@ -618,23 +457,26 @@ int main(int argc, char **argv) {
       std::cout << "Local API listening on " << server.at("host") << ':' << server.at("port")
                 << '\n';
       tts_host::run_tray_icon(
-          document, executable_dir(argv[0]),
+          document, executable_dir(tts_host::path_from_utf8(argv[0])),
           [&tray_speech_scheduler](const std::string &text, tts_host::SpeechQueueMode queue_mode) {
             tray_speech_scheduler.submit(text, queue_mode);
-          }, tray_speech_scheduler.playback_controller());
+          }, tray_speech_scheduler.playback_controller(),
+          [&tray_speech_scheduler](const tts_host::ConfigDocument &edited) {
+            tray_speech_scheduler.publish_config(edited);
+          }, &tray_speech_scheduler.sessions());
       return EXIT_SUCCESS;
     }
 
     std::cout << "Headless host bootstrap complete\n";
-    std::cout << "Config: " << document.paths.config_path.string() << '\n';
-    std::cout << "Schema: " << document.paths.schema_path.string() << '\n';
+    std::cout << "Config: " << tts_host::path_to_utf8(document.paths.config_path) << '\n';
+    std::cout << "Schema: " << tts_host::path_to_utf8(document.paths.schema_path) << '\n';
 
     // Imports before listing, so --import-model with --list-models shows the
     // package that was just installed.
     if (options->import_model_path.has_value()) {
       const auto imported = tts_host::import_model_package(*options->import_model_path, document);
       std::cout << "Imported " << imported.display_name << " (" << imported.id << ") into "
-                << imported.package_path.string() << '\n';
+                << tts_host::path_to_utf8(imported.package_path) << '\n';
     }
 
     if (options->list_models) {
@@ -642,13 +484,13 @@ int main(int argc, char **argv) {
       std::cout << "Discovered model packages: " << scan.discovered_packages.size() << '\n';
       for (const auto &package : scan.discovered_packages) {
         std::cout << "  OK  " << package.id << " (" << package.engine << ", "
-                  << join_languages(package.languages) << ") -> " << package.manifest_path.string()
+                  << join_languages(package.languages) << ") -> " << tts_host::path_to_utf8(package.manifest_path)
                   << '\n';
       }
 
       std::cout << "Unsupported registry entries: " << scan.unsupported_entries.size() << '\n';
       for (const auto &entry : scan.unsupported_entries) {
-        std::cout << "  BAD " << entry.path.string() << " :: " << entry.reason << '\n';
+        std::cout << "  BAD " << tts_host::path_to_utf8(entry.path) << " :: " << entry.reason << '\n';
       }
     }
 
@@ -725,16 +567,70 @@ int main(int argc, char **argv) {
                       << " bytes\n";
           });
       std::cout << "Installed " << installed.display_name << " (" << installed.id << ") into "
-                << installed.package_path.string() << '\n';
+                << tts_host::path_to_utf8(installed.package_path) << '\n';
     }
 
     if (options->synthesize_text.has_value() || options->use_stdin_text || options->use_clipboard_text) {
-      run_synthesis(*options, document, std::filesystem::path(argv[0]));
+      run_synthesis(*options, document, tts_host::path_from_utf8(argv[0]));
     }
 
     return EXIT_SUCCESS;
   } catch (const std::exception &error) {
-    std::cerr << error.what() << '\n';
+    report_fatal_error(error.what(), !options->headless);
     return EXIT_FAILURE;
   }
 }
+
+#ifdef _WIN32
+// A GUI subsystem prevents Explorer/login launches from creating a console.
+// CLI invocations attach to the caller's console while preserving inherited
+// pipe/file handles used by CTest and command-line redirection.
+int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
+  int argc = 0;
+  auto wide_argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+  if (!wide_argv) return EXIT_FAILURE;
+  std::vector<std::string> arguments;
+  arguments.reserve(argc);
+  bool cli = false;
+  for (int index = 0; index < argc; ++index) {
+    arguments.push_back(tts_host::path_to_utf8(std::filesystem::path(wide_argv[index])));
+    if (arguments.back() == "--headless" || arguments.back() == "--help" ||
+        arguments.back() == "-h") cli = true;
+  }
+  LocalFree(wide_argv);
+  if (cli) AttachConsole(ATTACH_PARENT_PROCESS);
+  const struct { DWORD id; int fd; FILE *stream; } streams[] = {
+      {STD_INPUT_HANDLE, 0, stdin}, {STD_OUTPUT_HANDLE, 1, stdout},
+      {STD_ERROR_HANDLE, 2, stderr}};
+  for (const auto &stream : streams) {
+    const auto existing = _get_osfhandle(stream.fd);
+    if (existing != -1 && existing != -2) {
+      SetStdHandle(stream.id, reinterpret_cast<HANDLE>(existing));
+      clearerr(stream.stream);
+      continue;
+    }
+    const auto handle = GetStdHandle(stream.id);
+    if (!handle || handle == INVALID_HANDLE_VALUE) continue;
+    HANDLE copy = nullptr;
+    if (!DuplicateHandle(GetCurrentProcess(), handle, GetCurrentProcess(), &copy,
+                         0, FALSE, DUPLICATE_SAME_ACCESS)) continue;
+    const auto fd = _open_osfhandle(reinterpret_cast<intptr_t>(copy),
+                                  stream.fd == 0 ? _O_RDONLY : _O_WRONLY);
+    if (fd < 0) { CloseHandle(copy); continue; }
+    if (fd != stream.fd) {
+      _dup2(fd, stream.fd);
+      _close(fd);
+    }
+    // Runner launch uses Win32 standard handles, so keep them in sync with
+    // the CRT after replacing descriptors. _dup2 may close the old handle.
+    SetStdHandle(stream.id, reinterpret_cast<HANDLE>(_get_osfhandle(stream.fd)));
+    clearerr(stream.stream);
+  }
+  std::vector<char *> argv;
+  argv.reserve(argc);
+  for (auto &argument : arguments) argv.push_back(argument.data());
+  return run_main(argc, argv.data());
+}
+#else
+int main(int argc, char **argv) { return run_main(argc, argv); }
+#endif

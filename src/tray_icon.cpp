@@ -33,8 +33,11 @@ struct TrayContext {
   const std::filesystem::path *runner_directory;
   const SpeakTextFunction *speak_text;
   PlaybackController *playback_controller;
+  const PublishConfigFunction *publish_config;
+  ModelSessionManager *sessions;
   std::uint64_t capture_generation = 0;
   bool capture_timed_out = false;
+  bool settings_open = false;
   SelectionHotkeyState selection_hotkey;
 };
 
@@ -191,7 +194,7 @@ void show_context_menu(HWND window) {
   }
   AppendMenuW(menu, hotkey_menu_flags, kSelectionHotkeyToggleMenuItemId,
               L"Global selection shortcut");
-  AppendMenuW(menu, MF_STRING, kSettingsMenuItemId, L"Settings…");
+  AppendMenuW(menu, MF_STRING | (context->settings_open ? MF_GRAYED : 0), kSettingsMenuItemId, L"Settings…");
   AppendMenuW(menu, MF_STRING, kReadClipboardMenuItemId, L"Read clipboard");
   AppendMenuW(menu, MF_STRING, kQueueClipboardMenuItemId, L"Queue clipboard");
   AppendMenuW(menu, MF_STRING, kNowPlayingMenuItemId, L"Now Playing…");
@@ -245,24 +248,32 @@ LRESULT CALLBACK tray_window_proc(HWND window, UINT message, WPARAM wparam, LPAR
       if (LOWORD(wparam) == kQuitMenuItemId) {
         DestroyWindow(window);
       } else if (LOWORD(wparam) == kSettingsMenuItemId) {
-        // Blocks the tray's own message loop until the settings window
-        // closes -- both windows are modal-by-blocking in this slice, so
-        // the tray icon simply stops responding to clicks while settings is
-        // open rather than needing a second thread.
         auto *context = tray_context(window);
+        if (context->settings_open) return 0;
+        context->settings_open = true;
         // Release our own hotkey while Settings probes candidates. Otherwise
         // testing the active value would always report a conflict with TTS Host.
         context->selection_hotkey.release([&] { UnregisterHotKey(window, kReadSelectionHotkeyId); });
-        run_settings_window(*context->document, *context->runner_directory);
-        // Settings edits the shared document. Apply its persisted default to
-        // the next utterance without changing the active utterance's requested
-        // speed; the latter belongs to the Now Playing control.
-        context->playback_controller->set_default_speech_speed(
-            context->document->value.at("audio").value("speechSpeed", 1.0));
+        try {
+          run_settings_window(*context->document, *context->runner_directory, context->sessions);
+        } catch (const std::exception &error) {
+          if (IsWindow(window)) show_error(window, error.what());
+        }
+        context->settings_open = false;
+        // Quit may have destroyed the tray HWND in Settings' nested loop.
+        if (!IsWindow(window)) return 0;
+        // Settings edited the tray-owned document; publish a copy so the next
+        // utterance and the next seek press use it.
+        try {
+          (*context->publish_config)(*context->document);
+        } catch (const std::exception &error) {
+          show_error(window, error.what());
+        }
         context->selection_hotkey.restore(
             [&] { return register_read_selection_hotkey(window, *context->document); });
       } else if (LOWORD(wparam) == kSelectionHotkeyToggleMenuItemId) {
         auto *context = tray_context(window);
+        if (context->settings_open) return 0;
         context->selection_hotkey.toggle(
             [&] { return register_read_selection_hotkey(window, *context->document); },
             [&] { UnregisterHotKey(window, kReadSelectionHotkeyId); });
@@ -306,7 +317,8 @@ LRESULT CALLBACK tray_window_proc(HWND window, UINT message, WPARAM wparam, LPAR
 
 void run_tray_icon(ConfigDocument &document,
                    const std::filesystem::path &runner_directory,
-                   const SpeakTextFunction &speak_text, PlaybackController &playback_controller) {
+                   const SpeakTextFunction &speak_text, PlaybackController &playback_controller,
+                   const PublishConfigFunction &publish_config, ModelSessionManager *sessions) {
   const wchar_t *kClassName = L"TtsHostTrayWindow";
   const HINSTANCE instance = GetModuleHandleW(nullptr);
 
@@ -325,7 +337,8 @@ void run_tray_icon(ConfigDocument &document,
   if (!window) {
     throw std::runtime_error("failed to create the tray message window");
   }
-  const TrayContext context{&document, &runner_directory, &speak_text, &playback_controller};
+  const TrayContext context{&document, &runner_directory, &speak_text, &playback_controller,
+                            &publish_config, sessions};
   auto mutable_context = context;
   SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(&mutable_context));
 
@@ -368,7 +381,8 @@ namespace tts_host {
 
 void run_tray_icon(ConfigDocument & /*document*/,
                    const std::filesystem::path & /*runner_directory*/,
-                   const SpeakTextFunction & /*speak_text*/, PlaybackController & /*playback_controller*/) {
+                   const SpeakTextFunction & /*speak_text*/, PlaybackController & /*playback_controller*/,
+                   const PublishConfigFunction & /*publish_config*/, ModelSessionManager *) {
   throw std::runtime_error(
       "the tray icon is not implemented on this platform yet (Windows only, see "
       "docs/adr/0007-native-ui-per-platform.md)");

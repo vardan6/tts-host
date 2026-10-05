@@ -1,4 +1,5 @@
 #include "tts_host/audio_history.hpp"
+#include "tts_host/path_encoding.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -99,7 +100,7 @@ void AudioHistory::clean_abandoned_spools() {
   const auto cutoff = std::filesystem::file_time_type::clock::now() - kAbandonedAge;
   for (std::filesystem::directory_iterator it(directory, error), end; !error && it != end;
        it.increment(error)) {
-    const auto name = it->path().filename().string();
+    const auto name = path_to_utf8(it->path().filename());
     if (!name.starts_with(kPrefix) || it->path().extension() != ".pcm") continue;
     const auto modified = it->last_write_time(error);
     if (error) {

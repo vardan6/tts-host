@@ -1,4 +1,5 @@
 #include "tts_host/model_session.hpp"
+#include "tts_host/path_encoding.hpp"
 
 #include <algorithm>
 #include <stdexcept>
@@ -32,7 +33,7 @@ ModelRunnerSelection resolve_model_runner_selection(
   auto runner_path = runner_path_for_engine(package->engine, runner_directory);
   if (!std::filesystem::exists(runner_path)) {
     throw std::runtime_error("No runner installed for engine '" + package->engine + "': expected " +
-                             runner_path.string());
+                             path_to_utf8(runner_path));
   }
 
   const auto &files = package->manifest.at("files");
@@ -41,9 +42,9 @@ ModelRunnerSelection resolve_model_runner_selection(
   selection.display_name = package->display_name;
   selection.engine = package->engine;
   selection.runner_path = std::move(runner_path);
-  selection.model_path = package->package_path / files.at("model").get<std::string>();
+  selection.model_path = package->package_path / path_from_utf8(files.at("model").get<std::string>());
   if (files.contains("voice")) {
-    selection.voice_path = package->package_path / files.at("voice").get<std::string>();
+    selection.voice_path = package->package_path / path_from_utf8(files.at("voice").get<std::string>());
   }
   return selection;
 }
@@ -52,69 +53,128 @@ ModelSessionManager::ModelSessionManager(std::filesystem::path runner_directory)
     : runner_directory_(std::move(runner_directory)) {}
 
 ModelSessionManager::~ModelSessionManager() {
-  try {
-    unload();
-  } catch (const std::exception &) {
-    // A runner that misbehaves on shutdown must not propagate out of a
-    // destructor; the process is going away with us either way.
-  }
+  // The owner must stop/join speech before destroying its manager.
+  std::lock_guard lock(operation_mutex_);
+  try { unload_locked(); } catch (const std::exception &) {}
 }
 
-void ModelSessionManager::load(const std::string &model_id, const ConfigDocument &config) {
-  const auto selection = resolve_model_runner_selection(model_id, config, runner_directory_);
+void ModelSessionManager::publish_status(ModelSessionStatus status) {
+  std::lock_guard lock(status_mutex_);
+  status_ = std::move(status);
+}
+ModelSessionStatus ModelSessionManager::status() const {
+  std::lock_guard lock(status_mutex_);
+  return status_;
+}
 
-  // Resolve before unloading, so a bad model id or a missing runner leaves the
-  // currently resident model untouched.
-  unload();
+void ModelSessionManager::unload_locked() {
+  publish_status({});
+  if (session_) session_->unload();
+  session_.reset();
+  selection_.reset();
+  idle_override_.reset();
+}
 
-  auto session = std::make_unique<RunnerSession>(selection.runner_path);
-
-  const auto initialize_response = session->send_request(make_runner_initialize_request(1));
-  const auto initialize_result = parse_runner_initialize_response(initialize_response);
-  if (initialize_result.protocol_version != kRunnerProtocolVersion) {
-    throw std::runtime_error("runner reported an unsupported protocol version");
+void ModelSessionManager::select_locked(const ModelRunnerSelection &selection, bool force) {
+  if (!force && session_ && selection_ &&
+      selection_->runner_path == selection.runner_path &&
+      selection_->model_path == selection.model_path &&
+      selection_->voice_path == selection.voice_path) {
+    selection_ = selection;
+    return;
   }
+  unload_locked();
+  session_ = std::make_unique<RecoveringRunner>(selection.runner_path,
+      selection.model_path.empty() ? std::nullopt : std::optional(selection.model_path),
+      selection.voice_path);
+  selection_ = selection;
+  session_->set_state_callback([this](bool loaded) {
+    const auto &selected = *selection_;
+    publish_status(loaded
+        ? ModelSessionStatus{true, selected.model_id, selected.display_name, selected.engine}
+        : ModelSessionStatus{});
+  });
+}
 
-  const auto load_response = session->send_request(make_runner_load_request(
-      2, selection.model_path.string(),
-      selection.voice_path.has_value() ? std::optional<std::string>(selection.voice_path->string())
-                                       : std::nullopt));
-  parse_runner_load_response(load_response);
+void ModelSessionManager::load(const std::string &model_id, const ConfigDocument &config,
+    std::optional<std::chrono::seconds> idle_override) {
+  const auto selection = resolve_model_runner_selection(model_id, config, runner_directory_);
+  std::unique_lock lock(operation_mutex_, std::try_to_lock);
+  if (!lock) throw std::runtime_error("Model is in use; stop speech before loading another model");
+  select_locked(selection, true);
+  try {
+    session_->prepare();
+    publish_status({true, selection.model_id, selection.display_name, selection.engine});
+    last_used_ = std::chrono::steady_clock::now();
+    idle_override_ = idle_override;
+  } catch (...) { unload_locked(); throw; }
+}
 
-  session_ = std::move(session);
-  status_ = ModelSessionStatus{true, selection.model_id, selection.display_name, selection.engine};
-  loaded_at_ = std::chrono::steady_clock::now();
+void ModelSessionManager::load_eager(const ConfigDocument &config,
+    std::function<bool()> cancelled) {
+  // This manager has one resident slot. Prefer an eager language default,
+  // then the first eager profile in deterministic configuration-key order.
+  const auto &profiles = config.value.at("profiles");
+  std::string chosen;
+  for (const auto &entry : config.value.at("languageDefaults").items()) {
+    const auto name = entry.value().get<std::string>();
+    if (profiles.contains(name) && profiles.at(name).value("loadPolicy", "onDemand") == "eager") {
+      chosen = name;
+      break;
+    }
+  }
+  if (chosen.empty()) {
+    for (const auto &entry : profiles.items()) {
+      if (entry.value().value("loadPolicy", "onDemand") == "eager") { chosen = entry.key(); break; }
+    }
+  }
+  if (!chosen.empty()) {
+    const auto idle_override = profiles.at(chosen).contains("idleUnloadSeconds")
+        ? std::optional(std::chrono::seconds(profiles.at(chosen).at("idleUnloadSeconds").get<int>()))
+        : std::nullopt;
+    const auto selected = resolve_model_runner_selection(
+        profiles.at(chosen).at("model").get<std::string>(), config, runner_directory_);
+    auto lease = acquire(selected, std::move(cancelled), idle_override);
+    lease.runner().prepare();
+  }
 }
 
 void ModelSessionManager::unload() {
-  if (!session_) {
-    return;
-  }
-  // Clear the state first: whatever the runner does on the way out, this
-  // manager no longer holds a loaded model.
-  auto session = std::move(session_);
-  status_ = ModelSessionStatus{};
-  try {
-    parse_runner_unload_response(session->send_request(make_runner_unload_request(3)));
-  } catch (const std::exception &) {
-    // Releasing the weights before exit is the polite path, not the load
-    // bearing one: a runner that is already dead, wedged, or too old to know
-    // the request still gets terminated below, which frees them anyway.
-  }
-  // The runner's exit code is not actionable here: the model is unloaded
-  // either way, and the caller asked for exactly that.
-  session->finish();
+  std::unique_lock lock(operation_mutex_, std::try_to_lock);
+  if (!lock) throw std::runtime_error("Model is in use; stop speech before unloading it");
+  unload_locked();
+}
+
+ModelSessionManager::Lease::Lease(ModelSessionManager &owner, std::unique_lock<std::mutex> lock)
+    : owner_(&owner), lock_(std::move(lock)) {}
+ModelSessionManager::Lease::Lease(Lease &&other) noexcept
+    : owner_(std::exchange(other.owner_, nullptr)), lock_(std::move(other.lock_)) {}
+ModelSessionManager::Lease::~Lease() {
+  if (!owner_) return;
+  owner_->session_->set_cancelled({});
+  owner_->last_used_ = std::chrono::steady_clock::now();
+  const auto &selected = *owner_->selection_;
+  owner_->publish_status(owner_->session_->loaded()
+      ? ModelSessionStatus{true, selected.model_id, selected.display_name, selected.engine}
+      : ModelSessionStatus{});
+}
+
+ModelSessionManager::Lease ModelSessionManager::acquire(const ModelRunnerSelection &selection,
+    std::function<bool()> cancelled, std::optional<std::chrono::seconds> idle_override) {
+  std::unique_lock lock(operation_mutex_);
+  select_locked(selection, false);
+  session_->set_cancelled(std::move(cancelled));
+  idle_override_ = idle_override;
+  return Lease(*this, std::move(lock));
 }
 
 bool ModelSessionManager::unload_if_idle(std::chrono::seconds idle_unload_seconds,
                                          std::chrono::steady_clock::time_point now) {
-  if (!session_ || idle_unload_seconds.count() <= 0) {
-    return false;
-  }
-  if (now - loaded_at_ < idle_unload_seconds) {
-    return false;
-  }
-  unload();
+  std::unique_lock lock(operation_mutex_, std::try_to_lock);
+  if (!lock || !session_) return false;
+  const auto timeout = idle_override_.value_or(idle_unload_seconds);
+  if (timeout.count() <= 0 || now - last_used_ < timeout) return false;
+  unload_locked();
   return true;
 }
 

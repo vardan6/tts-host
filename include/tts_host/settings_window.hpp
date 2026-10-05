@@ -5,6 +5,7 @@
 #include "tts_host/config_loader.hpp"
 
 namespace tts_host {
+class ModelSessionManager;
 
 // Shows the settings window and blocks until the user closes it
 // (docs/design/architecture.md#desktop-integration). Opens independently of
@@ -19,12 +20,11 @@ namespace tts_host {
 // (docs/design/architecture.md#live-reload), which the window says but does
 // not enforce.
 //
-// It also loads and unloads a model through a ModelSessionManager
-// (tts_host/model_session.hpp), which keeps the runner process resident for as
-// long as the window is open; runner_directory is where that manager looks for
-// the model's engine runner. A timer polls modelRegistry.idleUnloadSeconds
-// against it (ModelSessionManager::unload_if_idle) so a forgotten load does not
-// keep weights resident indefinitely. A package can also be installed through
+// Tray Settings uses the Host's resident ModelSessionManager; independent
+// --settings owns a temporary manager for that window. Load/Unload reports
+// busy during an active utterance rather than blocking the window. A timer
+// polls modelRegistry.idleUnloadSeconds against actual speech activity so a
+// forgotten load does not keep weights resident indefinitely. A package can also be installed through
 // the Import… button (tts_host/model_import.hpp), and, when
 // modelRegistry.watchForChanges is true, a second timer polls
 // modelRegistry.directories and refreshes the model combo/licence display when
@@ -37,6 +37,7 @@ namespace tts_host {
 // first configured modelRegistry.directories entry, then refreshes the model
 // views.
 void run_settings_window(ConfigDocument &document,
-                         const std::filesystem::path &runner_directory);
+                         const std::filesystem::path &runner_directory,
+                         ModelSessionManager *sessions = nullptr);
 
 }  // namespace tts_host

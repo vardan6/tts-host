@@ -88,3 +88,11 @@ test that needs no GPU and no model weights in CI.
 If a runner dies mid-synthesis, the host restarts it and retries the failed
 chunk exactly once, then fails the request with an actionable error. Every
 restart is logged; a model that dies repeatedly must be visible.
+
+A runner that exceeds its operation deadline is treated like a dead runner:
+terminate it, restart and reload its model, and retry the failed chunk once.
+This recovery choice was approved on 2026-10-03. The host buffers a complete
+chunk before publishing or playing it; discard incomplete PCM on failure so
+retry cannot repeat already audible output. Previously completed chunks stay
+intact. Explicit Stop/replacement cancels pending runner I/O and terminates the
+session without retry. Graceful exit and forced termination waits are bounded.

@@ -44,6 +44,30 @@ http::response<http::string_body> request(unsigned short port,
   return response;
 }
 
+void conflicting_listener_fails_clearly() {
+  tts_host::LocalApiServer first("127.0.0.1", 0, {}, [](std::string) {});
+  bool rejected = false;
+  try {
+    tts_host::LocalApiServer second("127.0.0.1", first.port(), {}, [](std::string) {});
+  } catch (const std::runtime_error &error) {
+    const std::string message = error.what();
+    rejected = message.find("could not bind local API to 127.0.0.1:" +
+                             std::to_string(first.port())) != std::string::npos;
+  }
+  require(rejected, "second listener did not fail with the conflicting endpoint");
+  require(request(first.port(), http::verb::post, "", R"({"text":"still owned"})").result()
+              == http::status::accepted, "collision disturbed the first listener");
+#ifdef _WIN32
+  asio::io_context context;
+  tcp::acceptor competing(context);
+  competing.open(tcp::v4());
+  competing.set_option(tcp::acceptor::reuse_address(true));
+  boost::system::error_code error;
+  competing.bind({asio::ip::address_v4::loopback(), first.port()}, error);
+  require(static_cast<bool>(error), "SO_REUSEADDR bypassed exclusive ownership");
+#endif
+}
+
 void only_allowlisted_extension_can_submit_selection() {
   std::promise<std::string> captured;
   auto captured_text = captured.get_future();
@@ -154,6 +178,7 @@ void playback_controls_and_connection_isolation() {
 
 int main() {
   try {
+    conflicting_listener_fails_clearly();
     only_allowlisted_extension_can_submit_selection();
     playback_controls_and_connection_isolation();
   } catch (const std::exception &error) {
