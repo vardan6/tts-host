@@ -48,6 +48,8 @@ constexpr int kSpeechSpeedComboId = 114;
 constexpr int kPlaybackSkipComboId = 115;
 constexpr int kStartAtLoginCheckboxId = 116;
 constexpr int kSettingsTabsId = 117;
+constexpr int kStartAtLoginStatusId = 118;
+constexpr int kOpenStartupSettingsButtonId = 119;
 constexpr int kSettingsHotkeyProbeId = 2;
 
 // Tab order of the Settings pages; docs/design/architecture.md#desktop-integration.
@@ -479,29 +481,59 @@ void on_server_port_changed(SettingsState &state, HWND edit) {
   save_config(state);
 }
 
-void on_start_at_login_clicked(SettingsState &state, HWND checkbox) {
+// The switch mirrors the operating system's registration, read afresh rather
+// than from config (docs/design/architecture.md#login-startup). A system-page
+// disable is shown, never overridden.
+void refresh_start_at_login(SettingsState &state, HWND window) {
+  const HWND checkbox = GetDlgItem(window, kStartAtLoginCheckboxId);
+  const HWND status = GetDlgItem(window, kStartAtLoginStatusId);
+  if (checkbox == nullptr || status == nullptr) {
+    return;
+  }
+  bool checked = false;
+  bool enabled = true;
+  std::wstring text;
+  try {
+    switch (read_start_at_login_state(state.document.paths.config_path)) {
+      case StartAtLoginState::on:
+        checked = true;
+        break;
+      case StartAtLoginState::off:
+        break;
+      case StartAtLoginState::disabledBySystem:
+        enabled = false;
+        text = L"Turned off in Windows startup settings. Turn it back on there.";
+        break;
+      case StartAtLoginState::otherCopy:
+        text = L"The startup entry starts another copy of TTS Host. Turn this on to use this copy.";
+        break;
+    }
+  } catch (const std::exception &error) {
+    text = L"Could not read the startup entry: " + utf8_to_wide(error.what());
+  }
+  SendMessageW(checkbox, BM_SETCHECK, checked ? BST_CHECKED : BST_UNCHECKED, 0);
+  EnableWindow(checkbox, enabled ? TRUE : FALSE);
+  SetWindowTextW(status, text.c_str());
+}
+
+void on_start_at_login_clicked(SettingsState &state, HWND window, HWND checkbox) {
   const bool enabled = SendMessageW(checkbox, BM_GETCHECK, 0, 0) == BST_CHECKED;
-  const auto previous_document = state.document.value;
-  const bool previous = state.document.value
-                            .value("startup", nlohmann::json::object())
-                            .value("launchOnLogin", true);
   try {
     set_start_at_login(enabled, state.document.paths.config_path);
-    state.document.value["startup"]["launchOnLogin"] = enabled;
-    save_config(state);
     append_activity_log(state, enabled ? L"Start at login enabled."
                                        : L"Start at login disabled.");
   } catch (const std::exception &error) {
-    state.document.value = previous_document;
-    SendMessageW(checkbox, BM_SETCHECK, previous ? BST_CHECKED : BST_UNCHECKED, 0);
-    try {
-      set_start_at_login(previous, state.document.paths.config_path);
-    } catch (const std::exception &rollback_error) {
-      append_activity_log(state, L"Could not restore the previous startup registration: " +
-                                     utf8_to_wide(rollback_error.what()));
-    }
     append_activity_log(state, L"Could not update start at login: " +
                                    utf8_to_wide(error.what()));
+  }
+  refresh_start_at_login(state, window);
+}
+
+void on_open_startup_settings_clicked(SettingsState &state) {
+  try {
+    open_system_startup_settings();
+  } catch (const std::exception &error) {
+    append_activity_log(state, utf8_to_wide(error.what()));
   }
 }
 
@@ -785,6 +817,14 @@ LRESULT CALLBACK settings_window_proc(HWND window, UINT message, WPARAM wparam, 
       }
       return 0;
     }
+    case WM_ACTIVATE: {
+      // Returning from the system startup page shows its change.
+      auto *state = reinterpret_cast<SettingsState *>(GetWindowLongPtrW(window, GWLP_USERDATA));
+      if (state != nullptr && LOWORD(wparam) != WA_INACTIVE) {
+        refresh_start_at_login(*state, window);
+      }
+      return DefWindowProcW(window, message, wparam, lparam);
+    }
     case WM_DESTROY:
       KillTimer(window, kIdleTimerId);
       KillTimer(window, kDirectoryWatchTimerId);
@@ -832,7 +872,9 @@ LRESULT CALLBACK settings_window_proc(HWND window, UINT message, WPARAM wparam, 
         } else if (LOWORD(wparam) == kCheckHotkeyButtonId && HIWORD(wparam) == BN_CLICKED) {
           on_check_hotkey_clicked(*state, window, GetDlgItem(window, kReadSelectionHotkeyEditId));
         } else if (LOWORD(wparam) == kStartAtLoginCheckboxId && HIWORD(wparam) == BN_CLICKED) {
-          on_start_at_login_clicked(*state, reinterpret_cast<HWND>(lparam));
+          on_start_at_login_clicked(*state, window, reinterpret_cast<HWND>(lparam));
+        } else if (LOWORD(wparam) == kOpenStartupSettingsButtonId && HIWORD(wparam) == BN_CLICKED) {
+          on_open_startup_settings_clicked(*state);
         }
       } catch (const std::exception &error) {
         restore_saved_controls(*state, window);
@@ -975,11 +1017,18 @@ void run_settings_window(ConfigDocument &document,
   if (start_at_login_checkbox == nullptr) {
     throw std::runtime_error("failed to create the start-at-login control");
   }
-  const bool launch_on_login = state.document.value
-                                   .value("startup", nlohmann::json::object())
-                                   .value("launchOnLogin", true);
-  SendMessageW(start_at_login_checkbox, BM_SETCHECK,
-               launch_on_login ? BST_CHECKED : BST_UNCHECKED, 0);
+  const HWND start_at_login_status = on_page(kGeneralPage, CreateWindowExW(
+      0, L"STATIC", nullptr, WS_CHILD | WS_VISIBLE, 40, 222, 436, 34, window,
+      reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kStartAtLoginStatusId)), instance, nullptr));
+  const HWND open_startup_settings_button = on_page(kGeneralPage, CreateWindowExW(
+      0, L"BUTTON", L"Open system startup settings", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 40, 260,
+      200, 26, window,
+      reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kOpenStartupSettingsButtonId)), instance,
+      nullptr));
+  if (start_at_login_status == nullptr || open_startup_settings_button == nullptr) {
+    throw std::runtime_error("failed to create the start-at-login controls");
+  }
+  refresh_start_at_login(state, window);
 
   // Playback page.
   label(kPlaybackPage, L"Output device:", 24, 48, 148, 24);

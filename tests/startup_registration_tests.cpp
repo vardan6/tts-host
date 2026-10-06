@@ -15,6 +15,25 @@ void require(bool condition, const char *message) {
 }
 
 constexpr wchar_t kRunKey[] = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+constexpr wchar_t kApprovedKey[] =
+    L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\Run";
+
+// Task Manager's record: twelve bytes, odd first byte when disabled.
+void set_system_approval(HKEY root, BYTE first) {
+  BYTE record[12]{first};
+  require(RegSetKeyValueW(root, kApprovedKey, L"TTS Host", REG_BINARY, record, sizeof(record)) ==
+              ERROR_SUCCESS,
+          "could not write test startup approval");
+}
+
+BYTE read_system_approval(HKEY root) {
+  BYTE record[12]{};
+  DWORD bytes = sizeof(record);
+  require(RegGetValueW(root, kApprovedKey, L"TTS Host", RRF_RT_REG_BINARY, nullptr, record,
+                       &bytes) == ERROR_SUCCESS,
+          "startup approval record disappeared");
+  return record[0];
+}
 
 // Redirect HKCU only in this test process. Production code runs unchanged, but
 // its Run key lives beneath a unique temporary test key instead of login settings.
@@ -83,14 +102,27 @@ int main() {
   try {
     IsolatedUserRegistry registry;
     const auto config = std::filesystem::path(L"config with spaces \u03b1.json");
+    using tts_host::StartAtLoginState;
+    using tts_host::read_start_at_login_state;
     tts_host::set_start_at_login(false, config);
     require(read_command(registry.root()).empty(), "disable created a startup entry");
+    require(read_start_at_login_state(config) == StartAtLoginState::off, "missing entry must read off");
 
     tts_host::set_start_at_login(true, config);
     const auto expected = L"\"" + executable_path() + L"\" --config \"" +
                           std::filesystem::absolute(config).wstring() + L"\"";
     require(read_command(registry.root()) == expected,
             "startup command must quote the executable and absolute Unicode config path");
+    require(read_start_at_login_state(config) == StartAtLoginState::on, "own entry must read on");
+
+    // A system-page disable is reported and never rewritten; enabling again
+    // from the system page (even first byte) reads as on.
+    set_system_approval(registry.root(), 0x03);
+    require(read_start_at_login_state(config) == StartAtLoginState::disabledBySystem,
+            "odd StartupApproved byte must read as disabled by the system");
+    set_system_approval(registry.root(), 0x02);
+    require(read_start_at_login_state(config) == StartAtLoginState::on,
+            "even StartupApproved byte must read on");
 
     const auto other_config = std::filesystem::path(L"different config.json");
     tts_host::set_start_at_login(true, other_config);
@@ -98,6 +130,10 @@ int main() {
                 L"\"" + executable_path() + L"\" --config \"" +
                     std::filesystem::absolute(other_config).wstring() + L"\"",
             "reenabling must update the configuration path");
+    require(read_start_at_login_state(config) == StartAtLoginState::otherCopy,
+            "an entry for another config must read as another copy");
+    require(read_start_at_login_state(other_config) == StartAtLoginState::on,
+            "repointed entry must read on for its own config");
 
     DWORD unrelated = 42;
     require(RegSetKeyValueW(registry.root(), kRunKey, L"Unrelated test application", REG_DWORD,
@@ -111,6 +147,10 @@ int main() {
     require(RegGetValueW(registry.root(), kRunKey, L"Unrelated test application", RRF_RT_REG_DWORD,
                           nullptr, &preserved, &bytes) == ERROR_SUCCESS && preserved == unrelated,
             "disable modified another application's entry");
+    require(read_system_approval(registry.root()) == 0x02,
+            "disable must leave the system's StartupApproved record alone");
+    require(read_start_at_login_state(other_config) == StartAtLoginState::off,
+            "removed entry must read off even with a leftover approval record");
   } catch (const std::exception &error) {
     std::cerr << error.what() << '\n';
     return 1;

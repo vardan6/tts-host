@@ -65,7 +65,8 @@
       "properties": {
         "launchOnLogin": {
           "type": "boolean",
-          "default": true
+          "default": true,
+          "description": "Pre-ticked answer for the first-run startup question and the installer. The operating system's startup registration, not this value, records whether TTS Host starts at login (docs/adr/0008-os-owned-login-startup.md)."
         }
       }
     },

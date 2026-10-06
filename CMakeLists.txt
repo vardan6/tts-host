@@ -398,7 +398,7 @@ if(BUILD_TESTING)
       tests/startup_registration_tests.cpp
     )
     target_include_directories(tts-host-startup-registration-tests PRIVATE include)
-    target_link_libraries(tts-host-startup-registration-tests PRIVATE advapi32)
+    target_link_libraries(tts-host-startup-registration-tests PRIVATE advapi32 shell32)
     if(MSVC)
       target_compile_options(tts-host-startup-registration-tests PRIVATE /W4 /permissive-)
     endif()

@@ -17,7 +17,6 @@
 #include "tts_host/recovering_runner.hpp"
 #include "tts_host/runner_protocol.hpp"
 #include "tts_host/settings_window.hpp"
-#include "tts_host/startup_registration.hpp"
 #include "tts_host/text_normalizer.hpp"
 #include "tts_host/text_splitter.hpp"
 #include "tts_host/tray_icon.hpp"
@@ -411,18 +410,8 @@ int run_main(int argc, char **argv) {
     tts_host::AudioHistory::clean_abandoned_spools();
     auto document = tts_host::load_config(*options, tts_host::path_from_utf8(argv[0]));
 
-#ifdef _WIN32
-    if (!options->headless) {
-      const bool launch_on_login =
-          document.value.value("startup", nlohmann::json::object()).value("launchOnLogin", true);
-      try {
-        tts_host::set_start_at_login(launch_on_login, document.paths.config_path);
-      } catch (const std::exception &error) {
-        std::cerr << "Could not update the Windows login startup entry: " << error.what() << '\n';
-      }
-    }
-#endif
-
+    // Launches never create, repoint, or remove the login startup entry; only
+    // the Settings switch does (docs/adr/0008-os-owned-login-startup.md).
     if (!options->headless) {
       if (options->settings_window) {
         // Settings window (docs/design/architecture.md#desktop-integration):
