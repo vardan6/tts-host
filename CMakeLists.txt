@@ -298,11 +298,13 @@ if(WIN32)
   # uuid supplies CLSID_FileOpenDialog for the settings window's Import… folder
   # picker (src/settings_window.cpp); winhttp is catalogue download's outbound
   # HTTPS client (src/catalogue_download.cpp); advapi32 provides the per-user
-  # Run-key registration (src/startup_registration.cpp).
+  # Run-key registration (src/startup_registration.cpp); comctl32 provides the
+  # Settings tab control.
   target_link_libraries(
     tts-host
     PRIVATE
       advapi32
+      comctl32
       user32
       ole32
       oleaut32

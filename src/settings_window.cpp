@@ -5,6 +5,7 @@
 #ifdef _WIN32
 #include <windows.h>
 #include <shobjidl.h>
+#include <commctrl.h>
 
 #include <algorithm>
 #include <chrono>
@@ -13,6 +14,7 @@
 #include <cwchar>
 #include <fstream>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "tts_host/catalogue_download.hpp"
@@ -45,7 +47,14 @@ constexpr int kSelectionPolicyComboId = 113;
 constexpr int kSpeechSpeedComboId = 114;
 constexpr int kPlaybackSkipComboId = 115;
 constexpr int kStartAtLoginCheckboxId = 116;
+constexpr int kSettingsTabsId = 117;
 constexpr int kSettingsHotkeyProbeId = 2;
+
+// Tab order of the Settings pages; docs/design/architecture.md#desktop-integration.
+constexpr int kGeneralPage = 0;
+constexpr int kPlaybackPage = 1;
+constexpr int kModelsPage = 2;
+constexpr int kServerPage = 3;
 
 // Poll actual speech activity when sharing the tray manager; busy sessions
 // are never unloaded. Standalone Settings uses the same five-second poll.
@@ -82,6 +91,9 @@ struct SettingsState {
   // The lower pane is the one durable place for user-visible settings-window
   // output: model information, progress, successes, and actionable failures.
   HWND activity_log = nullptr;
+  HWND tabs = nullptr;
+  // Every page control with its tab index; switching tabs shows one page.
+  std::vector<std::pair<HWND, int>> page_controls;
   // The scan the model views currently reflect, so the directory-watch timer
   // can tell a real change from scan_model_registry re-validating the same
   // packages on every poll.
@@ -89,6 +101,12 @@ struct SettingsState {
 };
 
 void refresh_model_views(SettingsState &state, HWND window);
+
+void show_settings_page(SettingsState &state, int page) {
+  for (const auto &[control, control_page] : state.page_controls) {
+    ShowWindow(control, control_page == page ? SW_SHOW : SW_HIDE);
+  }
+}
 void append_activity_log(SettingsState &state, const std::wstring &text);
 WNDPROC original_hotkey_edit_proc = nullptr;
 
@@ -758,6 +776,15 @@ LRESULT CALLBACK settings_window_proc(HWND window, UINT message, WPARAM wparam, 
       SetBkMode(dc, TRANSPARENT);
       return reinterpret_cast<LRESULT>(GetSysColorBrush(COLOR_BTNFACE));
     }
+    case WM_NOTIFY: {
+      auto *state = reinterpret_cast<SettingsState *>(GetWindowLongPtrW(window, GWLP_USERDATA));
+      const auto *header = reinterpret_cast<const NMHDR *>(lparam);
+      if (state != nullptr && header->hwndFrom == state->tabs && header->code == TCN_SELCHANGE) {
+        show_settings_page(*state,
+                           static_cast<int>(SendMessageW(state->tabs, TCM_GETCURSEL, 0, 0)));
+      }
+      return 0;
+    }
     case WM_DESTROY:
       KillTimer(window, kIdleTimerId);
       KillTimer(window, kDirectoryWatchTimerId);
@@ -848,12 +875,12 @@ void run_settings_window(ConfigDocument &document,
 
   SettingsState state(document, runner_directory, sessions);
 
-  // A plain visible top-level window with output-device, selection-hotkey,
-  // server host/port, default-English-profile, model load/unload/import,
-  // catalogue download, and installed-model licence display controls.
+  // A tabbed top-level window: General, Playback, Models, and Server pages
+  // above the always-visible activity log
+  // (docs/design/architecture.md#desktop-integration).
   const HWND window =
       CreateWindowExW(0, kClassName, L"TTS Host Settings", WS_OVERLAPPEDWINDOW, CW_USEDEFAULT,
-                      CW_USEDEFAULT, 512, 900, nullptr, nullptr, instance, nullptr);
+                      CW_USEDEFAULT, 512, 640, nullptr, nullptr, instance, nullptr);
   if (!window) {
     throw std::runtime_error("failed to create the settings window");
   }
@@ -863,97 +890,88 @@ void run_settings_window(ConfigDocument &document,
   } lifetime{window};
   SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(&state));
 
-  // Layout: a 152 px label column at x=16 (wide enough for the longest caption,
+  // Page controls are siblings of the tab control rather than its children, so
+  // their WM_COMMAND notifications and GetDlgItem lookups stay on this window.
+  // WS_CLIPSIBLINGS plus bottom Z-order keep the tab frame behind them.
+  const INITCOMMONCONTROLSEX common_controls{sizeof(INITCOMMONCONTROLSEX), ICC_TAB_CLASSES};
+  InitCommonControlsEx(&common_controls);
+  state.tabs = CreateWindowExW(
+      0, WC_TABCONTROLW, nullptr, WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS, 8, 8, 480, 316, window,
+      reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kSettingsTabsId)), instance, nullptr);
+  if (state.tabs == nullptr) {
+    throw std::runtime_error("failed to create the settings tabs");
+  }
+  SetWindowPos(state.tabs, HWND_BOTTOM, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
+  const wchar_t *const page_names[] = {L"General", L"Playback", L"Models", L"Server"};
+  for (int index = 0; index < static_cast<int>(std::size(page_names)); ++index) {
+    TCITEMW item{};
+    item.mask = TCIF_TEXT;
+    item.pszText = const_cast<wchar_t *>(page_names[index]);
+    SendMessageW(state.tabs, TCM_INSERTITEMW, index, reinterpret_cast<LPARAM>(&item));
+  }
+  auto on_page = [&](int page, HWND control) {
+    if (control != nullptr) {
+      state.page_controls.push_back({control, page});
+    }
+    return control;
+  };
+  auto label = [&](int page, const wchar_t *text, int x, int y, int width, int height) {
+    on_page(page, CreateWindowExW(0, L"STATIC", text, WS_CHILD | WS_VISIBLE, x, y, width, height,
+                                  window, nullptr, instance, nullptr));
+  };
+
+  // Layout: a 148 px label column at x=24 (wide enough for the longest caption,
   // "Default English profile:", in the shell UI font) and a control column at
-  // x=176, both inside a 512 px window's ~496 px client area.
-  CreateWindowExW(0, L"STATIC", L"Output device:", WS_CHILD | WS_VISIBLE, 16, 16, 152, 24, window,
-                  nullptr, instance, nullptr);
-  const HWND device_combo = CreateWindowExW(
-      0, L"COMBOBOX", nullptr, WS_CHILD | WS_VISIBLE | WS_VSCROLL | CBS_DROPDOWNLIST, 176, 12, 300,
-      200, window, reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kOutputDeviceComboId)), instance,
-      nullptr);
-  if (!device_combo) {
-    throw std::runtime_error("failed to create the output-device control");
-  }
-  populate_output_device_combo(
-      device_combo, state.document.value["audio"]["outputDevice"].get<std::string>());
+  // x=176, both inside the tab control's page area below its 28 px header.
 
-  CreateWindowExW(0, L"STATIC", L"Server host:", WS_CHILD | WS_VISIBLE, 16, 56, 152, 24, window,
-                  nullptr, instance, nullptr);
-  const HWND host_edit = CreateWindowExW(
-      WS_EX_CLIENTEDGE, L"EDIT",
-      utf8_to_wide(state.document.value["server"]["host"].get<std::string>()).c_str(),
-      WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL, 176, 52, 180, 24, window,
-      reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kServerHostEditId)), instance, nullptr);
-  if (!host_edit) {
-    throw std::runtime_error("failed to create the server-host control");
-  }
-
-  CreateWindowExW(0, L"STATIC", L"Server port:", WS_CHILD | WS_VISIBLE, 16, 88, 152, 24, window,
-                  nullptr, instance, nullptr);
-  const HWND port_edit = CreateWindowExW(
-      WS_EX_CLIENTEDGE, L"EDIT",
-      std::to_wstring(state.document.value["server"]["port"].get<int>()).c_str(),
-      WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL | ES_NUMBER, 176, 84, 80, 24, window,
-      reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kServerPortEditId)), instance, nullptr);
-  if (!port_edit) {
-    throw std::runtime_error("failed to create the server-port control");
-  }
-
-  CreateWindowExW(0, L"STATIC", L"Restart required to take effect.", WS_CHILD | WS_VISIBLE, 176,
-                  116, 260, 20, window, nullptr, instance, nullptr);
-
-  CreateWindowExW(0, L"STATIC", L"Default English profile:", WS_CHILD | WS_VISIBLE, 16, 148, 152, 24,
-                  window, nullptr, instance, nullptr);
-  const HWND default_profile_combo = CreateWindowExW(
-      0, L"COMBOBOX", nullptr, WS_CHILD | WS_VISIBLE | WS_VSCROLL | CBS_DROPDOWNLIST, 176, 144, 300,
+  // General page.
+  label(kGeneralPage, L"Default English profile:", 24, 48, 148, 24);
+  const HWND default_profile_combo = on_page(kGeneralPage, CreateWindowExW(
+      0, L"COMBOBOX", nullptr, WS_CHILD | WS_VISIBLE | WS_VSCROLL | CBS_DROPDOWNLIST, 176, 44, 300,
       200, window, reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kDefaultProfileComboId)), instance,
-      nullptr);
+      nullptr));
   if (!default_profile_combo) {
     throw std::runtime_error("failed to create the default-profile control");
   }
   populate_default_profile_combo(default_profile_combo, document);
-  CreateWindowExW(0, L"STATIC", L"Restart required to take effect.", WS_CHILD | WS_VISIBLE, 176, 172,
-                  260, 20, window, nullptr, instance, nullptr);
+  label(kGeneralPage, L"Restart required to take effect.", 176, 72, 260, 20);
 
-  CreateWindowExW(0, L"STATIC", L"Selection hotkey:", WS_CHILD | WS_VISIBLE, 16, 204, 152, 24, window,
-                  nullptr, instance, nullptr);
+  label(kGeneralPage, L"Selection hotkey:", 24, 104, 148, 24);
   const std::string configured_hotkey =
       state.document.value.value("hotkeys", nlohmann::json::object()).value("readSelection", "");
-  const HWND hotkey_edit = CreateWindowExW(
+  const HWND hotkey_edit = on_page(kGeneralPage, CreateWindowExW(
       WS_EX_CLIENTEDGE, L"EDIT", utf8_to_wide(configured_hotkey).c_str(),
-      WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL, 176, 200, 190, 24, window,
-      reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kReadSelectionHotkeyEditId)), instance, nullptr);
+      WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL, 176, 100, 190, 24, window,
+      reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kReadSelectionHotkeyEditId)), instance, nullptr));
   if (!hotkey_edit) {
     throw std::runtime_error("failed to create the selection-hotkey controls");
   }
   original_hotkey_edit_proc = reinterpret_cast<WNDPROC>(
       SetWindowLongPtrW(hotkey_edit, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(hotkey_edit_proc)));
-  const HWND check_hotkey_button = CreateWindowExW(
-      0, L"BUTTON", L"Check and save", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 376, 200, 100, 24, window,
-      reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kCheckHotkeyButtonId)), instance, nullptr);
+  const HWND check_hotkey_button = on_page(kGeneralPage, CreateWindowExW(
+      0, L"BUTTON", L"Check and save", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 376, 100, 100, 24, window,
+      reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kCheckHotkeyButtonId)), instance, nullptr));
   if (!check_hotkey_button || original_hotkey_edit_proc == nullptr) {
     throw std::runtime_error("failed to create the selection-hotkey controls");
   }
 
-  CreateWindowExW(0, L"STATIC", L"Capture policy:", WS_CHILD | WS_VISIBLE, 16, 238, 152, 24,
-                  window, nullptr, instance, nullptr);
-  const HWND capture_policy_combo = CreateWindowExW(
+  label(kGeneralPage, L"Capture policy:", 24, 138, 148, 24);
+  const HWND capture_policy_combo = on_page(kGeneralPage, CreateWindowExW(
       0, L"COMBOBOX", nullptr, WS_CHILD | WS_VISIBLE | WS_VSCROLL | CBS_DROPDOWNLIST,
-      176, 234, 300, 120, window,
-      reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kSelectionPolicyComboId)), instance, nullptr);
+      176, 134, 300, 120, window,
+      reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kSelectionPolicyComboId)), instance, nullptr));
   if (!capture_policy_combo) {
     throw std::runtime_error("failed to create the selection-capture policy control");
   }
   populate_selection_policy_combo(capture_policy_combo, document);
-  CreateWindowExW(0, L"STATIC",
-                  L"Clipboard-only reads existing text; copy first. Automatic Copy may change it.",
-                  WS_CHILD | WS_VISIBLE, 16, 264, 460, 20, window, nullptr, instance, nullptr);
+  label(kGeneralPage,
+        L"Clipboard-only reads existing text; copy first. Automatic Copy may change it.", 24, 164,
+        452, 20);
 
-  const HWND start_at_login_checkbox = CreateWindowExW(
+  const HWND start_at_login_checkbox = on_page(kGeneralPage, CreateWindowExW(
       0, L"BUTTON", L"Start TTS Host when I sign in", WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
-      16, 292, 460, 24, window,
-      reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kStartAtLoginCheckboxId)), instance, nullptr);
+      24, 196, 452, 24, window,
+      reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kStartAtLoginCheckboxId)), instance, nullptr));
   if (start_at_login_checkbox == nullptr) {
     throw std::runtime_error("failed to create the start-at-login control");
   }
@@ -963,54 +981,111 @@ void run_settings_window(ConfigDocument &document,
   SendMessageW(start_at_login_checkbox, BM_SETCHECK,
                launch_on_login ? BST_CHECKED : BST_UNCHECKED, 0);
 
-  CreateWindowExW(0, L"STATIC", L"Model:", WS_CHILD | WS_VISIBLE, 16, 328, 152, 24, window, nullptr,
-                  instance, nullptr);
-  const HWND model_combo = CreateWindowExW(
-      0, L"COMBOBOX", nullptr, WS_CHILD | WS_VISIBLE | WS_VSCROLL | CBS_DROPDOWNLIST, 176, 324, 300,
-      200, window, reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kModelComboId)), instance, nullptr);
+  // Playback page.
+  label(kPlaybackPage, L"Output device:", 24, 48, 148, 24);
+  const HWND device_combo = on_page(kPlaybackPage, CreateWindowExW(
+      0, L"COMBOBOX", nullptr, WS_CHILD | WS_VISIBLE | WS_VSCROLL | CBS_DROPDOWNLIST, 176, 44, 300,
+      200, window, reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kOutputDeviceComboId)), instance,
+      nullptr));
+  if (!device_combo) {
+    throw std::runtime_error("failed to create the output-device control");
+  }
+  populate_output_device_combo(
+      device_combo, state.document.value["audio"]["outputDevice"].get<std::string>());
+
+  label(kPlaybackPage, L"Default speech speed:", 24, 84, 148, 24);
+  const HWND speech_speed_combo = on_page(kPlaybackPage, CreateWindowExW(
+      0, L"COMBOBOX", nullptr, WS_CHILD | WS_VISIBLE | WS_VSCROLL | CBS_DROPDOWNLIST, 176, 80, 120,
+      160, window, reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kSpeechSpeedComboId)), instance,
+      nullptr));
+  if (speech_speed_combo == nullptr) {
+    throw std::runtime_error("failed to create the speech-speed control");
+  }
+  populate_speech_speed_combo(speech_speed_combo, state.document.value["audio"].value("speechSpeed", 1.0));
+
+  label(kPlaybackPage, L"Playback seek interval:", 24, 120, 148, 24);
+  const HWND playback_skip_combo = on_page(kPlaybackPage, CreateWindowExW(
+      0, L"COMBOBOX", nullptr, WS_CHILD | WS_VISIBLE | WS_VSCROLL | CBS_DROPDOWNLIST, 176, 116,
+      150, 240, window,
+      reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kPlaybackSkipComboId)), instance, nullptr));
+  if (playback_skip_combo == nullptr) {
+    throw std::runtime_error("failed to create the playback seek interval control");
+  }
+  populate_playback_skip_combo(playback_skip_combo,
+                               state.document.value["audio"].value("playbackSkipSeconds", 5));
+
+  // Models page.
+  label(kModelsPage, L"Model:", 24, 48, 148, 24);
+  const HWND model_combo = on_page(kModelsPage, CreateWindowExW(
+      0, L"COMBOBOX", nullptr, WS_CHILD | WS_VISIBLE | WS_VSCROLL | CBS_DROPDOWNLIST, 176, 44, 300,
+      200, window, reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kModelComboId)), instance, nullptr));
   if (!model_combo) {
     throw std::runtime_error("failed to create the model-selection control");
   }
   state.last_scan = scan_model_registry(document);
   populate_model_combo(model_combo, state, state.last_scan);
 
-  const HWND load_button = CreateWindowExW(
-      0, L"BUTTON", L"Load", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 176, 356, 90, 26, window,
-      reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kLoadModelButtonId)), instance, nullptr);
-  const HWND unload_button = CreateWindowExW(
-      0, L"BUTTON", L"Unload", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 276, 356, 90, 26, window,
-      reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kUnloadModelButtonId)), instance, nullptr);
-  const HWND import_button = CreateWindowExW(
-      0, L"BUTTON", L"Import…", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 376, 356, 100, 26, window,
-      reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kImportModelButtonId)), instance, nullptr);
+  const HWND load_button = on_page(kModelsPage, CreateWindowExW(
+      0, L"BUTTON", L"Load", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 176, 76, 90, 26, window,
+      reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kLoadModelButtonId)), instance, nullptr));
+  const HWND unload_button = on_page(kModelsPage, CreateWindowExW(
+      0, L"BUTTON", L"Unload", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 276, 76, 90, 26, window,
+      reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kUnloadModelButtonId)), instance, nullptr));
+  const HWND import_button = on_page(kModelsPage, CreateWindowExW(
+      0, L"BUTTON", L"Import…", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 376, 76, 100, 26, window,
+      reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kImportModelButtonId)), instance, nullptr));
   if (!load_button || !unload_button || !import_button) {
     throw std::runtime_error("failed to create the model load/unload/import controls");
   }
 
-  CreateWindowExW(0, L"STATIC", L"Catalogue:", WS_CHILD | WS_VISIBLE, 16, 422, 152, 24, window, nullptr,
-                  instance, nullptr);
-  const HWND catalogue_combo = CreateWindowExW(
-      0, L"COMBOBOX", nullptr, WS_CHILD | WS_VISIBLE | WS_VSCROLL | CBS_DROPDOWNLIST, 176, 418, 300,
+  label(kModelsPage, L"Catalogue:", 24, 128, 148, 24);
+  const HWND catalogue_combo = on_page(kModelsPage, CreateWindowExW(
+      0, L"COMBOBOX", nullptr, WS_CHILD | WS_VISIBLE | WS_VSCROLL | CBS_DROPDOWNLIST, 176, 124, 300,
       200, window, reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kCatalogueComboId)), instance,
-      nullptr);
+      nullptr));
   if (!catalogue_combo) {
     throw std::runtime_error("failed to create the catalogue-selection control");
   }
   populate_catalogue_combo(catalogue_combo, state, state.last_scan);
 
-  const HWND download_button = CreateWindowExW(
-      0, L"BUTTON", L"Download", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 176, 450, 100, 26, window,
-      reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kDownloadModelButtonId)), instance, nullptr);
+  const HWND download_button = on_page(kModelsPage, CreateWindowExW(
+      0, L"BUTTON", L"Download", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 176, 156, 100, 26, window,
+      reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kDownloadModelButtonId)), instance, nullptr));
   if (!download_button) {
     throw std::runtime_error("failed to create the download-model control");
   }
 
-  CreateWindowExW(0, L"STATIC", L"Activity and installed models:", WS_CHILD | WS_VISIBLE, 16, 486,
+  // Server page.
+  label(kServerPage, L"Server host:", 24, 48, 148, 24);
+  const HWND host_edit = on_page(kServerPage, CreateWindowExW(
+      WS_EX_CLIENTEDGE, L"EDIT",
+      utf8_to_wide(state.document.value["server"]["host"].get<std::string>()).c_str(),
+      WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL, 176, 44, 180, 24, window,
+      reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kServerHostEditId)), instance, nullptr));
+  if (!host_edit) {
+    throw std::runtime_error("failed to create the server-host control");
+  }
+
+  label(kServerPage, L"Server port:", 24, 80, 148, 24);
+  const HWND port_edit = on_page(kServerPage, CreateWindowExW(
+      WS_EX_CLIENTEDGE, L"EDIT",
+      std::to_wstring(state.document.value["server"]["port"].get<int>()).c_str(),
+      WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL | ES_NUMBER, 176, 76, 80, 24, window,
+      reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kServerPortEditId)), instance, nullptr));
+  if (!port_edit) {
+    throw std::runtime_error("failed to create the server-port control");
+  }
+  label(kServerPage, L"Restart required to take effect.", 176, 108, 260, 20);
+
+  show_settings_page(state, kGeneralPage);
+
+  // Activity log, below the tabs and visible on every page.
+  CreateWindowExW(0, L"STATIC", L"Activity and installed models:", WS_CHILD | WS_VISIBLE, 16, 336,
                   240, 24, window, nullptr, instance, nullptr);
   state.activity_log = CreateWindowExW(
       WS_EX_CLIENTEDGE, L"EDIT", nullptr,
-      WS_CHILD | WS_VISIBLE | WS_VSCROLL | ES_AUTOVSCROLL | ES_MULTILINE | ES_READONLY, 16, 510, 460,
-      170, window, nullptr, instance, nullptr);
+      WS_CHILD | WS_VISIBLE | WS_VSCROLL | ES_AUTOVSCROLL | ES_MULTILINE | ES_READONLY, 16, 360, 472,
+      220, window, nullptr, instance, nullptr);
   if (state.activity_log == nullptr) {
     throw std::runtime_error("failed to create the settings activity log");
   }
@@ -1020,29 +1095,6 @@ void run_settings_window(ConfigDocument &document,
   }
   // Tray Settings shows the existing resident model and does not unload on close.
   report_session_status(state);
-
-  CreateWindowExW(0, L"STATIC", L"Default speech speed:", WS_CHILD | WS_VISIBLE, 16, 700, 152, 24,
-                  window, nullptr, instance, nullptr);
-  const HWND speech_speed_combo = CreateWindowExW(
-      0, L"COMBOBOX", nullptr, WS_CHILD | WS_VISIBLE | WS_VSCROLL | CBS_DROPDOWNLIST, 176, 696, 120,
-      160, window, reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kSpeechSpeedComboId)), instance,
-      nullptr);
-  if (speech_speed_combo == nullptr) {
-    throw std::runtime_error("failed to create the speech-speed control");
-  }
-  populate_speech_speed_combo(speech_speed_combo, state.document.value["audio"].value("speechSpeed", 1.0));
-
-  CreateWindowExW(0, L"STATIC", L"Playback seek interval:", WS_CHILD | WS_VISIBLE, 16, 736, 152,
-                  24, window, nullptr, instance, nullptr);
-  const HWND playback_skip_combo = CreateWindowExW(
-      0, L"COMBOBOX", nullptr, WS_CHILD | WS_VISIBLE | WS_VSCROLL | CBS_DROPDOWNLIST, 176, 732,
-      150, 240, window,
-      reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kPlaybackSkipComboId)), instance, nullptr);
-  if (playback_skip_combo == nullptr) {
-    throw std::runtime_error("failed to create the playback seek interval control");
-  }
-  populate_playback_skip_combo(playback_skip_combo,
-                               state.document.value["audio"].value("playbackSkipSeconds", 5));
 
   // Every control above is created without a font, so give them all the shell
   // UI font in one pass now that they exist.

@@ -2,6 +2,7 @@
 #include "tts_host/settings_window.hpp"
 #include "tts_host/model_session.hpp"
 #include <windows.h>
+#include <commctrl.h>
 #include <chrono>
 #include <iostream>
 #include <fstream>
@@ -92,6 +93,17 @@ int main(int argc, char **argv) {
         PostMessageW(tray, WM_COMMAND, 1, 0);
         await([] { return settings() && IsWindowVisible(settings()); });
         const auto first = settings();
+        // Tabs show one page at a time: General (default profile, 104) first,
+        // then Playback (seek interval, 115); the activity log stays visible.
+        const auto tabs = GetDlgItem(first, 117);
+        require(tabs != nullptr, "Settings has no tab control");
+        require(IsWindowVisible(GetDlgItem(first, 104)) && !IsWindowVisible(GetDlgItem(first, 115)),
+                "Settings did not open on the General tab");
+        SendMessageW(tabs, TCM_SETCURSEL, 1, 0);
+        NMHDR change{tabs, 117, TCN_SELCHANGE};
+        SendMessageW(first, WM_NOTIFY, 117, reinterpret_cast<LPARAM>(&change));
+        require(IsWindowVisible(GetDlgItem(first, 115)) && !IsWindowVisible(GetDlgItem(first, 104)),
+                "Playback tab did not replace the General page");
         // Deny replacement using a real Windows sharing lock. The failed UI
         // save must restore memory/form, leave disk valid, and keep running.
         const auto lock = CreateFileW(document.paths.config_path.c_str(), GENERIC_READ,
