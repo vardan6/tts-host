@@ -26,5 +26,14 @@ $developmentConfig.startup | Add-Member -NotePropertyName launchOnLogin -NotePro
 $developmentConfigJson = $developmentConfig | ConvertTo-Json -Depth 100
 [System.IO.File]::WriteAllText($developmentConfigPath, $developmentConfigJson, (New-Object System.Text.UTF8Encoding $false))
 
+# Answer the first-run login-startup question in advance so development
+# launches never ask or register (docs/design/architecture.md#login-startup).
+$dataDir = if (Test-Path "build\Debug\portable.marker") { "build\Debug" } else { Join-Path $env:LOCALAPPDATA "TTS Host" }
+$startupChoiceMarker = Join-Path $dataDir "startup-choice.marker"
+if (-not (Test-Path $startupChoiceMarker)) {
+    New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
+    [System.IO.File]::WriteAllText($startupChoiceMarker, "declined`n")
+}
+
 .\build\Debug\tts-host.exe --config $developmentConfigPath
 exit $LASTEXITCODE

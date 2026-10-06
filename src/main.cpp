@@ -17,6 +17,10 @@
 #include "tts_host/recovering_runner.hpp"
 #include "tts_host/runner_protocol.hpp"
 #include "tts_host/settings_window.hpp"
+#include "tts_host/startup_choice.hpp"
+#ifdef _WIN32
+#include "tts_host/startup_registration.hpp"
+#endif
 #include "tts_host/text_normalizer.hpp"
 #include "tts_host/text_splitter.hpp"
 #include "tts_host/tray_icon.hpp"
@@ -411,7 +415,8 @@ int run_main(int argc, char **argv) {
     auto document = tts_host::load_config(*options, tts_host::path_from_utf8(argv[0]));
 
     // Launches never create, repoint, or remove the login startup entry; only
-    // the Settings switch does (docs/adr/0008-os-owned-login-startup.md).
+    // the Settings switch and the first-run answer do
+    // (docs/adr/0008-os-owned-login-startup.md).
     if (!options->headless) {
       if (options->settings_window) {
         // Settings window (docs/design/architecture.md#desktop-integration):
@@ -420,6 +425,21 @@ int run_main(int argc, char **argv) {
         tts_host::run_settings_window(document, executable_dir(tts_host::path_from_utf8(argv[0])));
         return EXIT_SUCCESS;
       }
+
+#ifdef _WIN32
+      // First desktop launch in this data directory asks once whether to start
+      // at login (docs/design/architecture.md#login-startup). A failure is
+      // reported but never prevents the Host from starting.
+      try {
+        tts_host::ask_startup_choice_once(
+            document.paths.data_dir,
+            document.value.value("startup", nlohmann::json::object()).value("launchOnLogin", true),
+            tts_host::show_startup_choice_dialog,
+            [&document] { tts_host::set_start_at_login(true, document.paths.config_path); });
+      } catch (const std::exception &error) {
+        std::cerr << "Could not record the login startup choice: " << error.what() << '\n';
+      }
+#endif
 
       // Tray mode (docs/design/architecture.md#desktop-integration): blocks
       // until the user chooses Quit. Windows only in this slice -- see

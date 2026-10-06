@@ -189,6 +189,7 @@ add_executable(
   src/synthesis_pipeline.cpp
   src/selection_capture.cpp
   src/settings_window.cpp
+  src/startup_choice.cpp
   src/text_normalizer.cpp
   src/text_splitter.cpp
   src/tray_icon.cpp
@@ -477,6 +478,14 @@ if(BUILD_TESTING)
     nlohmann_json::nlohmann_json ${JSON_SCHEMA_VALIDATOR_TARGET})
   add_test(NAME tts_host_config_persistence COMMAND tts-host-config-persistence-tests
     ${CMAKE_SOURCE_DIR}/config.example.json ${CMAKE_SOURCE_DIR}/schemas/config.schema.json)
+
+  add_executable(tts-host-startup-choice-tests
+    src/startup_choice.cpp tests/startup_choice_tests.cpp)
+  target_include_directories(tts-host-startup-choice-tests PRIVATE include)
+  if(WIN32)
+    target_link_libraries(tts-host-startup-choice-tests PRIVATE user32 gdi32)
+  endif()
+  add_test(NAME tts_host_startup_choice COMMAND tts-host-startup-choice-tests)
 
   if(WIN32)
     # Exercise the real UI entrypoints without main's startup registration.

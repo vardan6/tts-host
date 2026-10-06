@@ -32,6 +32,9 @@ struct CliOptions {
 struct ResolvedPaths {
   std::filesystem::path config_path;
   std::filesystem::path schema_path;
+  // Mutable Host state such as the startup-choice marker
+  // (docs/design/architecture.md#data-locations).
+  std::filesystem::path data_dir;
 };
 
 struct ConfigDocument {

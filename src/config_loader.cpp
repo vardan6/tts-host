@@ -425,7 +425,8 @@ ConfigDocument load_config(const CliOptions &options, const std::filesystem::pat
   const auto schema = load_json_file(schema_path, "schema");
   validate_against_schema(schema, config);
 
-  return ConfigDocument{config, ResolvedPaths{config_path, schema_path}};
+  return ConfigDocument{config,
+                        ResolvedPaths{config_path, schema_path, resolve_data_dir(options, argv0)}};
 }
 
 }  // namespace tts_host
