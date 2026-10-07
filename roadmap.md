@@ -421,7 +421,7 @@ Developer workflow:
     - [x] **AFK — Per-utterance stream:** keep one client across sentences,
       including underrun silence, pause, Stop, seek, and replacement; cover with
       the fake endpoint in `tts_host_synthesis_pipeline`.
-    - [ ] **AFK — Playback tab tuning:** add `audio.bufferMilliseconds`,
+    - [x] **AFK — Playback tab tuning:** add `audio.bufferMilliseconds`,
       `sentencePauseMilliseconds`, and `lookaheadSentences` to the schema and
       the Playback tab with **Reset to defaults** — see
       [design](docs/design/architecture.md#utterance-audio-stream) and

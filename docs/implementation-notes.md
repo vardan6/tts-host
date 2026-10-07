@@ -80,5 +80,5 @@ first activation and releases it in its destructor, so its client survives
 between those threads. Play and drain calls are never concurrent; the pipeline
 joins one before launching the next, and the stream itself takes no lock.
 Pause between sentences, while no playback call is active, lets at most the
-queued buffer (the requested `kDefaultPlaybackBuffer`) finish before the next
+queued buffer (`audio.bufferMilliseconds`) finish before the next
 call stops the client.

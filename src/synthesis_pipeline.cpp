@@ -34,15 +34,38 @@ void run_synthesis_pipeline(const std::string &spoken_text, const CliOptions &op
 
   SystemPlaybackSink system_sink;
   PlaybackSink &playback_sink = sink == nullptr ? system_sink : *sink;
-  const std::string output_device = document.value.at("audio").at("outputDevice").get<std::string>();
-  const double default_speech_speed = document.value.at("audio").value("speechSpeed", 1.0);
+  const auto &audio = document.value.at("audio");
+  const std::string output_device = audio.at("outputDevice").get<std::string>();
+  const double default_speech_speed = audio.value("speechSpeed", 1.0);
+  // The buffer applies per utterance stream; pause and lookahead are read at
+  // each sentence boundary, from live Settings when a controller is present
+  // (docs/design/architecture.md#utterance-audio-stream).
+  const std::chrono::milliseconds buffer(
+      audio.value("bufferMilliseconds", static_cast<int>(kDefaultPlaybackBuffer.count())));
+  const auto sentence_pause_milliseconds = [&] {
+    return playback_controller != nullptr ? playback_controller->sentence_pause_milliseconds()
+                                          : audio.value("sentencePauseMilliseconds", 0);
+  };
+  const auto lookahead_sentences = [&] {
+    return playback_controller != nullptr ? playback_controller->lookahead_sentences()
+                                          : audio.value("lookaheadSentences", 1);
+  };
+  const auto current_speed = [&] {
+    return playback_controller == nullptr ? default_speech_speed : playback_controller->speech_speed();
+  };
+  const auto current_speed_generation = [&]() -> std::uint64_t {
+    return playback_controller == nullptr ? 0 : playback_controller->speech_speed_generation();
+  };
+
   // One endpoint stream per utterance, so sentence boundaries add no device
-  // gap (docs/design/architecture.md#utterance-audio-stream). Declared before
-  // the playback thread, which uses it until joined.
+  // gap (docs/design/architecture.md#utterance-audio-stream). Synthesized
+  // sentences go straight into retained history, so lookahead of any depth is
+  // already seekable. Both are declared before the playback thread, which
+  // uses them until joined.
   std::unique_ptr<PlaybackStream> stream;
-  if (options.play_audio) stream = playback_sink.open_stream(output_device, kDefaultPlaybackBuffer);
   std::unique_ptr<tts_host::AudioHistory> audio_history;
-  if (options.play_audio && control != nullptr && playback_controller != nullptr) {
+  if (options.play_audio) {
+    stream = playback_sink.open_stream(output_device, buffer);
     audio_history = std::make_unique<tts_host::AudioHistory>();
   }
 
@@ -54,9 +77,15 @@ void run_synthesis_pipeline(const std::string &spoken_text, const CliOptions &op
     std::uint64_t frames;
     double start_seconds;
     double duration_seconds;
+    std::size_t text_index;
+    std::uint64_t speed_generation;
   };
   std::vector<RetainedChunk> retained_chunks;
+  // Retained chunks below this index have been launched at least once; the
+  // rest are lookahead that no listener has heard yet.
+  std::size_t launched_chunks = 0;
   double generated_seconds = 0.0;
+  std::size_t next_text = 0;
 
   std::vector<std::uint8_t> pcm_payload;
   std::uint32_t sample_rate_hz = 0;
@@ -64,8 +93,7 @@ void run_synthesis_pipeline(const std::string &spoken_text, const CliOptions &op
   std::uint64_t total_sample_frames = 0;
 
   // Plays each chunk on a background thread so the next chunk's runner round
-  // trip (the send_request/read_audio_stream_until_end below) overlaps with
-  // playback instead of waiting for it -- the "small lookahead" in
+  // trip overlaps with playback instead of waiting for it -- the lookahead in
   // docs/design/architecture.md#speech-pipeline. Joining the previous
   // playback thread before starting the next one keeps the "two utterances
   // never play simultaneously" guarantee from the same doc.
@@ -117,9 +145,33 @@ void run_synthesis_pipeline(const std::string &spoken_text, const CliOptions &op
     handled_seek_generation = generation;
   };
 
+  // A speed change discards every unheard sentence, however deep, and
+  // resynthesizes from the first of them. Their spool bytes stay unused.
+  const auto discard_unplayed = [&]() {
+    if (launched_chunks >= retained_chunks.size()) return;
+    const auto &first = retained_chunks[launched_chunks];
+    next_text = first.text_index;
+    generated_seconds = first.start_seconds;
+    retained_chunks.resize(launched_chunks);
+    next_playback_chunk = std::min(next_playback_chunk, retained_chunks.size());
+    if (playback_controller != nullptr) playback_controller->set_generated_seconds(control, generated_seconds);
+  };
+
   const auto launch_retained_chunk = [&]() {
-    if (audio_history == nullptr || next_playback_chunk >= retained_chunks.size()) return false;
+    if (stream == nullptr || next_playback_chunk >= retained_chunks.size()) return false;
     const auto index = next_playback_chunk;
+    if (index >= launched_chunks) {
+      // First playback of lookahead: one synthesized at a stale requested
+      // speed is regenerated, leaving audible PCM alone. This avoids PCM
+      // resampling and an audio-to-word alignment guess.
+      if (playback_controller != nullptr &&
+          !playback_controller->prepare_sentence_for_playback(
+              control, retained_chunks[index].speed_generation)) {
+        discard_unplayed();
+        return false;
+      }
+      launched_chunks = index + 1;
+    }
     const auto segment = retained_chunks[index];
     const auto payload = audio_history->read(segment.byte_offset, segment.byte_length);
     const auto start_frame = next_playback_frame;
@@ -143,109 +195,100 @@ void run_synthesis_pipeline(const std::string &spoken_text, const CliOptions &op
     return true;
   };
 
-  for (const auto &chunk : chunks) {
-  retry_chunk:
-    // Runner waits and endpoint playback both observe Stop/replacement.
+  // Advances retained playback without blocking: collects a finished or
+  // seek-interrupted sentence and launches the next one.
+  const auto service_playback = [&]() {
     throw_if_cancelled(control);
-    // Keep at most one sentence of lookahead. If Now Playing changes speed
-    // while it is being prepared or waiting behind audible PCM, discard it and
-    // regenerate this exact sentence. This preserves text order without PCM
-    // resampling or an audio-to-word alignment guess.
-    tts_host::RunnerSynthesizeResponse synthesize_result;
-    std::vector<std::uint8_t> chunk_payload;
-    std::uint64_t speed_generation = 0;
-    while (true) {
-      const double speech_speed = playback_controller == nullptr
-                                      ? default_speech_speed
-                                      : playback_controller->speech_speed();
-      speed_generation = playback_controller == nullptr
-                             ? 0
-                             : playback_controller->speech_speed_generation();
+    if (stream == nullptr) return;
+    const bool seek_pending = control != nullptr && control->seek_generation() != handled_seek_generation;
+    if (playback_thread.joinable() && (seek_pending || playback_done.load())) {
+      join_playback();
+      if (!playback_interrupted_for_seek) next_playback_chunk = playback_chunk_index + 1;
+    }
+    apply_pending_seek();
+    if (!playback_thread.joinable()) launch_retained_chunk();
+  };
+
+  while (true) {
+    while (next_text < chunks.size()) {
+      service_playback();
+      // Pause lets at most the in-flight request finish; full lookahead waits
+      // for playback to take a sentence.
+      if (stream != nullptr && !retained_chunks.empty() &&
+          ((control != nullptr && control->paused()) ||
+           retained_chunks.size() - launched_chunks >=
+               static_cast<std::size_t>(lookahead_sentences()))) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        continue;
+      }
+      const auto text_index = next_text;
+      const auto &chunk = chunks[text_index];
+      const double speech_speed = current_speed();
+      const auto speed_generation = current_speed_generation();
       const auto synthesized = [&]() {
-        if (audio_history == nullptr) return session.synthesize(chunk, speech_speed);
+        if (stream == nullptr) return session.synthesize(chunk, speech_speed);
         auto pending = std::async(std::launch::async, [&] { return session.synthesize(chunk, speech_speed); });
-        return tts_host::await_lookahead(pending, [&] {
-          throw_if_cancelled(control);
-          const bool seek_pending = control->seek_generation() != handled_seek_generation;
-          if (playback_thread.joinable() && (seek_pending || playback_done.load())) {
-            join_playback();
-            if (!playback_interrupted_for_seek) next_playback_chunk = playback_chunk_index + 1;
-          }
-          apply_pending_seek();
-          if (!playback_thread.joinable()) launch_retained_chunk();
-        }, [&] { control->cancel(); });
+        return tts_host::await_lookahead(pending, service_playback, [control] {
+          if (control != nullptr) control->cancel();
+        });
       }();
-      synthesize_result = synthesized.format;
-      chunk_payload = synthesized.pcm;
-      // The lookahead remains unplayed until join_playback returns. A changed
-      // generation means it was synthesized at a stale requested speed.
-      if (playback_controller == nullptr ||
-          playback_controller->speech_speed_generation() == speed_generation) {
-        break;
+      // A speed change rewound lookahead while this was in flight, or made
+      // this sentence stale; either way it is synthesized again.
+      if (next_text != text_index) continue;
+      if (current_speed_generation() != speed_generation) {
+        discard_unplayed();
+        continue;
       }
-      throw_if_cancelled(control);
+
+      const auto &format = synthesized.format;
+      std::vector<std::uint8_t> chunk_payload = synthesized.pcm;
+      // The sentence pause is source PCM: retained, seekable, and counted in
+      // position.
+      if (text_index > 0 && format.sample_rate_hz != 0) {
+        const auto pause_frames =
+            static_cast<std::uint64_t>(format.sample_rate_hz) * sentence_pause_milliseconds() / 1000;
+        chunk_payload.insert(chunk_payload.begin(), pause_frames * format.channels * 2, 0);
+      }
+      const auto bytes_per_frame = static_cast<std::uint64_t>(format.channels) * 2;
+      const std::uint64_t frames = bytes_per_frame == 0 ? 0 : chunk_payload.size() / bytes_per_frame;
+      sample_rate_hz = format.sample_rate_hz;
+      channels = format.channels;
+
+      if (audio_history != nullptr) {
+        const auto byte_offset = audio_history->append(chunk_payload);
+        const auto duration =
+            format.sample_rate_hz == 0 ? 0.0 : static_cast<double>(frames) / format.sample_rate_hz;
+        retained_chunks.push_back({byte_offset, chunk_payload.size(), format.sample_rate_hz,
+                                   static_cast<std::uint16_t>(format.channels), frames,
+                                   generated_seconds, duration, text_index, speed_generation});
+        generated_seconds += duration;
+        if (playback_controller != nullptr) playback_controller->set_generated_seconds(control, generated_seconds);
+      } else {
+        total_sample_frames += frames;
+        if (options.output_path.has_value()) {
+          pcm_payload.insert(pcm_payload.end(), chunk_payload.begin(), chunk_payload.end());
+        }
+      }
+      ++next_text;
+      service_playback();
     }
-    if (options.play_audio) {
-      const bool had_playback = playback_thread.joinable();
-      join_playback();
-      if (had_playback && !playback_interrupted_for_seek) {
-        next_playback_chunk = playback_chunk_index + 1;
+    if (stream == nullptr) break;
+
+    // Play out the retained sentences.
+    while (next_text == chunks.size() &&
+           (playback_thread.joinable() || next_playback_chunk < retained_chunks.size())) {
+      if (playback_thread.joinable()) {
+        join_playback();
+        if (!playback_interrupted_for_seek) next_playback_chunk = playback_chunk_index + 1;
       }
       apply_pending_seek();
       throw_if_cancelled(control);
-      // A speed change may have arrived while this sentence waited as
-      // lookahead. Regenerate it before playback, leaving audible PCM alone.
-      if (playback_controller != nullptr &&
-          !playback_controller->prepare_sentence_for_playback(control, speed_generation)) {
-        goto retry_chunk;
-      }
-    }
-
-    sample_rate_hz = synthesize_result.sample_rate_hz;
-    channels = synthesize_result.channels;
-    total_sample_frames += synthesize_result.total_sample_frames;
-
-    if (audio_history != nullptr) {
-      const auto byte_offset = audio_history->append(chunk_payload);
-      const auto duration = synthesize_result.sample_rate_hz == 0
-                                ? 0.0
-                                : static_cast<double>(synthesize_result.total_sample_frames) /
-                                      synthesize_result.sample_rate_hz;
-      retained_chunks.push_back({byte_offset, chunk_payload.size(), synthesize_result.sample_rate_hz,
-                                 static_cast<std::uint16_t>(synthesize_result.channels),
-                                 synthesize_result.total_sample_frames, generated_seconds, duration});
-      generated_seconds += duration;
-      playback_controller->set_generated_seconds(control, generated_seconds);
       launch_retained_chunk();
-    } else if (options.play_audio) {
-      const auto sample_rate = synthesize_result.sample_rate_hz;
-      const auto channel_count = static_cast<std::uint16_t>(synthesize_result.channels);
-      playback_thread = std::thread(
-          [endpoint = stream.get(), sample_rate, channel_count, chunk_payload, &playback_error,
-           control, generation = handled_seek_generation]() {
-            try {
-              endpoint->play_from(sample_rate, channel_count, chunk_payload, 0, 0.0, control,
-                                  generation);
-            } catch (...) {
-              playback_error = std::current_exception();
-            }
-          });
     }
-
-    if (options.output_path.has_value()) {
-      pcm_payload.insert(pcm_payload.end(), chunk_payload.begin(), chunk_payload.end());
-    }
-  }
-  while (stream != nullptr) {
-    while (playback_thread.joinable()) {
-      join_playback();
-      const bool was_interrupted = playback_interrupted_for_seek;
-      if (!was_interrupted) next_playback_chunk = playback_chunk_index + 1;
-      apply_pending_seek();
-      throw_if_cancelled(control);
-      if (!launch_retained_chunk()) break;
-    }
+    // A speed change discarded unheard sentences; synthesize them again.
+    if (next_text < chunks.size()) continue;
     throw_if_cancelled(control);
+
     // The stream drains once, at the end of the utterance. A seek during the
     // drain replays retained audio into the same stream.
     playback_interrupted_for_seek = false;
@@ -262,9 +305,18 @@ void run_synthesis_pipeline(const std::string &spoken_text, const CliOptions &op
     if (!playback_interrupted_for_seek) break;
     apply_pending_seek();
     throw_if_cancelled(control);
-    if (!launch_retained_chunk()) break;
   }
   throw_if_cancelled(control);
+
+  if (audio_history != nullptr) {
+    for (const auto &segment : retained_chunks) {
+      total_sample_frames += segment.frames;
+      if (options.output_path.has_value()) {
+        const auto pcm = audio_history->read(segment.byte_offset, segment.byte_length);
+        pcm_payload.insert(pcm_payload.end(), pcm.begin(), pcm.end());
+      }
+    }
+  }
 
   std::optional<tts_host::RunnerStatsResponse> stats;
   if (options.report_stats) {

@@ -28,8 +28,9 @@ class ConfigSnapshot {
 
 // Pushes the live playback settings a published document carries into the
 // running controller: the default speed for the next utterance (the active
-// utterance's speed belongs to Now Playing) and the seek interval both seek
-// buttons use from their next press
+// utterance's speed belongs to Now Playing), the seek interval both seek
+// buttons use from their next press, and the sentence pause and lookahead the
+// pipeline reads at its next sentence boundary
 // (docs/requirements/product.md#configuration-and-controls).
 void apply_playback_settings(const ConfigDocument &document, PlaybackController &controller);
 

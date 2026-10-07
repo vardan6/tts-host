@@ -128,6 +128,24 @@ int main(int argc, char **argv) {
         SendMessageW(first, WM_COMMAND, MAKEWPARAM(115, CBN_SELCHANGE), reinterpret_cast<LPARAM>(combo));
         require(document.value["audio"]["playbackSkipSeconds"] == 12,
                 "Settings could not save after failed replacement");
+        // Stream tuning saves its value; Reset restores only the Playback tab.
+        const auto lookahead = GetDlgItem(first, 122);
+        require(IsWindowVisible(lookahead) && IsWindowVisible(GetDlgItem(first, 123)),
+                "Playback tab lacks the stream tuning controls");
+        SendMessageW(lookahead, CB_SETCURSEL, 2, 0);
+        SendMessageW(first, WM_COMMAND, MAKEWPARAM(122, CBN_SELCHANGE), reinterpret_cast<LPARAM>(lookahead));
+        require(document.value["audio"]["lookaheadSentences"] == 3, "lookahead selection was not saved");
+        const auto hotkey_before_reset = document.value["hotkeys"];
+        SendMessageW(first, WM_COMMAND, MAKEWPARAM(123, BN_CLICKED),
+                     reinterpret_cast<LPARAM>(GetDlgItem(first, 123)));
+        require(document.value["audio"]["lookaheadSentences"] == 1 &&
+                    document.value["audio"]["playbackSkipSeconds"] == 5 &&
+                    document.value["audio"]["bufferMilliseconds"] == 50 &&
+                    document.value["hotkeys"] == hotkey_before_reset,
+                "Reset to defaults did not restore only the Playback tab");
+        require(SendMessageW(lookahead, CB_GETCURSEL, 0, 0) == 0 &&
+                    SendMessageW(combo, CB_GETCURSEL, 0, 0) == 4,
+                "Reset to defaults left Playback controls stale");
         SendMessageW(tray, WM_COMMAND, 1, 0); // Reentrant command must be ignored.
         int count = 0;
         EnumWindows(count_settings, reinterpret_cast<LPARAM>(&count));

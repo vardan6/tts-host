@@ -25,6 +25,8 @@ void apply_playback_settings(const ConfigDocument &document, PlaybackController 
   // properties; absence deliberately means the documented defaults.
   controller.set_default_speech_speed(audio.value("speechSpeed", 1.0));
   controller.set_seek_interval_seconds(audio.value("playbackSkipSeconds", 5));
+  controller.set_sentence_pause_milliseconds(audio.value("sentencePauseMilliseconds", 0));
+  controller.set_lookahead_sentences(audio.value("lookaheadSentences", 1));
 }
 
 }  // namespace tts_host

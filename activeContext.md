@@ -1,13 +1,12 @@
 # Active Context
 
-- Mode: implementation; Windows start-at-login AFK slices done.
+- Mode: implementation; gap-free utterance stream AFK slices done.
 - Phase: review/finalize `roadmap-slices` before the Linux adapter.
-- State: Settings tabs, OS-owned startup switch, and first-run question
-  committed (`cd9e592`, `2894c0b`, `93025fc`); ADR 0008 and design docs
-  (incl. 2026-10-07 login-startup detail update) remain uncommitted.
-- Next action: `/next-slice` → **Per-utterance stream**
-  ([utterance stream](docs/design/architecture.md#utterance-audio-stream)),
-  then Playback tab tuning. Pending native checks: tab layout and first-run
+- State: per-utterance stream (`71d4657`) and Playback tab tuning committed.
+- Next action: HITL — with the user's permission, rerun the audible
+  `tts-host-playback-gap-probe` (now has a `stream` condition) and record it
+  under [finding 16](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-16).
+  Pending native checks: tab layout incl. new Playback controls, first-run
   dialog appearance; isolated-environment sign-in acceptance.
 - Verification: 46/46 CTests on Windows and Linux (`build-linux` boost override
   now points at `cache/fetchcontent/windows-vs2022/boost_headers-src`). Resident reuse, warm-up cancellation, shared Settings

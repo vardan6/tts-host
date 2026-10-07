@@ -92,6 +92,27 @@
           "minimum": 1,
           "maximum": 30,
           "default": 5
+        },
+        "bufferMilliseconds": {
+          "type": "integer",
+          "minimum": 20,
+          "maximum": 200,
+          "default": 50,
+          "description": "Requested endpoint buffer; applies to the next utterance."
+        },
+        "sentencePauseMilliseconds": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000,
+          "default": 0,
+          "description": "Silence inserted between sentences; applies at the next sentence boundary."
+        },
+        "lookaheadSentences": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4,
+          "default": 1,
+          "description": "Sentences synthesized ahead of playback; applies at the next sentence boundary."
         }
       }
     },

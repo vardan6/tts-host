@@ -78,6 +78,12 @@ class PlaybackController {
   std::uint64_t speech_speed_generation() const;
   void set_seek_interval_seconds(int seconds);
   int seek_interval_seconds() const;
+  // Read by the pipeline at each sentence boundary
+  // (docs/design/architecture.md#utterance-audio-stream).
+  void set_sentence_pause_milliseconds(int milliseconds);
+  int sentence_pause_milliseconds() const;
+  void set_lookahead_sentences(int sentences);
+  int lookahead_sentences() const;
   bool seek_by_interval(int direction);
   bool can_seek(int direction) const;
   double position_seconds() const;
@@ -92,6 +98,8 @@ class PlaybackController {
   double speech_speed_ = 1.0;
   std::uint64_t speech_speed_generation_ = 0;
   int seek_interval_seconds_ = 5;
+  int sentence_pause_milliseconds_ = 0;
+  int lookahead_sentences_ = 1;
   std::string error_message_;
 };
 

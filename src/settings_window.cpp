@@ -50,6 +50,10 @@ constexpr int kStartAtLoginCheckboxId = 116;
 constexpr int kSettingsTabsId = 117;
 constexpr int kStartAtLoginStatusId = 118;
 constexpr int kOpenStartupSettingsButtonId = 119;
+constexpr int kAudioBufferComboId = 120;
+constexpr int kSentencePauseComboId = 121;
+constexpr int kLookaheadComboId = 122;
+constexpr int kResetPlaybackButtonId = 123;
 constexpr int kSettingsHotkeyProbeId = 2;
 
 // Tab order of the Settings pages; docs/design/architecture.md#desktop-integration.
@@ -227,6 +231,60 @@ void on_playback_skip_selected(SettingsState &state, HWND combo) {
   save_config(state);
 }
 
+// Lists first..last in steps, plus a hand-edited in-range value off the
+// step, so the control always shows the real configured value.
+void populate_audio_integer_combo(HWND combo, int first, int last, int step, int current,
+                                  const wchar_t *unit) {
+  std::vector<int> values;
+  for (int value = first; value <= last; value += step) values.push_back(value);
+  if (std::find(values.begin(), values.end(), current) == values.end()) {
+    values.insert(std::upper_bound(values.begin(), values.end(), current), current);
+  }
+  for (const int value : values) {
+    const auto label = std::to_wstring(value) + unit;
+    const auto index = SendMessageW(combo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(label.c_str()));
+    if (value == current) SendMessageW(combo, CB_SETCURSEL, index, 0);
+  }
+}
+
+// The utterance-stream tuning values
+// (docs/design/architecture.md#utterance-audio-stream).
+void populate_audio_buffer_combo(HWND combo, const nlohmann::json &audio) {
+  populate_audio_integer_combo(combo, 20, 200, 10, audio.value("bufferMilliseconds", 50), L" ms");
+}
+
+void populate_sentence_pause_combo(HWND combo, const nlohmann::json &audio) {
+  populate_audio_integer_combo(combo, 0, 1000, 50, audio.value("sentencePauseMilliseconds", 0), L" ms");
+}
+
+void populate_lookahead_combo(HWND combo, const nlohmann::json &audio) {
+  populate_audio_integer_combo(combo, 1, 4, 1, audio.value("lookaheadSentences", 1), L"");
+}
+
+void on_audio_integer_selected(SettingsState &state, HWND combo, const char *key) {
+  const auto index = SendMessageW(combo, CB_GETCURSEL, 0, 0);
+  if (index == CB_ERR) return;
+  wchar_t value[32];
+  SendMessageW(combo, CB_GETLBTEXT, index, reinterpret_cast<LPARAM>(value));
+  state.document.value["audio"][key] = std::wcstol(value, nullptr, 10);
+  save_config(state);
+}
+
+void restore_saved_controls(SettingsState &state, HWND window);
+
+// Restores only the Playback tab's values; other tabs keep theirs.
+void on_reset_playback_clicked(SettingsState &state, HWND window) {
+  auto &audio = state.document.value["audio"];
+  audio["outputDevice"] = kSystemDefaultOutputDevice;
+  audio["speechSpeed"] = 1.0;
+  audio["playbackSkipSeconds"] = 5;
+  audio["bufferMilliseconds"] = 50;
+  audio["sentencePauseMilliseconds"] = 0;
+  audio["lookaheadSentences"] = 1;
+  save_config(state);
+  restore_saved_controls(state, window);
+}
+
 void populate_selection_policy_combo(HWND combo, const ConfigDocument &document) {
   const auto selection = document.value.value("selection", nlohmann::json::object());
   const auto current = parse_selection_capture_policy(selection.value("capturePolicy", "automatic"));
@@ -389,6 +447,9 @@ void restore_saved_controls(SettingsState &state, HWND window) {
   populate_output_device_combo(reset(kOutputDeviceComboId), value["audio"]["outputDevice"].get<std::string>());
   populate_speech_speed_combo(reset(kSpeechSpeedComboId), value["audio"].value("speechSpeed", 1.0));
   populate_playback_skip_combo(reset(kPlaybackSkipComboId), value["audio"].value("playbackSkipSeconds", 5));
+  populate_audio_buffer_combo(reset(kAudioBufferComboId), value["audio"]);
+  populate_sentence_pause_combo(reset(kSentencePauseComboId), value["audio"]);
+  populate_lookahead_combo(reset(kLookaheadComboId), value["audio"]);
   populate_selection_policy_combo(reset(kSelectionPolicyComboId), state.document);
   populate_default_profile_combo(reset(kDefaultProfileComboId), state.document);
   SetDlgItemTextW(window, kServerHostEditId, utf8_to_wide(value["server"]["host"].get<std::string>()).c_str());
@@ -853,6 +914,14 @@ LRESULT CALLBACK settings_window_proc(HWND window, UINT message, WPARAM wparam, 
           on_speech_speed_selected(*state, reinterpret_cast<HWND>(lparam));
         } else if (LOWORD(wparam) == kPlaybackSkipComboId && HIWORD(wparam) == CBN_SELCHANGE) {
           on_playback_skip_selected(*state, reinterpret_cast<HWND>(lparam));
+        } else if (LOWORD(wparam) == kAudioBufferComboId && HIWORD(wparam) == CBN_SELCHANGE) {
+          on_audio_integer_selected(*state, reinterpret_cast<HWND>(lparam), "bufferMilliseconds");
+        } else if (LOWORD(wparam) == kSentencePauseComboId && HIWORD(wparam) == CBN_SELCHANGE) {
+          on_audio_integer_selected(*state, reinterpret_cast<HWND>(lparam), "sentencePauseMilliseconds");
+        } else if (LOWORD(wparam) == kLookaheadComboId && HIWORD(wparam) == CBN_SELCHANGE) {
+          on_audio_integer_selected(*state, reinterpret_cast<HWND>(lparam), "lookaheadSentences");
+        } else if (LOWORD(wparam) == kResetPlaybackButtonId && HIWORD(wparam) == BN_CLICKED) {
+          on_reset_playback_clicked(*state, window);
         } else if (LOWORD(wparam) == kSelectionPolicyComboId && HIWORD(wparam) == CBN_SELCHANGE) {
           on_selection_policy_selected(*state, reinterpret_cast<HWND>(lparam));
         } else if (LOWORD(wparam) == kServerHostEditId && HIWORD(wparam) == EN_KILLFOCUS) {
@@ -1062,6 +1131,27 @@ void run_settings_window(ConfigDocument &document,
   }
   populate_playback_skip_combo(playback_skip_combo,
                                state.document.value["audio"].value("playbackSkipSeconds", 5));
+
+  const auto audio_combo = [&](const wchar_t *caption, int y, int id) {
+    label(kPlaybackPage, caption, 24, y + 4, 148, 24);
+    const HWND combo = on_page(kPlaybackPage, CreateWindowExW(
+        0, L"COMBOBOX", nullptr, WS_CHILD | WS_VISIBLE | WS_VSCROLL | CBS_DROPDOWNLIST, 176, y, 150,
+        240, window, reinterpret_cast<HMENU>(static_cast<UINT_PTR>(id)), instance, nullptr));
+    if (combo == nullptr) throw std::runtime_error("failed to create the audio stream controls");
+    return combo;
+  };
+  const auto &audio_settings = state.document.value["audio"];
+  populate_audio_buffer_combo(audio_combo(L"Audio buffer:", 152, kAudioBufferComboId), audio_settings);
+  populate_sentence_pause_combo(audio_combo(L"Sentence pause:", 188, kSentencePauseComboId),
+                                audio_settings);
+  populate_lookahead_combo(audio_combo(L"Lookahead sentences:", 224, kLookaheadComboId),
+                           audio_settings);
+  if (on_page(kPlaybackPage, CreateWindowExW(
+          0, L"BUTTON", L"Reset to defaults", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 176, 268, 150, 26,
+          window, reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kResetPlaybackButtonId)), instance,
+          nullptr)) == nullptr) {
+    throw std::runtime_error("failed to create the Playback reset control");
+  }
 
   // Models page.
   label(kModelsPage, L"Model:", 24, 48, 148, 24);

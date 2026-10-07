@@ -215,6 +215,32 @@ int PlaybackController::seek_interval_seconds() const {
   return seek_interval_seconds_;
 }
 
+void PlaybackController::set_sentence_pause_milliseconds(int milliseconds) {
+  if (milliseconds < 0 || milliseconds > 1000) {
+    throw std::invalid_argument("sentence pause must be between 0 and 1000 milliseconds");
+  }
+  std::lock_guard lock(mutex_);
+  sentence_pause_milliseconds_ = milliseconds;
+}
+
+int PlaybackController::sentence_pause_milliseconds() const {
+  std::lock_guard lock(mutex_);
+  return sentence_pause_milliseconds_;
+}
+
+void PlaybackController::set_lookahead_sentences(int sentences) {
+  if (sentences < 1 || sentences > 4) {
+    throw std::invalid_argument("lookahead must be between 1 and 4 sentences");
+  }
+  std::lock_guard lock(mutex_);
+  lookahead_sentences_ = sentences;
+}
+
+int PlaybackController::lookahead_sentences() const {
+  std::lock_guard lock(mutex_);
+  return lookahead_sentences_;
+}
+
 bool PlaybackController::seek_by_interval(int direction) {
   if (direction != -1 && direction != 1) return false;
   std::lock_guard lock(mutex_);

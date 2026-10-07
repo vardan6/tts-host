@@ -2,6 +2,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
+#include <fstream>
 #include <future>
 #include <iostream>
 #include <mutex>
@@ -65,11 +66,11 @@ class StreamEndpoint final : public tts_host::PlaybackSink {
   class Stream final : public tts_host::PlaybackStream {
    public:
     explicit Stream(StreamEndpoint &owner) : owner_(owner) {}
-    bool play_from(std::uint32_t rate, std::uint16_t, const std::vector<std::uint8_t> &,
+    bool play_from(std::uint32_t rate, std::uint16_t, const std::vector<std::uint8_t> &pcm,
                    std::uint64_t frame, double origin, tts_host::PlaybackControl *,
                    std::uint64_t) override {
       owner_.record("play " + std::to_string(std::lround(origin * rate)) + "+" +
-                    std::to_string(frame));
+                    std::to_string(frame) + "/" + std::to_string(pcm.size()));
       return false;
     }
     bool drain(tts_host::PlaybackControl *control, std::uint64_t generation) override {
@@ -118,17 +119,98 @@ void verify_utterance_stream(const char *runner) {
     require(pipeline.wait_for(2s) == std::future_status::ready && pipeline.get() == stop,
             "pipeline did not finish after the drain");
   }
-  // The stub runner returns four frames per sentence.
+  // The stub runner returns four frames (eight bytes) per sentence.
   const std::vector<std::string> expected{
-      "open", "play 0+0", "play 4+0", "drain", "play 0+1", "play 4+0", "drain",
-      "open", "play 0+0", "play 4+0", "drain"};
+      "open", "play 0+0/8", "play 4+0/8", "drain", "play 0+1/8", "play 4+0/8", "drain",
+      "open", "play 0+0/8", "play 4+0/8", "drain"};
   require(endpoint.events == expected, "utterance stream was reopened, skipped, or drained per sentence");
+
+  // A 1 ms sentence pause is 24 silent frames of retained source PCM ahead of
+  // the second sentence, and counts toward generated duration.
+  endpoint.events.clear();
+  endpoint.draining = {};
+  auto draining = endpoint.draining.get_future();
+  tts_host::PlaybackController controller;
+  controller.set_sentence_pause_milliseconds(1);
+  auto control = controller.begin();
+  auto pipeline = std::async(std::launch::async, [&] {
+    tts_host::run_synthesis_pipeline("First. Second.", options, config, {runner, {}, {}},
+        control.get(), &controller, &endpoint, {5s, 5s, 5s, 100ms});
+  });
+  require(draining.wait_for(2s) == std::future_status::ready, "paused utterance did not drain");
+  require(std::lround(control->generated_seconds() * 24000) == 32, "sentence pause not counted");
+  control->cancel();
+  try { pipeline.get(); } catch (const tts_host::RunnerCancelled &) {}
+  const std::vector<std::string> paused{"open", "play 0+0/8", "play 4+0/56", "drain"};
+  require(endpoint.events == paused, "sentence pause was not inserted as source PCM");
+}
+
+// Holds the first sentence audible so the test can observe lookahead depth.
+class HeldEndpoint final : public tts_host::PlaybackSink {
+ public:
+  std::promise<void> started;
+  std::atomic_bool release{false};
+  std::atomic_int plays{0};
+  void play(std::uint32_t, std::uint16_t, const std::vector<std::uint8_t> &,
+            const std::string &, tts_host::PlaybackControl *) override {}
+  bool play_from(std::uint32_t, std::uint16_t, const std::vector<std::uint8_t> &,
+                 const std::string &, std::uint64_t, double, tts_host::PlaybackControl *control,
+                 std::uint64_t) override {
+    if (plays.fetch_add(1) == 0) {
+      started.set_value();
+      while (!release && !control->cancelled()) std::this_thread::sleep_for(1ms);
+    }
+    return false;
+  }
+};
+
+// Lookahead fills to the configured depth behind audible speech, and a speed
+// change discards all of it (docs/design/architecture.md#utterance-audio-stream).
+void verify_lookahead_depth(const char *runner, const std::filesystem::path &scratch) {
+  const auto events = scratch / "lookahead-events.txt";
+  std::filesystem::remove(events);
+  env("TTS_TEST_RUNNER_MODE", "normal");
+  env("TTS_TEST_RUNNER_LIFECYCLE", events.string());
+  tts_host::ConfigDocument config;
+  config.value = {{"audio", {{"outputDevice", "system-default"}}}};
+  tts_host::CliOptions options;
+  options.play_audio = true;
+  HeldEndpoint endpoint;
+  auto started = endpoint.started.get_future();
+  tts_host::PlaybackController controller;
+  controller.set_lookahead_sentences(3);
+  auto control = controller.begin();
+  auto pipeline = std::async(std::launch::async, [&] {
+    tts_host::run_synthesis_pipeline("One. Two. Three. Four. Five.", options, config,
+        {runner, {}, {}}, control.get(), &controller, &endpoint, {5s, 5s, 5s, 100ms});
+  });
+  struct Cleanup {
+    std::shared_ptr<tts_host::PlaybackControl> control;
+    ~Cleanup() { control->cancel(); }
+  } cleanup{control};
+  require(started.wait_for(2s) == std::future_status::ready, "first sentence did not play");
+  const auto frames = [&] { return std::lround(control->generated_seconds() * 24000); };
+  const auto deadline = std::chrono::steady_clock::now() + 2s;
+  while (frames() < 16 && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(5ms);
+  std::this_thread::sleep_for(200ms);
+  require(frames() == 16, "lookahead did not stop at three sentences behind the audible one");
+  controller.set_active_speech_speed(1.5);
+  endpoint.release = true;
+  require(pipeline.wait_for(2s) == std::future_status::ready, "pipeline did not finish");
+  pipeline.get();
+  env("TTS_TEST_RUNNER_LIFECYCLE", "");
+  std::ifstream input(events);
+  int synthesized = 0;
+  for (std::string line; std::getline(input, line);) synthesized += line == "synthesize";
+  require(synthesized == 8 && endpoint.plays == 5,
+          "speed change did not resynthesize exactly the three unheard sentences");
 }
 
 int main(int argc, char **argv) {
   try {
     require(argc == 3, "expected runner and scratch directory");
     verify_utterance_stream(argv[1]);
+    verify_lookahead_depth(argv[1], argv[2]);
     const auto gate = std::filesystem::path(argv[2]) / "lookahead-gate";
     const auto ready = std::filesystem::path(gate.string() + ".ready");
     env("TTS_TEST_RUNNER_MARKER", gate.string());
