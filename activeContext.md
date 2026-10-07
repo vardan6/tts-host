@@ -1,24 +1,25 @@
 # Active Context
 
-- Mode: session closed; branch-review remediation checkpoint.
+- Mode: implementation; Windows start-at-login AFK slices done.
 - Phase: review/finalize `roadmap-slices` before the Linux adapter.
-- State: all review blockers plus #11/#12/#13/#17 committed (`b733ad1`); #16 gap
-  measured (`e1ea73a`). Canonical [triage/plan](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#captured-implementation-plan).
-- Next action: get the user's explicit yes on #5 (proposed: only the Settings
-  toggle/future installer writes the login entry; ordinary launches never
-  repoint it), then implement it; then checkpoint review and combined Windows
-  acceptance. Also ask whether to schedule a #16 fix (continuous utterance
-  stream, or reused client plus event-driven drain).
-- Verification: 45/45 Linux CTests; 43/43 Windows checks excluding the two existing
-  ONNX 1.17.1/API-29 failures. Resident reuse, warm-up cancellation, shared Settings
+- State: Settings tabs, OS-owned startup switch, and first-run question
+  committed (`cd9e592`, `2894c0b`, `93025fc`); ADR 0008 and design docs
+  (incl. 2026-10-07 login-startup detail update) remain uncommitted.
+- Next action: `/next-slice` → **Per-utterance stream**
+  ([utterance stream](docs/design/architecture.md#utterance-audio-stream)),
+  then Playback tab tuning. Pending native checks: tab layout and first-run
+  dialog appearance; isolated-environment sign-in acceptance.
+- Verification: 46/46 CTests on Windows and Linux (`build-linux` boost override
+  now points at `cache/fetchcontent/windows-vs2022/boost_headers-src`). Resident reuse, warm-up cancellation, shared Settings
   lifetime, desktop fatal dialog, and Unicode spool cleanup covered. Native
   audible/browser acceptance and Settings-to-Now-Playing skip check remain;
   Now Playing visuals accepted. Real-model performance measurement remains pending.
 - Blockers/env: never change developer login startup (`PROJECT.md`); launch with
   `config.development.json`. Quit Host before replacing its binary. Managed
   Chrome disallows Developer mode; use the user's permitted browser.
-- Open questions: #5 startup synchronization; #16 fix scheduling (~80 ms/boundary,
-  [measurement](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-16)); bake-off execution, Qwen runtime
+  Never confirm the first-run dialog with yes on this machine; `compile-win.ps1`
+  pre-creates `%LOCALAPPDATA%\TTS Host\startup-choice.marker`.
+- Open questions: bake-off execution, Qwen runtime
   and quantization, release layout. Model manager currently has one resident slot;
   eager priority and lifecycle are in [design](docs/design/architecture.md#desktop-integration).
 - Discarded as noise: native UI lookups must use process id; invoke full Windows

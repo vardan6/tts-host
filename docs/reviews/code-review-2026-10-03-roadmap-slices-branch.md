@@ -164,6 +164,8 @@ Triage: `must_fix_now`. Concurrent launches can retain unrelated pipe writers an
 
 Triage: `should_fix_before_phase_complete`. Default true is specified; unconditional executable/config repointing needs an explicit policy decision.
 
+Decided 2026-10-06: [ADR 0008](../adr/0008-os-owned-login-startup.md).
+
 ### Finding 11
 
 Triage: `should_fix_before_phase_complete`. Console subsystem and stderr-only fatal reporting undermine desktop launch usability.
@@ -215,6 +217,9 @@ Conclusion: the gap is systematic and audible, not jitter. A continuous
 utterance stream (or at least a reused, pre-started client per utterance with
 event-driven feeding) is justified on evidence; whether to schedule it is a
 roadmap decision.
+
+Scheduled 2026-10-06 as the per-utterance stream in
+[design](../design/architecture.md#utterance-audio-stream).
 
 ### Finding 14
 

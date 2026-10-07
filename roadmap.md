@@ -387,16 +387,48 @@ Developer workflow:
     re-synthesize audio for a seek — see
     [design](docs/design/architecture.md#playback-control-and-position) and
     [requirements](docs/requirements/product.md#configuration-and-controls).
-  - [ ] **AFK — Windows start at login:** default `startup.launchOnLogin` on,
-    register the tray host under the current user's Run key with its config path,
-    and expose an immediate Settings toggle — see
-    [design](docs/design/architecture.md#desktop-integration) and
+  - [ ] **AFK — Windows start at login:** OS-owned login entry with a Settings
+    switch and a first-run question — see
+    [design](docs/design/architecture.md#login-startup),
+    [ADR 0008](docs/adr/0008-os-owned-login-startup.md), and
     [requirements](docs/requirements/product.md#configuration-and-controls).
     - [x] Application option and isolated native registry verification:
       enable/disable, quoted executable/config paths, repeated changes, and
       preservation of unrelated entries without changing login settings.
-    - [ ] Settings toggle and sign-in acceptance in an isolated Windows
-      environment; do not enable login startup on the developer machine.
+    - [x] **AFK — Settings tabs:** regroup the existing Settings controls into
+      General, Playback, Models, and Server tabs above the activity log; no
+      behaviour change — see
+      [design](docs/design/architecture.md#desktop-integration).
+    - [x] **AFK — OS-owned Windows startup switch:** stop launch-time
+      registration; the General tab switch reads the Run and
+      `StartupApproved` state on open, shows on/off/system-disabled/other-copy,
+      writes only the Run entry, and opens `ms-settings:startupapps` — see
+      [design](docs/design/architecture.md#login-startup) and
+      [ADR 0008](docs/adr/0008-os-owned-login-startup.md). Tests use an
+      isolated registry key.
+    - [x] **AFK — First-run startup question:** ask once per data directory,
+      pre-ticked from `startup.launchOnLogin`; write the marker; development
+      launches pre-create it — see
+      [design](docs/design/architecture.md#login-startup) and
+      [developer workflow](docs/design/developer-workflow.md).
+    - [ ] Settings toggle, system-page round trip, and sign-in acceptance in an
+      isolated Windows environment; do not enable login startup on the
+      developer machine.
+  - [ ] **AFK — Gap-free utterance audio stream:** one endpoint client per
+    utterance with event-driven refill and a single end-of-utterance drain —
+    see [design](docs/design/architecture.md#utterance-audio-stream) and
+    [finding 16](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-16).
+    - [ ] **AFK — Per-utterance stream:** keep one client across sentences,
+      including underrun silence, pause, Stop, seek, and replacement; cover with
+      the fake endpoint in `tts_host_synthesis_pipeline`.
+    - [ ] **AFK — Playback tab tuning:** add `audio.bufferMilliseconds`,
+      `sentencePauseMilliseconds`, and `lookaheadSentences` to the schema and
+      the Playback tab with **Reset to defaults** — see
+      [design](docs/design/architecture.md#utterance-audio-stream) and
+      [requirements](docs/requirements/product.md#configuration-and-controls).
+    - [ ] **HITL — Re-measure the boundary gap:** rerun the audible
+      `tts-host-playback-gap-probe` after the stream change, with the user's
+      permission.
 - [x] **HITL — Now Playing dialog acceptance:** user accepted the native
   dialog and requested that its testing be considered done (2026-10-03).
 - [ ] **HITL — Combined Windows desktop acceptance:** after the selection,
@@ -452,6 +484,10 @@ Developer workflow:
   - [ ] **AFK — Linux X11 selection compatibility:** add native X11-session
     capture after the KDE Wayland adapter; fail closed for unavailable targets —
     see [design](docs/design/architecture.md#platform-strategy).
+  - [ ] **AFK — Linux and macOS login startup:** XDG Autostart (Background
+    portal under Flatpak) and `SMAppService.mainApp`, with the same Settings
+    states as Windows — see
+    [design](docs/design/architecture.md#login-startup).
 
 ## Branch review follow-up
 
@@ -475,7 +511,10 @@ Each fix includes regressions for its failure mode; #17 audits remaining gaps.
 
 ### Remaining phase work
 
-- [ ] **HITL — Decide startup registration synchronization:** Decide when launch may repoint the login entry; preserve default-on behavior and the developer-machine restriction. See [finding 5](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-5) and [governing spec](docs/design/architecture.md#desktop-integration).
+- [x] **HITL — Decide startup registration synchronization:** decided
+  2026-10-06: the OS registration owns the state and launches never write it —
+  see [ADR 0008](docs/adr/0008-os-owned-login-startup.md). Implementation is
+  under **Windows start at login** above.
 - [x] **AFK — Desktop launch and fatal error reporting:** Keep headless diagnostics usable while making tray launch and fatal errors appropriate for desktop users. See [finding 11](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-11) and [governing spec](docs/requirements/product.md#distribution-and-usability).
 - [x] **AFK — Prompt playback after seek:** Resume retained audio without waiting for unrelated lookahead synthesis. See [finding 12](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-12) and [governing spec](docs/design/architecture.md#playback-control-and-position).
 - [x] **AFK — Resident synthesis lifecycle:** Reuse the tray model session, honor loadPolicy, and use actual activity for idle unloading before performance acceptance. See [finding 13](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-13) and [governing spec](docs/requirements/product.md#models).

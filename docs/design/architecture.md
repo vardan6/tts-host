@@ -167,6 +167,33 @@ create a generic unvalidated engine-options map. Model-specific voice, accent,
 pronunciation, and sampling controls wait until the bake-off identifies real
 shipping capabilities and their typed contracts.
 
+### Utterance audio stream
+
+One utterance owns one endpoint stream: resolve the device, activate, and
+`Initialize` once when its first audio is ready, then feed every sentence's PCM
+into that running client. Refill is event-driven
+(`AUDCLNT_STREAMFLAGS_EVENTCALLBACK`); the stream is drained once, at the end
+of the utterance, not after each sentence. Opening a client per sentence and
+polling for an empty buffer measured about 80 ms of audible silence per
+boundary ([finding 16](../reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-16)).
+Pause stops the client; Stop, seek, device change, and replacement reset or
+recreate it under the existing controller rules. When the next sentence is not
+ready, the client plays silence rather than stopping, so an underrun does not
+reopen the device.
+
+Three `audio` values tune the stream; Settings' Playback tab edits them and its
+**Reset to defaults** restores only that tab:
+
+| Key | Range | Default | Applies |
+|---|---|---|---|
+| `bufferMilliseconds` | 20–200 | 50 | next utterance stream |
+| `sentencePauseMilliseconds` | 0–1000 | 0 | next sentence boundary |
+| `lookaheadSentences` | 1–4 | 1 | next sentence boundary |
+
+The buffer is a request; the endpoint may round it up. The sentence pause is
+inserted silence in source PCM, so it is retained, seekable, and counted in
+position. Speed changes discard all unplayed lookahead, however deep.
+
 ### Engine-bounded synthesis
 
 The host's sentence-scale split is an engine-independent latency and
@@ -455,17 +482,9 @@ References:
 
 The application runs as a **per-user background process started at login**, not
 as a registered Windows Service: Session 0 isolation prevents a real service
-from reaching the user's audio device or showing a tray icon. Autostart is on by
-default with an obvious switch, because a background service that is not running
-when a client calls it is the most likely support complaint.
-
-On Windows, `startup.launchOnLogin` stores this choice in `config.json` and
-defaults to `true`. The Settings checkbox updates the current user's
-`Software\Microsoft\Windows\CurrentVersion\Run` entry immediately. Its
-command points to the current executable and the same config path, and starts
-the normal tray host at sign-in. Turning the setting off removes that entry.
-This uses the user's registry hive and never requires elevation. A registry
-failure is reported but does not prevent the Host from starting.
+from reaching the user's audio device or showing a tray icon. Autostart is
+offered by default with an obvious switch, because a background service that is
+not running when a client calls it is the most likely support complaint.
 
 Windows Host launch uses the GUI subsystem: Explorer and login launches create
 no console. Headless/help invocations preserve inherited pipes/files and attach
@@ -506,10 +525,13 @@ Three UI surfaces, divided by task:
   clipboard” action: **Read selection** runs the configured capture policy and
   surfaces the policy result, while **Read clipboard** explicitly reads the
   existing clipboard.
-- **Settings window** — everything, as a form over `config.json`: model manager
-  (install, download, remove, load/unload, idle timeout), server port and bind
-  address, autostart, hotkey bindings, log level. Restart-requiring settings are
-  marked. It opens independently of the tray (`tts-host --settings`), so a
+- **Settings window** — everything, as a form over `config.json` (plus the
+  OS-owned login-startup switch), grouped into tabs: **General** (login startup,
+  default profile, hotkeys, selection policy, log level), **Playback** (output
+  device, speed, seek interval, and the stream tuning values below), **Models**
+  (install, download, remove, load/unload, idle timeout, licences), and
+  **Server** (port and bind address). The activity log stays visible below the
+  tabs. Restart-requiring settings are marked. It opens independently of the tray (`tts-host --settings`), so a
   platform with no usable tray still has a full path to configuration.
 
 The global hotkey and selection capture belong to the host: it is already
@@ -580,6 +602,52 @@ promptly and abandons synthesis after its current sentence; a queued request
 waits behind it. A Windows Explorer context-menu entry is a registered shell
 extension with a different install story and is out of scope.
 
+### Login startup
+
+The operating system's own per-user startup registration is the only record of
+this choice, per [ADR 0008](../adr/0008-os-owned-login-startup.md). The Settings
+**General** tab shows one switch whose state is read from that registration each
+time Settings opens or regains focus, so a change made in the system page shows
+on return; changing it writes the registration immediately. Ordinary
+launches, `--settings`, and headless runs never create, repoint, or remove it.
+`startup.launchOnLogin` (default `true`) is only the pre-ticked default for the
+first-run question and the installer. The registered command starts the normal
+tray host with the executable and config path of the instance that wrote it.
+Registration never requires elevation; a failure is reported in Settings and
+does not prevent the Host from starting.
+
+States shown by the switch: **on**, **off**, **turned off in system settings**,
+and **points to another copy** (the entry exists but names a different
+executable or config). Turning the switch on from the last state repoints the
+entry to this copy, because the user asked for it explicitly. In the
+system-disabled state the switch is not toggled programmatically; Settings
+explains the state and offers **Open system startup settings**.
+
+- **Windows:** `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, which
+  Task Manager and Settings → Apps → Startup list automatically. Their on/off
+  switch writes `HKCU\...\Explorer\StartupApproved\Run`; the Host reads that
+  value (an odd first byte means disabled) but never writes it. Turning the
+  switch off deletes the Run value and leaves `StartupApproved` alone. The page
+  link opens `ms-settings:startupapps`.
+- **Linux:** an XDG Autostart `.desktop` file in `$XDG_CONFIG_HOME/autostart`
+  (default `~/.config/autostart`), listed by KDE Autostart and GNOME startup
+  applications. `Hidden=true` or `X-GNOME-Autostart-enabled=false` means
+  disabled by the user; a missing file means off. Under Flatpak, request
+  autostart through the XDG Background portal instead of writing the file.
+- **macOS:** `SMAppService.mainApp` (macOS 13+), listed in System Settings →
+  General → Login Items. `requiresApproval` is the system-disabled state;
+  `openSystemSettingsLoginItems()` is the page link.
+
+First run: the first tray launch (not `--settings`, headless, or CLI runs) in a
+data directory that has no startup-choice marker asks once, with a checkbox
+pre-ticked from `startup.launchOnLogin`, then writes the marker whatever the
+answer; closing the question without OK answers no. Only a yes registers. The
+marker (`kStartupChoiceMarkerName` in `include/tts_host/startup_choice.hpp`)
+is Host state in the data directory, not configuration. `compile-win.ps1`
+development launches pre-create the marker so the developer machine is never
+asked or registered (see `PROJECT.md`). The installer asks the same question and
+writes the marker; uninstall removes the registration it owns.
+
 ## Distribution
 
 The release artifact is a self-contained directory, zipped. A single
@@ -609,8 +677,8 @@ confirmed) — do not silently pick one shape when next touching this area.
 
 The first release ships the zip only. An installer — shortcuts, start-at-login,
 uninstall entry — comes with the cross-platform release work. Its startup choice
-uses the application's `startup.launchOnLogin` setting rather than a separate
-installer preference. Unzip-and-run
+follows [Login startup](#login-startup): pre-ticked from
+`startup.launchOnLogin`, written to the OS registration, removed on uninstall. Unzip-and-run
 needs no code signing, whereas an unsigned installer triggers SmartScreen, which
 is worse for a non-developer than a folder they double-click.
 

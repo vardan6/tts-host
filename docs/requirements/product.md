@@ -179,11 +179,22 @@ connected prose and sentence transitions.
 - The tray can suspend or resume the configured global selection shortcut for
   the current Host process without clearing its saved `hotkeys.readSelection`
   binding. On startup, the Host attempts to register that saved binding.
-- On Windows, `startup.launchOnLogin` defaults to `true`. The Settings window
-  exposes this setting and immediately adds or removes the current user's login
-  startup entry. The entry starts the tray host with the same config file; it
-  does not install a Windows service or require administrator access. A
-  registration failure is reported without preventing the Host from starting.
+- Login startup appears in the operating system's standard startup page
+  (Windows Task Manager and Settings → Apps → Startup, KDE/GNOME autostart,
+  macOS Login Items) and in a Settings **General** tab switch; both control the
+  same entry. A choice made in the system page is shown and never overridden by
+  the Host; Settings links to that page. Ordinary launches never change the
+  entry. It uses only per-user registration, without a service or administrator
+  access. A registration failure is reported without preventing the Host from
+  starting — see [design](../design/architecture.md#login-startup).
+- The first desktop launch asks once whether to start at login, pre-ticked from
+  `startup.launchOnLogin` (default `true`); the Host is never registered
+  silently.
+- The Settings **Playback** tab sets the audio buffer (20–200 ms, default 50),
+  the pause between sentences (0–1000 ms, default 0), and sentences prepared
+  ahead (1–4, default 1), with **Reset to defaults** for that tab. Changes apply
+  without a restart. Sentence boundaries add no audible device gap beyond the
+  configured pause.
 - Default speech speed is configurable from 0.5× to 2.0×, defaults to 1.0×, and
   is also adjustable from Now Playing for the active utterance.
 - Configuration changes take effect without a restart wherever possible.
@@ -209,9 +220,10 @@ connected prose and sentence transitions.
 - Portable mode keeps configuration, model packages, logs, and other mutable
   data in user-visible portable locations. Installed mode uses normal per-user
   OS data directories.
-- A future Windows installer must offer a launch-at-login choice using the same
-  `startup.launchOnLogin` setting as the application; the application can change
-  that choice afterward. Portable users have the same application setting.
+- A future Windows installer must offer a pre-ticked launch-at-login choice,
+  register it in the same OS entry the application uses, and remove that entry on
+  uninstall; the application and the system page can change it afterward.
+  Portable users get the same choice on first launch.
 - Windows releases should distinguish CPU/generic and NVIDIA-capable packages if
   bundling every acceleration runtime would make one distribution unreasonably
   large.

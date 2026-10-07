@@ -7,8 +7,10 @@ when it is missing, then invokes `cmake --build build --config Debug --parallel`
 `ctest --test-dir build -C Debug --output-on-failure`, and finally launches
 `build/Debug/tts-host.exe` with the gitignored `config.development.json` at the
 repo root. Create that document from the example when absent; otherwise retain
-the local document. Before launch, set `startup.launchOnLogin` to `false` so
-the development executable is never registered to run at login. Keeping the
+the local document. Before launch, set `startup.launchOnLogin` to `false` and
+create the first-run startup-choice marker in the launch's data directory, so
+the development executable is never registered to run at login and never asks
+(see [login startup](architecture.md#login-startup)). Keeping the
 config beside the example preserves relative schema and model paths.
 It should not compare source timestamps itself or terminate an existing host.
 `cmake --build` delegates to

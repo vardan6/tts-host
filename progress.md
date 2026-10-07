@@ -260,3 +260,11 @@
 - 2026-10-05: Branch-review remediation checkpoint committed (`b733ad1`) — blockers #1–#4 and #6–#10 plus #11/#12/#13/#17; 45/45 Linux CTests.
 
 - 2026-10-05: Measure sentence transitions (#16) — Windows loopback probe (`tools/playback_gap_probe.cpp`) shows each per-sentence `play()` adds ~80 ms (p95 ~90 ms) of silence; validated against a 20 ms control gap (measured 23 ms). Continuous-stream fix is justified but not scheduled.
+
+- 2026-10-06: Decide startup synchronization (#5) and schedule the #16 fix — user delegated to recommendations; captured ADR 0008 (OS owns login-startup state, first-run pre-ticked question), design sections [login startup](docs/design/architecture.md#login-startup) and [utterance audio stream](docs/design/architecture.md#utterance-audio-stream), Settings tabs, and five Windows roadmap slices. No code changed.
+
+- 2026-10-06: Settings tabs (`cd9e592`) — General/Playback/Models/Server tabs above the activity log; controls keep ids; lifetime test covers tab switching.
+
+- 2026-10-06: OS-owned Windows startup switch (`2894c0b`) — launches no longer register; Settings reads Run + `StartupApproved` (on/off/system-disabled/other copy) on open and activation, writes only Run, and links `ms-settings:startupapps`; isolated-registry tests.
+
+- 2026-10-06: First-run startup question (`93025fc`) — Windows tray launch asks once per data directory (pre-ticked from `startup.launchOnLogin`), writes `startup-choice.marker` whatever the answer, registers only on yes; `compile-win.ps1` pre-creates the marker. 46/46 CTests on Windows and Linux. Native visual check of tabs and dialog not yet done.
