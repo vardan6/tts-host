@@ -36,6 +36,11 @@ void run_synthesis_pipeline(const std::string &spoken_text, const CliOptions &op
   PlaybackSink &playback_sink = sink == nullptr ? system_sink : *sink;
   const std::string output_device = document.value.at("audio").at("outputDevice").get<std::string>();
   const double default_speech_speed = document.value.at("audio").value("speechSpeed", 1.0);
+  // One endpoint stream per utterance, so sentence boundaries add no device
+  // gap (docs/design/architecture.md#utterance-audio-stream). Declared before
+  // the playback thread, which uses it until joined.
+  std::unique_ptr<PlaybackStream> stream;
+  if (options.play_audio) stream = playback_sink.open_stream(output_device, kDefaultPlaybackBuffer);
   std::unique_ptr<tts_host::AudioHistory> audio_history;
   if (options.play_audio && control != nullptr && playback_controller != nullptr) {
     audio_history = std::make_unique<tts_host::AudioHistory>();
@@ -124,11 +129,11 @@ void run_synthesis_pipeline(const std::string &spoken_text, const CliOptions &op
     playback_done = false;
     const auto generation = handled_seek_generation;
     playback_thread = std::thread(
-        [&playback_sink, segment, payload, start_frame, &output_device, &playback_error,
+        [endpoint = stream.get(), segment, payload, start_frame, &playback_error,
          &playback_interrupted_for_seek, &playback_done, control, generation]() {
           try {
-            playback_interrupted_for_seek = playback_sink.play_from(
-                segment.sample_rate_hz, segment.channels, payload, output_device, start_frame,
+            playback_interrupted_for_seek = endpoint->play_from(
+                segment.sample_rate_hz, segment.channels, payload, start_frame,
                 segment.start_seconds, control, generation);
           } catch (...) {
             playback_error = std::current_exception();
@@ -216,10 +221,11 @@ void run_synthesis_pipeline(const std::string &spoken_text, const CliOptions &op
       const auto sample_rate = synthesize_result.sample_rate_hz;
       const auto channel_count = static_cast<std::uint16_t>(synthesize_result.channels);
       playback_thread = std::thread(
-          [&playback_sink, sample_rate, channel_count, chunk_payload, &output_device,
-           &playback_error, control]() {
+          [endpoint = stream.get(), sample_rate, channel_count, chunk_payload, &playback_error,
+           control, generation = handled_seek_generation]() {
             try {
-              playback_sink.play(sample_rate, channel_count, chunk_payload, output_device, control);
+              endpoint->play_from(sample_rate, channel_count, chunk_payload, 0, 0.0, control,
+                                  generation);
             } catch (...) {
               playback_error = std::current_exception();
             }
@@ -230,10 +236,30 @@ void run_synthesis_pipeline(const std::string &spoken_text, const CliOptions &op
       pcm_payload.insert(pcm_payload.end(), chunk_payload.begin(), chunk_payload.end());
     }
   }
-  while (playback_thread.joinable()) {
+  while (stream != nullptr) {
+    while (playback_thread.joinable()) {
+      join_playback();
+      const bool was_interrupted = playback_interrupted_for_seek;
+      if (!was_interrupted) next_playback_chunk = playback_chunk_index + 1;
+      apply_pending_seek();
+      throw_if_cancelled(control);
+      if (!launch_retained_chunk()) break;
+    }
+    throw_if_cancelled(control);
+    // The stream drains once, at the end of the utterance. A seek during the
+    // drain replays retained audio into the same stream.
+    playback_interrupted_for_seek = false;
+    playback_thread = std::thread(
+        [endpoint = stream.get(), &playback_error, &playback_interrupted_for_seek, control,
+         generation = handled_seek_generation]() {
+          try {
+            playback_interrupted_for_seek = endpoint->drain(control, generation);
+          } catch (...) {
+            playback_error = std::current_exception();
+          }
+        });
     join_playback();
-    const bool was_interrupted = playback_interrupted_for_seek;
-    if (!was_interrupted) next_playback_chunk = playback_chunk_index + 1;
+    if (!playback_interrupted_for_seek) break;
     apply_pending_seek();
     throw_if_cancelled(control);
     if (!launch_retained_chunk()) break;

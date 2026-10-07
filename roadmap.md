@@ -418,7 +418,7 @@ Developer workflow:
     utterance with event-driven refill and a single end-of-utterance drain —
     see [design](docs/design/architecture.md#utterance-audio-stream) and
     [finding 16](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-16).
-    - [ ] **AFK — Per-utterance stream:** keep one client across sentences,
+    - [x] **AFK — Per-utterance stream:** keep one client across sentences,
       including underrun silence, pause, Stop, seek, and replacement; cover with
       the fake endpoint in `tts_host_synthesis_pipeline`.
     - [ ] **AFK — Playback tab tuning:** add `audio.bufferMilliseconds`,

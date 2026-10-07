@@ -4,11 +4,14 @@
 //
 // Plays short tones through the default output endpoint while a WASAPI
 // loopback client records the endpoint mix, then reports silence between
-// tones. Two conditions run back to back:
+// tones. Three conditions run back to back:
 //   control    -- one play() call with tones separated by a known silence, to
 //                 validate the detector against a known gap;
-//   per-call   -- one play() call per tone on a fresh thread, as
-//                 synthesis_pipeline.cpp does for each retained sentence.
+//   per-call   -- one play() call per tone on a fresh thread, opening a
+//                 client per sentence as the pipeline did before the
+//                 utterance stream;
+//   stream     -- one utterance stream fed one tone per fresh thread and
+//                 drained once, as synthesis_pipeline.cpp now does.
 // A silent keep-alive render stream keeps loopback packets flowing while no
 // tone is playing. The tones are audible. Windows only.
 
@@ -280,12 +283,29 @@ int main(int argc, char **argv) {
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
     const auto call_peaks = call_recorder.stop();
 
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+
+    LoopbackRecorder stream_recorder;
+    stream_recorder.start();
+    {
+      const auto stream =
+          sink.open_stream(tts_host::kSystemDefaultOutputDevice, tts_host::kDefaultPlaybackBuffer);
+      for (int i = 0; i <= boundaries; ++i)
+        std::thread([&] { stream->play_from(kSourceRate, 1, clip, 0, 0.0, nullptr, 0); }).join();
+      std::thread([&] { stream->drain(nullptr, 0); }).join();
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    const auto stream_peaks = stream_recorder.stop();
+
     std::cout << "Loopback mix rate " << control_recorder.rate() << " Hz; discontinuities "
-              << control_recorder.discontinuities() + call_recorder.discontinuities() << '\n';
+              << control_recorder.discontinuities() + call_recorder.discontinuities() +
+                     stream_recorder.discontinuities()
+              << '\n';
     std::cout << "Control gap inserted: " << kControlGapSeconds * 1000.0 << " ms\n";
     report("control  (single call)", gaps(control_peaks, control_recorder.rate()), boundaries);
     report("per-call (audible)", gaps(call_peaks, call_recorder.rate()), boundaries);
     report("per-call (wall-clock overhead per play)", overheads, boundaries + 1);
+    report("stream   (audible)", gaps(stream_peaks, stream_recorder.rate()), boundaries);
     return 0;
   } catch (const std::exception &error) {
     std::cerr << "playback_gap_probe: " << error.what() << '\n';

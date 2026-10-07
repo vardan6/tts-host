@@ -3,6 +3,7 @@
 #include "tts_host/audio_conversion.hpp"
 
 #include <stdexcept>
+#include <utility>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -19,7 +20,6 @@
 #include <chrono>
 #include <cstring>
 #include <string>
-#include <thread>
 #endif
 
 namespace tts_host {
@@ -41,6 +41,32 @@ bool PlaybackSink::play_from(std::uint32_t sample_rate_hz, std::uint16_t channel
                                             pcm_s16le.end());
   play(sample_rate_hz, channels, remainder, device_name, control);
   return false;
+}
+
+namespace {
+// Adapts endpoints without a persistent client: each sentence drains itself.
+class PerCallPlaybackStream final : public PlaybackStream {
+ public:
+  PerCallPlaybackStream(PlaybackSink &sink, std::string device_name)
+      : sink_(sink), device_name_(std::move(device_name)) {}
+  bool play_from(std::uint32_t sample_rate_hz, std::uint16_t channels,
+                 const std::vector<std::uint8_t> &pcm_s16le, std::uint64_t start_source_frame,
+                 double source_origin_seconds, PlaybackControl *control,
+                 std::uint64_t seek_generation) override {
+    return sink_.play_from(sample_rate_hz, channels, pcm_s16le, device_name_, start_source_frame,
+                           source_origin_seconds, control, seek_generation);
+  }
+  bool drain(PlaybackControl *, std::uint64_t) override { return false; }
+
+ private:
+  PlaybackSink &sink_;
+  std::string device_name_;
+};
+}  // namespace
+
+std::unique_ptr<PlaybackStream> PlaybackSink::open_stream(const std::string &device_name,
+                                                          std::chrono::milliseconds) {
+  return std::make_unique<PerCallPlaybackStream>(*this, device_name);
 }
 
 #ifdef _WIN32
@@ -163,7 +189,301 @@ struct CoTaskMemFormat {
   ~CoTaskMemFormat() { CoTaskMemFree(value); }
 };
 
+// Thrown when the endpoint disappears mid-stream, so the stream can reopen it.
+struct EndpointInvalidated : std::runtime_error {
+  EndpointInvalidated() : std::runtime_error("WASAPI endpoint invalidated") {}
+};
+
+void check_stream(HRESULT result, const char *what) {
+  if (result == AUDCLNT_E_DEVICE_INVALIDATED) throw EndpointInvalidated();
+  throw_if_failed(result, what);
+}
+
+std::wstring endpoint_id(IMMDevice &device) {
+  LPWSTR id = nullptr;
+  throw_if_failed(device.GetId(&id), "IMMDevice::GetId");
+  std::wstring value(id);
+  CoTaskMemFree(id);
+  return value;
+}
+
+// One event-driven shared-mode client per utterance
+// (docs/design/architecture.md#utterance-audio-stream). The client is opened
+// on the first audio and kept running between sentences: when the next
+// sentence is late the endpoint renders silence instead of being reopened.
+// Pause stops it; a seek flushes it; a changed default endpoint or source
+// format drains and reopens it at the next sentence.
+class WasapiPlaybackStream final : public PlaybackStream {
+ public:
+  WasapiPlaybackStream(std::string device_name, std::chrono::milliseconds buffer)
+      : device_name_(std::move(device_name)), buffer_(buffer) {}
+
+  ~WasapiPlaybackStream() override {
+    close();
+    if (event_ != nullptr) CloseHandle(event_);
+    if (mta_held_) CoDecrementMTAUsage(mta_cookie_);
+  }
+
+  bool play_from(std::uint32_t sample_rate_hz, std::uint16_t channels,
+                 const std::vector<std::uint8_t> &pcm_s16le, std::uint64_t start_source_frame,
+                 double source_origin_seconds, PlaybackControl *control,
+                 std::uint64_t seek_generation) override {
+    if (sample_rate_hz == 0) throw std::invalid_argument("source sample rate must be positive");
+    if (pcm_s16le.empty()) return false;
+    const ComGuard com_guard = initialize_com();
+    if (client_ && seek_generation != generation_) flush();
+    generation_ = seek_generation;
+    if (client_ && (sample_rate_hz != source_rate_ || channels != source_channels_ ||
+                    default_endpoint_changed())) {
+      if (drain(control, seek_generation)) return true;
+      if (control != nullptr && control->cancelled()) return false;
+      close();
+    }
+    if (!client_) open(sample_rate_hz, channels);
+
+    const std::vector<std::uint8_t> converted_pcm =
+        needs_conversion_ ? convert_pcm_s16le(pcm_s16le, sample_rate_hz, channels, endpoint_format_)
+                          : std::vector<std::uint8_t>();
+    const std::vector<std::uint8_t> &playback_pcm = needs_conversion_ ? converted_pcm : pcm_s16le;
+    const std::size_t total_frames = playback_pcm.size() / bytes_per_frame_;
+    std::size_t next_frame = static_cast<std::size_t>(std::min<std::uint64_t>(
+        total_frames,
+        convert_frame_position(start_source_frame, sample_rate_hz, endpoint_format_.sample_rate_hz)));
+    segment_origin_seconds_ = source_origin_seconds;
+    segment_base_frame_ = next_frame;
+    segment_queue_start_ = queued_;
+    if (control != nullptr) {
+      control->update_position(source_origin_seconds +
+                               static_cast<double>(start_source_frame) / sample_rate_hz);
+    }
+
+    try {
+      while (true) {
+        if (!observe_controls(control, seek_generation)) return interrupted(control, seek_generation);
+        UINT32 padding_frames = 0;
+        check_stream(client_->GetCurrentPadding(&padding_frames), "IAudioClient::GetCurrentPadding");
+        const auto frames_to_write = static_cast<UINT32>(
+            std::min<std::size_t>(buffer_frames_ - padding_frames, total_frames - next_frame));
+        if (frames_to_write > 0) {
+          BYTE *buffer = nullptr;
+          check_stream(render_->GetBuffer(frames_to_write, &buffer), "IAudioRenderClient::GetBuffer");
+          std::memcpy(buffer, playback_pcm.data() + next_frame * bytes_per_frame_,
+                      frames_to_write * bytes_per_frame_);
+          check_stream(render_->ReleaseBuffer(frames_to_write, 0), "IAudioRenderClient::ReleaseBuffer");
+          next_frame += frames_to_write;
+          queued_ += frames_to_write;
+        }
+        start();
+        if (next_frame >= total_frames) return false;
+        wait_for_period(control);
+      }
+    } catch (const EndpointInvalidated &) {
+      // Continue the unqueued remainder on whatever endpoint now resolves.
+      const auto resume_frame = convert_frame_position(next_frame, endpoint_format_.sample_rate_hz,
+                                                       sample_rate_hz);
+      close();
+      return play_from(sample_rate_hz, channels, pcm_s16le, resume_frame, source_origin_seconds,
+                       control, seek_generation);
+    }
+  }
+
+  bool drain(PlaybackControl *control, std::uint64_t seek_generation) override {
+    if (!client_) return false;
+    const ComGuard com_guard = initialize_com();
+    try {
+      while (true) {
+        if (!observe_controls(control, seek_generation)) return interrupted(control, seek_generation);
+        start();
+        UINT32 padding_frames = 0;
+        check_stream(client_->GetCurrentPadding(&padding_frames), "IAudioClient::GetCurrentPadding");
+        if (padding_frames == 0) break;
+        wait_for_period(control);
+      }
+    } catch (const EndpointInvalidated &) {
+      close();
+      return false;
+    }
+    stop();
+    publish_position(control);
+    return false;
+  }
+
+ private:
+  void open(std::uint32_t sample_rate_hz, std::uint16_t channels) {
+    if (!mta_held_) {
+      // Playback calls arrive on short-lived threads; keep the MTA, and so
+      // this client, alive between them.
+      throw_if_failed(CoIncrementMTAUsage(&mta_cookie_), "CoIncrementMTAUsage");
+      mta_held_ = true;
+    }
+    ComPtr<IMMDeviceEnumerator> enumerator = create_device_enumerator();
+    ComPtr<IMMDevice> device = resolve_output_device(*enumerator.Get(), device_name_);
+    endpoint_id_ = endpoint_id(*device.Get());
+    throw_if_failed(device->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr, &client_),
+                    "IMMDevice::Activate");
+
+    WAVEFORMATEX format{};
+    format.wFormatTag = WAVE_FORMAT_PCM;
+    format.nChannels = channels;
+    format.nSamplesPerSec = sample_rate_hz;
+    format.wBitsPerSample = 16;
+    format.nBlockAlign = static_cast<WORD>(channels * (format.wBitsPerSample / 8));
+    format.nAvgBytesPerSec = format.nSamplesPerSec * format.nBlockAlign;
+
+    // Shared-mode endpoints need not accept runner PCM directly (Kokoro emits
+    // 24 kHz mono S16LE whereas typical endpoints mix at 48 kHz float stereo).
+    // Ask WASAPI for its closest supported format and convert before queuing.
+    CoTaskMemFormat closest_format;
+    const HRESULT support_result =
+        client_->IsFormatSupported(AUDCLNT_SHAREMODE_SHARED, &format, &closest_format.value);
+    WAVEFORMATEX *endpoint_format = &format;
+    if (support_result == S_FALSE && closest_format.value != nullptr) {
+      endpoint_format = closest_format.value;
+    } else if (support_result == S_FALSE) {
+      throw std::runtime_error(
+          "WASAPI IAudioClient::IsFormatSupported returned no usable shared-mode format");
+    } else if (support_result != S_OK) {
+      throw_if_failed(support_result, "IAudioClient::IsFormatSupported");
+    }
+    needs_conversion_ = endpoint_format->nSamplesPerSec != sample_rate_hz ||
+                        endpoint_format->nChannels != channels ||
+                        endpoint_format->wBitsPerSample != 16 ||
+                        endpoint_format->wFormatTag != WAVE_FORMAT_PCM;
+    endpoint_format_ = audio_format_from_wave_format(*endpoint_format);
+    bytes_per_frame_ = endpoint_format->nBlockAlign;
+
+    // Buffer duration is in 100-ns units.
+    const REFERENCE_TIME buffer_duration = buffer_.count() * 10'000;
+    throw_if_failed(client_->Initialize(AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
+                                        buffer_duration, 0, endpoint_format, nullptr),
+                    "IAudioClient::Initialize");
+    if (event_ == nullptr) {
+      event_ = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+      if (event_ == nullptr) throw std::runtime_error("CreateEvent for WASAPI refill failed");
+    }
+    throw_if_failed(client_->SetEventHandle(event_), "IAudioClient::SetEventHandle");
+    throw_if_failed(client_->GetBufferSize(&buffer_frames_), "IAudioClient::GetBufferSize");
+    throw_if_failed(client_->GetService(IID_PPV_ARGS(&render_)),
+                    "IAudioClient::GetService(IAudioRenderClient)");
+    source_rate_ = sample_rate_hz;
+    source_channels_ = channels;
+    queued_ = 0;
+    segment_queue_start_ = 0;
+    started_ = false;
+  }
+
+  void close() {
+    if (client_ && started_) client_->Stop();
+    started_ = false;
+    render_.Reset();
+    client_.Reset();
+  }
+
+  void start() {
+    if (started_) return;
+    check_stream(client_->Start(), "IAudioClient::Start");
+    started_ = true;
+  }
+
+  void stop() {
+    if (!started_) return;
+    check_stream(client_->Stop(), "IAudioClient::Stop");
+    started_ = false;
+  }
+
+  // Discards buffered audio for a seek; the next call restarts the client.
+  void flush() {
+    if (started_) client_->Stop();
+    started_ = false;
+    client_->Reset();
+    queued_ = 0;
+    segment_queue_start_ = 0;
+  }
+
+  // Only a followed system default can move between sentences; a pinned
+  // device is reopened only if it is invalidated.
+  bool default_endpoint_changed() const {
+    if (device_name_ != kSystemDefaultOutputDevice) return false;
+    try {
+      ComPtr<IMMDevice> device;
+      if (FAILED(create_device_enumerator()->GetDefaultAudioEndpoint(eRender, eConsole, &device)))
+        return false;
+      return endpoint_id(*device.Get()) != endpoint_id_;
+    } catch (const std::exception &) {
+      return false;
+    }
+  }
+
+  // Stops on Stop, flushes on seek, and holds the client stopped while
+  // paused. False means the caller must return.
+  bool observe_controls(PlaybackControl *control, std::uint64_t seek_generation) {
+    if (control == nullptr) return true;
+    if (control->cancelled()) {
+      stop();
+      return false;
+    }
+    if (control->seek_generation() != seek_generation) {
+      flush();
+      return false;
+    }
+    if (!control->paused()) return true;
+    stop();
+    if (control->wait_until_resumed_or_seek(seek_generation)) return true;
+    if (!control->cancelled()) flush();
+    return false;
+  }
+
+  static bool interrupted(const PlaybackControl *control, std::uint64_t seek_generation) {
+    return control != nullptr && !control->cancelled() &&
+           control->seek_generation() != seek_generation;
+  }
+
+  void wait_for_period(PlaybackControl *control) {
+    WaitForSingleObject(event_, static_cast<DWORD>(buffer_.count()));
+    publish_position(control);
+  }
+
+  // Position counts frames the endpoint has consumed from this segment; the
+  // previous sentence's buffered tail leaves it at the segment start.
+  void publish_position(PlaybackControl *control) {
+    UINT32 padding_frames = 0;
+    if (control == nullptr || FAILED(client_->GetCurrentPadding(&padding_frames))) return;
+    const std::uint64_t played = queued_ >= padding_frames ? queued_ - padding_frames : 0;
+    if (played < segment_queue_start_) return;
+    control->update_position(
+        segment_origin_seconds_ +
+        static_cast<double>(segment_base_frame_ + (played - segment_queue_start_)) /
+            endpoint_format_.sample_rate_hz);
+  }
+
+  std::string device_name_;
+  std::chrono::milliseconds buffer_;
+  bool mta_held_ = false;
+  CO_MTA_USAGE_COOKIE mta_cookie_{};
+  HANDLE event_ = nullptr;
+  ComPtr<IAudioClient> client_;
+  ComPtr<IAudioRenderClient> render_;
+  std::wstring endpoint_id_;
+  std::uint32_t source_rate_ = 0;
+  std::uint16_t source_channels_ = 0;
+  AudioFormat endpoint_format_{};
+  bool needs_conversion_ = false;
+  std::size_t bytes_per_frame_ = 0;
+  UINT32 buffer_frames_ = 0;
+  bool started_ = false;
+  std::uint64_t generation_ = 0;
+  std::uint64_t queued_ = 0;               // endpoint frames queued since open or flush
+  std::uint64_t segment_queue_start_ = 0;  // queued_ when the current segment began
+  std::size_t segment_base_frame_ = 0;     // segment frame its first queued frame came from
+  double segment_origin_seconds_ = 0.0;
+};
+
 }  // namespace
+
+std::unique_ptr<PlaybackStream> SystemPlaybackSink::open_stream(const std::string &device_name,
+                                                                std::chrono::milliseconds buffer) {
+  return std::make_unique<WasapiPlaybackStream>(device_name, buffer);
+}
 
 void SystemPlaybackSink::play(std::uint32_t sample_rate_hz, std::uint16_t channels,
                               const std::vector<std::uint8_t> &pcm_s16le,
@@ -179,170 +499,10 @@ bool SystemPlaybackSink::play_from(std::uint32_t sample_rate_hz, std::uint16_t c
                                    std::uint64_t start_source_frame,
                                    double source_origin_seconds, PlaybackControl *control,
                                    std::uint64_t seek_generation) {
-  if (pcm_s16le.empty()) {
-    return false;
-  }
-
-  const ComGuard com_guard = initialize_com();
-
-  ComPtr<IMMDeviceEnumerator> enumerator = create_device_enumerator();
-
-  ComPtr<IMMDevice> device = resolve_output_device(*enumerator.Get(), device_name);
-
-  ComPtr<IAudioClient> audio_client;
-  throw_if_failed(device->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr, &audio_client),
-                  "IMMDevice::Activate");
-
-  WAVEFORMATEX format{};
-  format.wFormatTag = WAVE_FORMAT_PCM;
-  format.nChannels = channels;
-  format.nSamplesPerSec = sample_rate_hz;
-  format.wBitsPerSample = 16;
-  format.nBlockAlign = static_cast<WORD>(channels * (format.wBitsPerSample / 8));
-  format.nAvgBytesPerSec = format.nSamplesPerSec * format.nBlockAlign;
-
-  // Shared-mode endpoints need not accept runner PCM directly (Kokoro emits
-  // 24 kHz mono S16LE whereas typical endpoints mix at 48 kHz float stereo).
-  // Ask WASAPI for its closest supported format and convert before queuing.
-  CoTaskMemFormat closest_format;
-  const HRESULT support_result = audio_client->IsFormatSupported(
-      AUDCLNT_SHAREMODE_SHARED, &format, &closest_format.value);
-  WAVEFORMATEX *endpoint_format = &format;
-  if (support_result == S_FALSE && closest_format.value != nullptr) {
-    endpoint_format = closest_format.value;
-  } else if (support_result == S_FALSE) {
-    throw std::runtime_error(
-        "WASAPI IAudioClient::IsFormatSupported returned no usable shared-mode format");
-  } else if (support_result != S_OK) {
-    throw_if_failed(support_result, "IAudioClient::IsFormatSupported");
-  }
-
-  const bool needs_conversion = endpoint_format->nSamplesPerSec != sample_rate_hz ||
-                                endpoint_format->nChannels != channels ||
-                                endpoint_format->wBitsPerSample != 16 ||
-                                endpoint_format->wFormatTag != WAVE_FORMAT_PCM;
-  const std::vector<std::uint8_t> converted_pcm =
-      needs_conversion ? convert_pcm_s16le(pcm_s16le, sample_rate_hz, channels,
-                                           audio_format_from_wave_format(*endpoint_format))
-                       : std::vector<std::uint8_t>();
-  const std::vector<std::uint8_t> &playback_pcm =
-      needs_conversion ? converted_pcm : pcm_s16le;
-
-  // 100 ms shared-mode buffer, in 100-ns units.
-  constexpr REFERENCE_TIME kBufferDuration = 1'000'000;
-  throw_if_failed(
-      audio_client->Initialize(AUDCLNT_SHAREMODE_SHARED, 0, kBufferDuration, 0, endpoint_format, nullptr),
-      "IAudioClient::Initialize");
-
-  UINT32 buffer_frame_count = 0;
-  throw_if_failed(audio_client->GetBufferSize(&buffer_frame_count), "IAudioClient::GetBufferSize");
-
-  ComPtr<IAudioRenderClient> render_client;
-  throw_if_failed(audio_client->GetService(IID_PPV_ARGS(&render_client)),
-                  "IAudioClient::GetService(IAudioRenderClient)");
-
-  const std::size_t bytes_per_frame = endpoint_format->nBlockAlign;
-  const std::size_t total_frames = playback_pcm.size() / bytes_per_frame;
-  const auto start_seconds = static_cast<double>(start_source_frame) / sample_rate_hz;
-  const auto start_endpoint_frame = static_cast<std::size_t>(std::min<std::uint64_t>(
-      total_frames,
-      convert_frame_position(start_source_frame, sample_rate_hz, endpoint_format->nSamplesPerSec)));
-  std::size_t frames_written = start_endpoint_frame;
-
-  const auto write_frames = [&](UINT32 frames_available) {
-    if (frames_available == 0 || frames_written >= total_frames) {
-      return;
-    }
-    const std::size_t frames_remaining = total_frames - frames_written;
-    const UINT32 frames_to_write =
-        static_cast<UINT32>(std::min<std::size_t>(frames_available, frames_remaining));
-    BYTE *buffer = nullptr;
-    throw_if_failed(render_client->GetBuffer(frames_to_write, &buffer),
-                    "IAudioRenderClient::GetBuffer");
-    std::memcpy(buffer, playback_pcm.data() + frames_written * bytes_per_frame,
-               frames_to_write * bytes_per_frame);
-    throw_if_failed(render_client->ReleaseBuffer(frames_to_write, 0),
-                    "IAudioRenderClient::ReleaseBuffer");
-    frames_written += frames_to_write;
-  };
-
-  if (control != nullptr) control->update_position(source_origin_seconds + start_seconds);
-  write_frames(buffer_frame_count);
-  if (control != nullptr && control->paused() &&
-      !control->wait_until_resumed_or_seek(seek_generation)) {
-    return control->seek_generation() != seek_generation;
-  }
-  if (control != nullptr && control->seek_generation() != seek_generation) return true;
-  throw_if_failed(audio_client->Start(), "IAudioClient::Start");
-
-  const auto poll_interval = std::chrono::milliseconds(kBufferDuration / 10'000 / 2);
-  const auto wait_if_paused = [&]() {
-    if (control == nullptr || !control->paused()) {
-      return true;
-    }
-    audio_client->Stop();
-    if (!control->wait_until_resumed_or_seek(seek_generation)) {
-      return false;
-    }
-    throw_if_failed(audio_client->Start(), "IAudioClient::Start after pause");
-    return true;
-  };
-  while (frames_written < total_frames) {
-    if (control != nullptr && control->cancelled()) {
-      audio_client->Stop();
-      return false;
-    }
-    if (control != nullptr && control->seek_generation() != seek_generation) {
-      audio_client->Stop();
-      return true;
-    }
-    if (!wait_if_paused()) {
-      audio_client->Stop();
-      return false;
-    }
-    std::this_thread::sleep_for(poll_interval);
-    UINT32 padding_frames = 0;
-    throw_if_failed(audio_client->GetCurrentPadding(&padding_frames),
-                    "IAudioClient::GetCurrentPadding");
-    if (control != nullptr) {
-      const auto played_frames = frames_written >= padding_frames ? frames_written - padding_frames : 0;
-      control->update_position(source_origin_seconds +
-                               static_cast<double>(played_frames) / endpoint_format->nSamplesPerSec);
-    }
-    write_frames(buffer_frame_count - padding_frames);
-  }
-
-  // Drain: wait for the device to finish playing what's buffered, otherwise
-  // Stop() cuts off the tail of the last chunk.
-  UINT32 padding_frames = 0;
-  do {
-    if (control != nullptr && control->cancelled()) {
-      audio_client->Stop();
-      return false;
-    }
-    if (control != nullptr && control->seek_generation() != seek_generation) {
-      audio_client->Stop();
-      return true;
-    }
-    if (!wait_if_paused()) {
-      audio_client->Stop();
-      return false;
-    }
-    std::this_thread::sleep_for(poll_interval);
-    throw_if_failed(audio_client->GetCurrentPadding(&padding_frames),
-                    "IAudioClient::GetCurrentPadding");
-    if (control != nullptr) {
-      const auto played_frames = frames_written >= padding_frames ? frames_written - padding_frames : 0;
-      control->update_position(source_origin_seconds +
-                               static_cast<double>(played_frames) / endpoint_format->nSamplesPerSec);
-    }
-  } while (padding_frames > 0);
-
-  throw_if_failed(audio_client->Stop(), "IAudioClient::Stop");
-  if (control != nullptr) control->update_position(source_origin_seconds +
-                                                   static_cast<double>(total_frames) /
-                                                       endpoint_format->nSamplesPerSec);
-  return false;
+  const auto stream = open_stream(device_name, kDefaultPlaybackBuffer);
+  return stream->play_from(sample_rate_hz, channels, pcm_s16le, start_source_frame,
+                           source_origin_seconds, control, seek_generation) ||
+         stream->drain(control, seek_generation);
 }
 
 std::vector<std::string> list_output_devices() {
@@ -384,6 +544,11 @@ bool SystemPlaybackSink::play_from(std::uint32_t, std::uint16_t,
       "audio playback is not implemented on this platform yet (Windows only, see "
       "docs/design/architecture.md#speech-pipeline); requested output device: \"" +
       device_name + "\"");
+}
+
+std::unique_ptr<PlaybackStream> SystemPlaybackSink::open_stream(const std::string &device_name,
+                                                                std::chrono::milliseconds buffer) {
+  return PlaybackSink::open_stream(device_name, buffer);
 }
 
 std::vector<std::string> list_output_devices() {

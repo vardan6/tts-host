@@ -1,8 +1,10 @@
 #include "tts_host/synthesis_pipeline.hpp"
 #include <chrono>
+#include <cmath>
 #include <cstdlib>
 #include <future>
 #include <iostream>
+#include <mutex>
 #include <thread>
 
 using namespace std::chrono_literals;
@@ -36,9 +38,97 @@ class Endpoint final : public tts_host::PlaybackSink {
     return control->seek_generation() != generation;
   }
 };
+// Records the calls one utterance makes on its endpoint stream. The first
+// drain blocks until a seek or Stop so the test can act during it.
+class StreamEndpoint final : public tts_host::PlaybackSink {
+ public:
+  std::mutex mutex;
+  std::vector<std::string> events;
+  std::promise<void> draining;
+  int opens = 0;
+  void record(std::string event) {
+    std::lock_guard lock(mutex);
+    events.push_back(std::move(event));
+  }
+  void play(std::uint32_t, std::uint16_t, const std::vector<std::uint8_t> &,
+            const std::string &, tts_host::PlaybackControl *) override {
+    throw std::runtime_error("pipeline bypassed the utterance stream");
+  }
+  std::unique_ptr<tts_host::PlaybackStream> open_stream(const std::string &,
+                                                        std::chrono::milliseconds) override {
+    record("open");
+    ++opens;
+    return std::make_unique<Stream>(*this);
+  }
+
+ private:
+  class Stream final : public tts_host::PlaybackStream {
+   public:
+    explicit Stream(StreamEndpoint &owner) : owner_(owner) {}
+    bool play_from(std::uint32_t rate, std::uint16_t, const std::vector<std::uint8_t> &,
+                   std::uint64_t frame, double origin, tts_host::PlaybackControl *,
+                   std::uint64_t) override {
+      owner_.record("play " + std::to_string(std::lround(origin * rate)) + "+" +
+                    std::to_string(frame));
+      return false;
+    }
+    bool drain(tts_host::PlaybackControl *control, std::uint64_t generation) override {
+      owner_.record("drain");
+      if (drains_++ > 0) return false;
+      owner_.draining.set_value();
+      while (!control->cancelled() && control->seek_generation() == generation)
+        std::this_thread::sleep_for(1ms);
+      return control->seek_generation() != generation;
+    }
+
+   private:
+    StreamEndpoint &owner_;
+    int drains_ = 0;
+  };
+};
+
+// Every sentence, a seek, and Stop share one stream; it drains once at the
+// end (docs/design/architecture.md#utterance-audio-stream).
+void verify_utterance_stream(const char *runner) {
+  env("TTS_TEST_RUNNER_MODE", "normal");
+  tts_host::ConfigDocument config;
+  config.value = {{"audio", {{"outputDevice", "system-default"}}}};
+  tts_host::CliOptions options;
+  options.play_audio = true;
+  StreamEndpoint endpoint;
+  for (bool stop : {false, true}) {
+    endpoint.draining = {};
+    auto draining = endpoint.draining.get_future();
+    tts_host::PlaybackController controller;
+    auto control = controller.begin();
+    auto pipeline = std::async(std::launch::async, [&] {
+      try {
+        tts_host::run_synthesis_pipeline("First. Second.", options, config, {runner, {}, {}},
+            control.get(), &controller, &endpoint, {5s, 5s, 5s, 100ms});
+      } catch (const tts_host::RunnerCancelled &) { return true; }
+      return false;
+    });
+    struct Cleanup {
+      std::shared_ptr<tts_host::PlaybackControl> control;
+      ~Cleanup() { control->cancel(); }
+    } cleanup{control};
+    require(draining.wait_for(2s) == std::future_status::ready, "utterance did not drain");
+    if (stop) controller.stop();
+    else require(control->request_seek(1.0 / 24000), "seek during drain refused");
+    require(pipeline.wait_for(2s) == std::future_status::ready && pipeline.get() == stop,
+            "pipeline did not finish after the drain");
+  }
+  // The stub runner returns four frames per sentence.
+  const std::vector<std::string> expected{
+      "open", "play 0+0", "play 4+0", "drain", "play 0+1", "play 4+0", "drain",
+      "open", "play 0+0", "play 4+0", "drain"};
+  require(endpoint.events == expected, "utterance stream was reopened, skipped, or drained per sentence");
+}
+
 int main(int argc, char **argv) {
   try {
     require(argc == 3, "expected runner and scratch directory");
+    verify_utterance_stream(argv[1]);
     const auto gate = std::filesystem::path(argv[2]) / "lookahead-gate";
     const auto ready = std::filesystem::path(gate.string() + ".ready");
     env("TTS_TEST_RUNNER_MARKER", gate.string());
