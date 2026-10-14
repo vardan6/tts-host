@@ -1,15 +1,12 @@
 # Active Context
 
-- Mode: implementation; step closed.
-- Branch: `roadmap-slices`. All October 14 checkpoint findings (1–4) are
-  resolved; finding 4 (download progress coalescing) is uncommitted.
-- Next: commit finding 4, then finalize the `roadmap-slices` review with the
-  user. Played-text history/queue is a roadmap planning item, not scheduled
-  work. The local review is same-provider and focused, not an independent
-  full audit.
-- Blocker: PR #1 was prematurely merged into `main` as `001192c` by the
-  assistant. Do not revert it, merge again, or create/switch branches without
-  explicit instruction. No recovery action is authorized yet.
+- Mode: review finalized.
+- Branch: `roadmap-slices`. All October 3 and October 14 review findings are
+  resolved or deliberately discarded. On 2026-10-14 the user explicitly
+  approved merging `roadmap-slices` into `main` by pull request.
+- Next: native Windows acceptance walkthrough (list below), or plan
+  played-text history/queue (roadmap HITL item, `/planning-capture`). The
+  local review is same-provider and focused, not an independent full audit.
 - Verification: Windows/Linux Debug, 47/47 CTests each. Open acceptance: live
   external config edit in the running tray, Now Playing Read selection of a
   real external target, audible gap probe, combined
