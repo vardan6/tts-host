@@ -1,3 +1,8 @@
+- 2026-10-14: Merged and closed `roadmap-slices` — PR #2 merged into `main`
+  as `13d5aa9` with the user's approval; branch deleted locally and on origin.
+  `roadmap.md` trimmed to open work only (completed slices live here and in
+  git history); `activeContext.md` reduced to current state.
+
 - 2026-10-14: Coalesce download activity progress — `DownloadProgressThrottle`
   passes each file's first and completing update and otherwise one per 250 ms;
   `record_transient_activity` replaces that file's newest progress entry, so a
