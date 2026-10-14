@@ -4,7 +4,7 @@ Each item is a thin, independently verifiable product slice. Requirements and
 architecture live under `docs/`; this file records sequence only.
 
 Current checkpoint: next work is [Branch review follow-up → Next](#next)
-(Now Playing read actions, then download progress coalescing); finalize
+(download progress coalescing); finalize
 `roadmap-slices` review afterward. Pending acceptance and later product slices
 remain unchecked; the premature PR #1 merge recorded in `activeContext.md` does
 not declare them complete. Linux remains the next platform.
@@ -500,20 +500,21 @@ regressions for its failure mode.
 
 ### Next
 
-- [ ] **AFK — Now Playing read actions and source targeting:** add Read
-  selection/Read clipboard plus source and capture status; preserve speech
-  on failed capture and target the saved external application. The accepted
-  visuals remain accepted. See
-  [finding 3](docs/reviews/code-review-2026-10-14-checkpoint.md#finding-3) and
-  [design](docs/design/architecture.md#desktop-integration).
 - [ ] **AFK — Coalesce download activity progress:** throttle transient updates
   so model downloads do not repaint the full log per network read or evict
   recent actionable messages. See
   [finding 4](docs/reviews/code-review-2026-10-14-checkpoint.md#finding-4).
+- [ ] **HITL — Plan played-text history and visible queue:** user idea
+  (2026-10-14): list played/playing reads, step back/forward and replay a
+  chosen one, and show the queue. Needs `/planning-capture` first; a history
+  holds spoken text, which the Activity record deliberately never does.
+  Queued requests already carry a source label (`SpeechRequest` in
+  `src/main.cpp`).
 
 ### Completed
 
 - [x] **AFK — Now Playing Stop clears queued speech:** [Oct 14 finding 1](docs/reviews/code-review-2026-10-14-checkpoint.md#finding-1).
+- [x] **AFK — Now Playing read actions and source targeting:** [Oct 14 finding 3](docs/reviews/code-review-2026-10-14-checkpoint.md#finding-3), [design](docs/design/architecture.md#desktop-integration).
 - [x] **AFK — Reload external configuration edits:** [Oct 14 finding 2](docs/reviews/code-review-2026-10-14-checkpoint.md#finding-2), [design](docs/design/architecture.md#live-reload).
 - [x] **AFK — Stop and seek reliably wake paused playback:** [finding 4](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-4).
 - [x] **AFK — Speech uses a consistent configuration snapshot:** [finding 1](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-1).

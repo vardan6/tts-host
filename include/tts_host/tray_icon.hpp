@@ -28,7 +28,9 @@ enum class SpeechQueueMode { Interrupt, Enqueue };
 
 // speak_text runs the owning Host's synthesis path for text captured by a
 // tray command; it keeps the tray and playback in the same Host process.
-using SpeakTextFunction = std::function<void(const std::string &text, SpeechQueueMode)>;
+// source is the Now Playing label for where the text came from.
+using SpeakTextFunction =
+    std::function<void(const std::string &text, SpeechQueueMode, const std::string &source)>;
 
 // publish_config receives the tray's document after Settings closes. The tray
 // thread alone touches `document`; the speech worker reads only what is

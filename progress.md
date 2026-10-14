@@ -1,3 +1,11 @@
+- 2026-10-14: Now Playing read actions and source targeting — Read
+  selection/Read clipboard, saved-target label, utterance source, and capture
+  status. Read selection re-finds the shortcut's saved control by UI
+  Automation RuntimeId without focus or input and fails closed into the
+  status line without interrupting playback. Linux and native Windows Debug
+  47/47 CTests each; live external-target read pending the Windows walkthrough.
+  The user's played-text history/queue idea is recorded as a roadmap planning item.
+
 # Progress
 
 - 2026-10-14: Reload external configuration edits — re-triaged the checkpoint

@@ -25,6 +25,29 @@ int main() {
     try { (void)tts_host::parse_selection_capture_policy("copyAnything"); }
     catch (const std::invalid_argument &) { rejected = true; }
     require(rejected, "unknown policy was accepted");
+    tts_host::SelectionCaptureTarget target{0, 42, "Editor", {}};
+    require(tts_host::saved_selection_target_label(target).find("global shortcut") != std::string::npos,
+            "Now Playing should ask for the global shortcut before a target is saved");
+    const auto unsaved = tts_host::capture_saved_selection(target);
+    require(!unsaved.succeeded && unsaved.text.empty(),
+            "Read selection without a saved target must fail closed");
+    target.focused_element = {42, 7};
+    require(tts_host::saved_selection_target_label(target) == "Target: Editor",
+            "Now Playing did not label the saved external target");
+    target.native_window = 0;
+    require(!tts_host::capture_saved_selection(target).succeeded,
+            "a vanished saved window must fail closed");
+    const tts_host::SelectionCaptureResult failed{false, {}, "UI Automation TextPattern (saved target)",
+                                                  "Editor", "the saved control is no longer available"};
+    const auto saved_message = tts_host::selection_capture_failure_message(
+        failed, SelectionCapturePolicy::Automatic, true);
+    require(saved_message.find("Reselect the text and use the global shortcut") != std::string::npos &&
+                saved_message.find("Editor") != std::string::npos,
+            "a saved-target failure did not ask the user to reselect and use the shortcut");
+    const auto shortcut_message = tts_host::selection_capture_failure_message(
+        failed, SelectionCapturePolicy::Automatic, false);
+    require(shortcut_message.find("Safe Copy fallback is unavailable") != std::string::npos,
+            "the shortcut failure lost its automatic-policy explanation");
     tts_host::record_selection_capture_diagnostic(
         {false, {}, "UI Automation TextPattern", "Editor", "empty selection"});
     const auto diagnostics = tts_host::activity_since(0);

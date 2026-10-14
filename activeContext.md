@@ -1,18 +1,20 @@
 # Active Context
 
-- Mode: session closed.
-- Branch: `roadmap-slices`. Reload of external config edits is implemented
-  and verified but **uncommitted**; commit it before starting new work.
-- Next: `/next-slice` → **Now Playing read actions and source targeting**
-  ([roadmap](roadmap.md#next), [finding 3](docs/reviews/code-review-2026-10-14-checkpoint.md#finding-3)).
-- After that: **Coalesce download activity progress** (finding 4), then
-  finalize the `roadmap-slices` review with the user. The local review is
+- Mode: implementation; step closed.
+- Branch: `roadmap-slices`. Config reload committed (`e3e72c3`). Now Playing
+  read actions (finding 3) are implemented and verified but **uncommitted**;
+  `/doc-update` pending for [desktop integration](docs/design/architecture.md#desktop-integration).
+- Next: `/doc-update`, then `/next-slice` → **Coalesce download activity
+  progress** ([finding 4](docs/reviews/code-review-2026-10-14-checkpoint.md#finding-4)).
+- After that: finalize the `roadmap-slices` review with the user. Played-text
+  history/queue is a roadmap planning item, not scheduled work. The local review is
   same-provider and focused, not an independent full audit.
 - Blocker: PR #1 was prematurely merged into `main` as `001192c` by the
   assistant. Do not revert it, merge again, or create/switch branches without
   explicit instruction. No recovery action is authorized yet.
 - Verification: Windows/Linux Debug, 47/47 CTests each. Open acceptance: live
-  external config edit in the running tray, audible gap probe, combined
+  external config edit in the running tray, Now Playing Read selection of a
+  real external target, audible gap probe, combined
   desktop/browser walkthrough, Settings-to-Now-Playing skip, first-run/tab
   visuals, isolated startup/sign-in, model performance. Now Playing visuals
   are already accepted.

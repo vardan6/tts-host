@@ -40,6 +40,12 @@ struct TrayContext {
   const std::function<void()> *stop_speech;
   std::uint64_t capture_generation = 0;
   bool capture_timed_out = false;
+  bool capture_from_now_playing = false;
+  // The last external target a global shortcut identified; Now Playing's
+  // Read selection reads it without capturing Host controls.
+  SelectionCaptureTarget saved_target;
+  // The last capture or clipboard result, shown in Now Playing.
+  std::string capture_status;
   bool settings_open = false;
   SelectionHotkeyState selection_hotkey;
   ConfigFileWatcher config_watcher;
@@ -48,6 +54,8 @@ struct TrayContext {
 struct CaptureCompletion {
   std::uint64_t generation;
   SelectionCapturePolicy policy;
+  SelectionCaptureTarget target;
+  bool from_now_playing;
   SelectionCaptureResult result;
 };
 
@@ -137,12 +145,23 @@ void show_error(HWND window, const std::string &message) {
   MessageBoxW(window, wide_message.c_str(), L"TTS Host", MB_OK | MB_ICONERROR);
 }
 
-void speak_clipboard(HWND window, SpeechQueueMode queue_mode = SpeechQueueMode::Interrupt) {
+// Now Playing failures stay in its status line (and Activity) instead of a
+// message box; neither interrupts the current utterance.
+void report_capture_failure(HWND window, const std::string &message, bool from_now_playing) {
+  auto *context = tray_context(window);
+  context->capture_status = message;
+  if (from_now_playing) record_activity(message);
+  else show_error(window, message);
+}
+
+void speak_clipboard(HWND window, SpeechQueueMode queue_mode = SpeechQueueMode::Interrupt,
+                     bool from_now_playing = false, const std::string &source = "Clipboard") {
   auto *context = tray_context(window);
   try {
-    (*context->speak_text)(read_clipboard_text(), queue_mode);
+    (*context->speak_text)(read_clipboard_text(), queue_mode, source);
+    context->capture_status = "Last read: clipboard.";
   } catch (const std::exception &error) {
-    show_error(window, error.what());
+    report_capture_failure(window, error.what(), from_now_playing);
   }
 }
 
@@ -159,33 +178,74 @@ void log_capture_diagnostic(const SelectionCaptureResult &result) {
   OutputDebugStringA(message.c_str());
 }
 
-void request_selection_capture(HWND window) {
+// Runs one bounded accessibility capture off the UI thread. At most one
+// worker exists; a late result is discarded by generation.
+void start_capture_worker(HWND window, SelectionCapturePolicy policy, SelectionCaptureTarget target,
+                          bool from_now_playing) {
   auto *context = tray_context(window);
-  const auto policy = configured_selection_policy(*context->document);
-  if (policy == SelectionCapturePolicy::ClipboardOnly) {
-    // This policy deliberately reads the existing clipboard without trying to
-    // synthesize Copy. The user must copy the intended selection first.
-    speak_clipboard(window);
-    return;
-  }
   bool expected = false;
   if (!selection_capture_worker_active.compare_exchange_strong(expected, true)) {
-    show_error(window, "Selection capture is still waiting on the target application. Try again shortly.");
+    report_capture_failure(
+        window, "Selection capture is still waiting on the target application. Try again shortly.",
+        from_now_playing);
     return;
   }
-
-  const SelectionCaptureTarget target = snapshot_selection_target();
   const std::uint64_t generation = ++context->capture_generation;
   context->capture_timed_out = false;
+  context->capture_from_now_playing = from_now_playing;
   SetTimer(window, kSelectionCaptureTimerId, kSelectionCaptureDeadlineMilliseconds, nullptr);
-  std::thread([window, generation, policy, target] {
-    auto *completion = new CaptureCompletion{generation, policy, capture_selection_direct(target)};
+  std::thread([window, generation, policy, target = std::move(target), from_now_playing] {
+    auto result = from_now_playing ? capture_saved_selection(target) : capture_selection_direct(target);
+    auto *completion = new CaptureCompletion{generation, policy, target, from_now_playing, std::move(result)};
     selection_capture_worker_active.store(false);
     if (!PostMessageW(window, kSelectionCaptureCompleteMessage, 0,
                       reinterpret_cast<LPARAM>(completion))) {
       delete completion;
     }
   }).detach();
+}
+
+// The global shortcut: capture the foreground external window.
+void request_selection_capture(HWND window) {
+  auto *context = tray_context(window);
+  const auto policy = configured_selection_policy(*context->document);
+  if (policy == SelectionCapturePolicy::ClipboardOnly) {
+    // This policy deliberately reads the existing clipboard without trying to
+    // synthesize Copy. The user must copy the intended selection first.
+    speak_clipboard(window, SpeechQueueMode::Interrupt, false, "Clipboard (clipboard-only policy)");
+    return;
+  }
+  start_capture_worker(window, policy, snapshot_selection_target(), false);
+}
+
+// Now Playing's Read selection: the saved target, never the Host window.
+void request_saved_selection_capture(HWND window) {
+  auto *context = tray_context(window);
+  SelectionCapturePolicy policy = SelectionCapturePolicy::Automatic;
+  try {
+    policy = configured_selection_policy(*context->document);
+  } catch (const std::exception &error) {
+    report_capture_failure(window, error.what(), true);
+    return;
+  }
+  if (policy == SelectionCapturePolicy::ClipboardOnly) {
+    speak_clipboard(window, SpeechQueueMode::Interrupt, true, "Clipboard (clipboard-only policy)");
+    return;
+  }
+  start_capture_worker(window, policy, context->saved_target, true);
+}
+
+void show_now_playing(HWND window) {
+  auto *context = tray_context(window);
+  NowPlayingActions actions;
+  actions.stop_speech = *context->stop_speech;
+  actions.read_selection = [window] { request_saved_selection_capture(window); };
+  actions.read_clipboard = [window] { speak_clipboard(window, SpeechQueueMode::Interrupt, true); };
+  actions.target_label = [window] {
+    return saved_selection_target_label(tray_context(window)->saved_target);
+  };
+  actions.capture_status = [window] { return tray_context(window)->capture_status; };
+  show_now_playing_window(*context->playback_controller, std::move(actions));
 }
 
 void show_context_menu(HWND window) {
@@ -267,21 +327,25 @@ LRESULT CALLBACK tray_window_proc(HWND window, UINT message, WPARAM wparam, LPAR
         return 0;
       }
       KillTimer(window, kSelectionCaptureTimerId);
-      log_capture_diagnostic(completion->result);
-      if (completion->result.succeeded) {
+      const auto &result = completion->result;
+      log_capture_diagnostic(result);
+      if (!completion->from_now_playing && !result.focused_element.empty()) {
+        context->saved_target = completion->target;
+        context->saved_target.focused_element = result.focused_element;
+      }
+      if (result.succeeded) {
         try {
-          (*context->speak_text)(completion->result.text, SpeechQueueMode::Interrupt);
+          (*context->speak_text)(result.text, SpeechQueueMode::Interrupt,
+                                 "Selection: " + result.target + " (" + result.method + ")");
+          context->capture_status = "Last read: selection from " + result.target + ".";
         } catch (const std::exception &error) {
-          show_error(window, error.what());
+          report_capture_failure(window, error.what(), completion->from_now_playing);
         }
       } else {
-        std::string explanation = completion->result.method + " failed for " +
-                                  completion->result.target + ": " + completion->result.failure + ". ";
-        if (completion->policy == SelectionCapturePolicy::Automatic) {
-          explanation += "Safe Copy fallback is unavailable for this control. ";
-        }
-        explanation += "Copy manually, then use Read clipboard.";
-        show_error(window, explanation);
+        report_capture_failure(
+            window,
+            selection_capture_failure_message(result, completion->policy, completion->from_now_playing),
+            completion->from_now_playing);
       }
       return 0;
     }
@@ -323,8 +387,7 @@ LRESULT CALLBACK tray_window_proc(HWND window, UINT message, WPARAM wparam, LPAR
       } else if (LOWORD(wparam) == kQueueClipboardMenuItemId) {
         speak_clipboard(window, SpeechQueueMode::Enqueue);
       } else if (LOWORD(wparam) == kNowPlayingMenuItemId) {
-        show_now_playing_window(*tray_context(window)->playback_controller,
-                               *tray_context(window)->stop_speech);
+        show_now_playing(window);
       }
       return 0;
     case WM_HOTKEY:
@@ -341,9 +404,10 @@ LRESULT CALLBACK tray_window_proc(HWND window, UINT message, WPARAM wparam, LPAR
         context->capture_timed_out = true;
         log_capture_diagnostic({false, {}, "UI Automation TextPattern", "saved foreground target",
                                 "capture timed out; late result discarded"});
-        show_error(window,
-                   "UI Automation selection capture timed out. The late result will be ignored; "
-                   "copy manually, then use Read clipboard.");
+        report_capture_failure(window,
+                               "UI Automation selection capture timed out. The late result will be ignored; "
+                               "copy manually, then use Read clipboard.",
+                               context->capture_from_now_playing);
       }
       return 0;
     case WM_DESTROY: {

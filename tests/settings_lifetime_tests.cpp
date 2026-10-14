@@ -6,6 +6,8 @@
 #include <commctrl.h>
 #include <chrono>
 #include <iostream>
+#include <iterator>
+#include <string>
 #include <fstream>
 #include <stdexcept>
 #include <thread>
@@ -64,6 +66,7 @@ int main(int argc, char **argv) {
     options.config_path_override = argv[1];
     auto document = tts_host::load_config(options, argv[0]);
     document.value["hotkeys"]["readSelection"] = "";
+    document.value["selection"]["capturePolicy"] = "automatic";
     document.value["audio"]["playbackSkipSeconds"] = 5;
     const auto temporary = std::filesystem::temp_directory_path() /
         ("tts-settings-lifetime-" + std::to_string(GetCurrentProcessId()));
@@ -92,6 +95,7 @@ int main(int argc, char **argv) {
     controller.mark_playing(active.get());
     int queued_reads = 2;
     int stops = 0;
+    int reads = 0;
     HWND now_playing = nullptr;
     std::thread driver([&] {
       try {
@@ -108,6 +112,21 @@ int main(int argc, char **argv) {
           }
           return false;
         });
+        auto text_of = [&](int id) {
+          wchar_t text[512]{};
+          GetWindowTextW(GetDlgItem(now_playing, id), text, static_cast<int>(std::size(text)));
+          return std::wstring(text);
+        };
+        require(text_of(11).find(L"global shortcut") != std::wstring::npos,
+                "Now Playing did not explain that no external target is saved");
+        // Read selection without a saved target must fail in the status line
+        // without capturing Now Playing itself or interrupting playback.
+        SendMessageW(now_playing, WM_COMMAND, MAKEWPARAM(9, BN_CLICKED),
+                     reinterpret_cast<LPARAM>(GetDlgItem(now_playing, 9)));
+        await([&] { return text_of(12).find(L"Reselect the text") != std::wstring::npos; });
+        require(reads == 0 && !active->cancelled() &&
+                    controller.state() == tts_host::PlaybackState::Playing,
+                "failed Read selection interrupted the current utterance");
         // The actual native Stop button must invoke the Host's queue owner,
         // rather than only cancelling the active playback token.
         SendMessageW(now_playing, WM_COMMAND, MAKEWPARAM(2, BN_CLICKED),
@@ -192,7 +211,7 @@ int main(int argc, char **argv) {
       }
     });
     tts_host::run_tray_icon(document, std::filesystem::path(argv[0]).parent_path(),
-        [](const std::string &, tts_host::SpeechQueueMode) {}, controller,
+        [&](const std::string &, tts_host::SpeechQueueMode, const std::string &) { ++reads; }, controller,
         [&](const tts_host::ConfigDocument &) { ++publications; }, &sessions,
         [&] { queued_reads = 0; ++stops; controller.stop(); });
     driver.join();

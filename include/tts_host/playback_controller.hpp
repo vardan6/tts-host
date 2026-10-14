@@ -58,7 +58,9 @@ struct PlaybackStatus {
 // lets runner work and WASAPI playback observe cancellation, pause, and seek.
 class PlaybackController {
  public:
-  std::shared_ptr<PlaybackControl> begin();
+  // source names where the utterance's text came from (for example
+  // "Clipboard"); Now Playing shows it. It never holds the text itself.
+  std::shared_ptr<PlaybackControl> begin(std::string source = {});
   void mark_playing(const PlaybackControl *control);
   bool prepare_sentence_for_playback(const PlaybackControl *control,
                                     std::uint64_t speech_speed_generation);
@@ -68,6 +70,8 @@ class PlaybackController {
   void finish(const std::shared_ptr<PlaybackControl> &control);
   void fail(const std::shared_ptr<PlaybackControl> &control, std::string message);
   std::string error_message() const;
+  // Source of the active utterance, or of the last one once idle.
+  std::string source() const;
   PlaybackState state() const;
   PlaybackStatus status() const;
   // A speed change is observed by the host at a sentence boundary. The
@@ -101,6 +105,7 @@ class PlaybackController {
   int sentence_pause_milliseconds_ = 0;
   int lookahead_sentences_ = 1;
   std::string error_message_;
+  std::string source_;
 };
 
 }  // namespace tts_host

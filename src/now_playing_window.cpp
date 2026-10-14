@@ -19,12 +19,17 @@ constexpr int kStopId = 2;
 constexpr int kSpeedComboId = 4;
 constexpr int kSeekBackId = 5;
 constexpr int kSeekForwardId = 6;
+constexpr int kSourceId = 8;
+constexpr int kReadSelectionId = 9;
+constexpr int kReadClipboardId = 10;
+constexpr int kTargetId = 11;
+constexpr int kCaptureStatusId = 12;
 constexpr UINT_PTR kStateTimerId = 1;
 constexpr wchar_t kWindowClass[] = L"TtsHostNowPlayingWindow";
 
 struct WindowState {
   PlaybackController *controller;
-  std::function<void()> stop_speech;
+  NowPlayingActions actions;
 };
 
 HWND current_window() {
@@ -75,6 +80,13 @@ void refresh(HWND window) {
                   controller->position_seconds(), controller->generated_seconds());
     SetWindowTextW(GetDlgItem(window, 7), position);
   }
+  const auto source = controller->source();
+  SetWindowTextW(GetDlgItem(window, kSourceId),
+                 (L"Source: " + (source.empty() ? std::wstring(L"none") : utf8_to_wide(source))).c_str());
+  if (data->actions.target_label)
+    SetWindowTextW(GetDlgItem(window, kTargetId), utf8_to_wide(data->actions.target_label()).c_str());
+  if (data->actions.capture_status)
+    SetWindowTextW(GetDlgItem(window, kCaptureStatusId), utf8_to_wide(data->actions.capture_status()).c_str());
   const auto interval = controller->seek_interval_seconds();
   const auto back = L"-" + std::to_wstring(interval) + L" s";
   const auto forward = L"+" + std::to_wstring(interval) + L" s";
@@ -115,7 +127,11 @@ LRESULT CALLBACK proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
       if (LOWORD(wparam) == kPauseResumeId && HIWORD(wparam) == BN_CLICKED) {
         if (controller->state() == PlaybackState::Paused) controller->resume(); else controller->pause();
       } else if (LOWORD(wparam) == kStopId && HIWORD(wparam) == BN_CLICKED) {
-        if (data->stop_speech) data->stop_speech(); else controller->stop();
+        if (data->actions.stop_speech) data->actions.stop_speech(); else controller->stop();
+      } else if (LOWORD(wparam) == kReadSelectionId && HIWORD(wparam) == BN_CLICKED) {
+        if (data->actions.read_selection) data->actions.read_selection();
+      } else if (LOWORD(wparam) == kReadClipboardId && HIWORD(wparam) == BN_CLICKED) {
+        if (data->actions.read_clipboard) data->actions.read_clipboard();
       }
       else if (LOWORD(wparam) == kSeekBackId && HIWORD(wparam) == BN_CLICKED)
         controller->seek_by_interval(-1);
@@ -136,7 +152,7 @@ LRESULT CALLBACK proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
 }
 }  // namespace
 
-void show_now_playing_window(PlaybackController &controller, std::function<void()> stop_speech) {
+void show_now_playing_window(PlaybackController &controller, NowPlayingActions actions) {
   const wchar_t *name = kWindowClass;
   const HINSTANCE instance = GetModuleHandleW(nullptr);
   WNDCLASSW wc{};
@@ -150,9 +166,9 @@ void show_now_playing_window(PlaybackController &controller, std::function<void(
   HWND window = current_window();
   if (window == nullptr) {
     window = CreateWindowExW(0, name, L"TTS Host — Now Playing", WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU,
-                             CW_USEDEFAULT, CW_USEDEFAULT, 330, 245, nullptr, nullptr, instance, nullptr);
+                             CW_USEDEFAULT, CW_USEDEFAULT, 330, 380, nullptr, nullptr, instance, nullptr);
     if (window == nullptr) throw std::runtime_error("failed to create the Now Playing window");
-    auto data = std::make_unique<WindowState>(WindowState{&controller, std::move(stop_speech)});
+    auto data = std::make_unique<WindowState>(WindowState{&controller, std::move(actions)});
     SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(data.release()));
     CreateWindowExW(0, L"STATIC", L"Idle", WS_CHILD | WS_VISIBLE, 16, 16, 250, 24, window,
                     reinterpret_cast<HMENU>(static_cast<UINT_PTR>(3)), instance, nullptr);
@@ -174,6 +190,17 @@ void show_now_playing_window(PlaybackController &controller, std::function<void(
         reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kSpeedComboId)), instance, nullptr);
     for (const wchar_t *speed : {L"0.5×", L"0.75×", L"1.0×", L"1.25×", L"1.5×", L"1.75×", L"2.0×"})
       SendMessageW(speed_combo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(speed));
+    CreateWindowExW(0, L"STATIC", L"Source: none", WS_CHILD | WS_VISIBLE | SS_ENDELLIPSIS, 16, 196,
+                    290, 22, window, reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kSourceId)),
+                    instance, nullptr);
+    CreateWindowExW(0, L"BUTTON", L"Read selection", WS_CHILD | WS_VISIBLE, 16, 224, 130, 28, window,
+                    reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kReadSelectionId)), instance, nullptr);
+    CreateWindowExW(0, L"BUTTON", L"Read clipboard", WS_CHILD | WS_VISIBLE, 156, 224, 130, 28, window,
+                    reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kReadClipboardId)), instance, nullptr);
+    CreateWindowExW(0, L"STATIC", L"", WS_CHILD | WS_VISIBLE | SS_ENDELLIPSIS, 16, 260, 290, 22,
+                    window, reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kTargetId)), instance, nullptr);
+    CreateWindowExW(0, L"STATIC", L"", WS_CHILD | WS_VISIBLE, 16, 284, 290, 52, window,
+                    reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kCaptureStatusId)), instance, nullptr);
     SetTimer(window, kStateTimerId, 200, nullptr);
   }
   refresh(window);
@@ -186,7 +213,7 @@ void destroy_now_playing_window() {
 }  // namespace tts_host
 #else
 namespace tts_host {
-void show_now_playing_window(PlaybackController &, std::function<void()>) {
+void show_now_playing_window(PlaybackController &, NowPlayingActions) {
   throw std::runtime_error("Now Playing is not implemented on this platform yet (Windows only)");
 }
 void destroy_now_playing_window() {}

@@ -129,3 +129,29 @@ reporting. The Win32 timer wiring was checked by native build only. Live
 external-edit acceptance in the running tray remains part of the combined
 Windows walkthrough. Validation: Linux Debug and native Windows Debug, 47/47
 CTests each.
+
+## Resolution of finding 3
+
+Now Playing adds **Read selection** and **Read clipboard**, a label for the
+saved external target, the active utterance's source, and the last capture
+result. Each queued request carries a source label that `PlaybackController`
+publishes when the utterance begins. A global-shortcut capture saves the
+target window and its focused control's UI Automation RuntimeId, even when
+the selection read fails. **Read selection** finds that control again under
+the saved window and reads its TextPattern selection. It runs off the UI
+thread on the existing single-worker deadline, never checks or changes focus,
+and sends no input. A missing window or control, another process, a protected
+field, an empty selection, or no saved target fails closed. The status line
+then asks the user to reselect and use the global shortcut, logs the failure
+to Activity, and leaves playback untouched. `clipboardOnly` makes
+**Read selection** read the existing clipboard. Now Playing failures update
+its status line instead of opening a message box.
+
+Regressions: `tts_host_playback_controller` (source per utterance),
+`tts_host_selection_capture` (target label, fail-closed saved capture,
+failure guidance), and `tts_host_settings_lifetime`, which clicks the native
+Read selection button with no saved target and checks that playback continues
+and nothing is read. Reading a real external application's selection from
+Now Playing was not exercised; it is part of the combined Windows
+walkthrough. Validation: Linux Debug and native Windows Debug, 47/47 CTests
+each.
