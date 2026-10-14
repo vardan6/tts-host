@@ -1,5 +1,12 @@
 # Progress
 
+- 2026-10-14: Checkpoint PR — committed GUI-launch/Activity log and pending
+  developer-workflow changes as `0b6391e`, pushed `roadmap-slices`, and opened
+  draft PR #1 (https://github.com/vardan6/tts-host/pull/1). Started a read-only
+  Claude Opus 5.5 cross-review of `1ad34c1..0b6391e`; stopped its process at
+  the user's request before any findings report returned. Review remains
+  pending; the draft description lists remaining native acceptance checks.
+
 - 2026-10-14: GUI-launch and Activity log checkpoint — verified native
   `compile-win.ps1` rebuild and a separate shell launch using development
   config: Kokoro loads, Settings records timestamped model-selection errors,
