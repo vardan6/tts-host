@@ -3,9 +3,10 @@
 Each item is a thin, independently verifiable product slice. Requirements and
 architecture live under `docs/`; this file records sequence only.
 
-Current checkpoint: review/finalize `roadmap-slices` before beginning the Linux
-adapter on a focused feature branch. Pending acceptance and later product slices
-remain unchecked; the checkpoint recommendation does not declare them complete.
+Current checkpoint: `roadmap-slices` merged through PR #1; continue the explicit
+desktop follow-ups on `desktop-follow-ups` before the next platform branch.
+Pending acceptance and later product slices remain unchecked; the checkpoint
+merge does not declare them complete. Linux remains the next platform.
 
 Desktop prototype order: Windows direct selection → Now Playing pause/resume/
 stop → generated-audio seek → browser selection → one combined Windows acceptance
@@ -498,6 +499,11 @@ and [captured plan](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md
 Each fix includes regressions for its failure mode; #17 audits remaining gaps.
 
 ### Correctness blockers
+
+- [x] **AFK — Now Playing Stop clears queued speech:** route the desktop button
+  through the scheduler operation used by browser Stop; regress native command
+  delegation, close-to-hide, and window teardown. See
+  [finding 1](docs/reviews/code-review-2026-10-14-checkpoint.md#finding-1).
 
 - [x] **AFK — Stop and seek reliably wake paused playback:** Prove cancellation/seek cannot be lost at the predicate-to-wait boundary. See [finding 4](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-4) and [governing spec](docs/design/architecture.md#playback-control-and-position).
 - [x] **AFK — Speech uses a consistent configuration snapshot:** Publish Settings changes safely and keep each in-flight request consistent. See [finding 1](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-1) and [governing spec](docs/design/architecture.md#live-reload).

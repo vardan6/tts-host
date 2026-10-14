@@ -1,5 +1,12 @@
 # Progress
 
+- 2026-10-14: Windows checkpoint merged — Stop fix/review committed as
+  `514c65e`; PR #1 merged with merge commit `001192c`. Updated local `main`
+  and created `desktop-follow-ups` for remaining work. Review limits and native
+  acceptance gaps remain explicit; no other agent or Claude Code was used for
+  the completed review. Saved the user's explicit-agent-approval rule in
+  `PROJECT.md`. The development Host was quit for the rebuild and left stopped.
+
 - 2026-10-14: Local checkpoint review and Stop fix — reviewed the desktop
   checkpoint directly in Codex at the user's request, without other agents or
   Claude Code. Report/triage: `docs/reviews/code-review-2026-10-14-checkpoint.md`.
