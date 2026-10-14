@@ -1,14 +1,19 @@
 # Active Context
 
-- Mode: session closed; checkpoint merged, ready for the next slice.
-- Branch: `desktop-follow-ups`, based on updated `main` after PR #1
-  (merge `001192c`). `roadmap-slices` is retained.
+- Mode: review/finalization of `roadmap-slices`; no new implementation slice.
+- Branch: `roadmap-slices`. All work saved on `desktop-follow-ups` has been
+  brought back here; that extra branch is retained, not used for current work.
+- PR #1 was prematurely merged into `main` as `001192c` by the assistant.
+  The user intended review/finalization first and a later PR merge. Do not
+  revert that merge, merge again, or create/switch another branch without an
+  explicit instruction. The repository default branch is `main`.
 - Review: local Codex review and triage in
   [checkpoint report](docs/reviews/code-review-2026-10-14-checkpoint.md).
   Desktop Stop queue clearing fixed in `514c65e`; no unresolved merge blocker
   in this focused review. It is same-provider, not an independent full audit.
-- Next action: `/next-slice` on explicit desktop follow-up work: external JSON
-  reload or Now Playing read/source controls. Linux remains the next platform.
+- Next action: finalize the review of `roadmap-slices` with the user. The local
+  report is a focused same-provider review; confirm its coverage is sufficient
+  before any later PR/merge action. Remaining work stays in the roadmap.
 - Verification: Windows/Linux Debug builds and 46/46 CTests on each pass,
   including native Stop callback and UI teardown regression; GUI Kokoro load
   and Activity log retention verified. Audible gap probe, combined desktop/

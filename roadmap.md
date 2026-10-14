@@ -3,10 +3,10 @@
 Each item is a thin, independently verifiable product slice. Requirements and
 architecture live under `docs/`; this file records sequence only.
 
-Current checkpoint: `roadmap-slices` merged through PR #1; continue the explicit
-desktop follow-ups on `desktop-follow-ups` before the next platform branch.
-Pending acceptance and later product slices remain unchecked; the checkpoint
-merge does not declare them complete. Linux remains the next platform.
+Current checkpoint: review/finalize `roadmap-slices` before any next work or
+platform branch. Pending acceptance and later product slices remain unchecked;
+the premature PR #1 merge recorded in `activeContext.md` does not declare them
+complete. Linux remains the next platform.
 
 Desktop prototype order: Windows direct selection → Now Playing pause/resume/
 stop → generated-audio seek → browser selection → one combined Windows acceptance

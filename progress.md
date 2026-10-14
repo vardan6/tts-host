@@ -1,5 +1,12 @@
 # Progress
 
+- 2026-10-14: Branch correction — the user clarified that the proposed merge
+  and new branch were future steps, not authorization to execute them. Returned
+  to `roadmap-slices` and cherry-picked all four state/policy documentation
+  changes from `desktop-follow-ups`; implementation and review were already on
+  `roadmap-slices`. PR #1 remains prematurely merged into `main`; no revert,
+  further merge, or branch deletion performed. Current work is review/finalization.
+
 - 2026-10-14: Windows checkpoint merged — Stop fix/review committed as
   `514c65e`; PR #1 merged with merge commit `001192c`. Updated local `main`
   and created `desktop-follow-ups` for remaining work. Review limits and native
