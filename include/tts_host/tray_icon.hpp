@@ -39,6 +39,7 @@ void run_tray_icon(ConfigDocument &document,
                    const std::filesystem::path &runner_directory,
                    const SpeakTextFunction &speak_text, PlaybackController &playback_controller,
                    const PublishConfigFunction &publish_config,
-                   ModelSessionManager *sessions = nullptr);
+                   ModelSessionManager *sessions = nullptr,
+                   const std::function<void()> &stop_speech = {});
 
 }  // namespace tts_host

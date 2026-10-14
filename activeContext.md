@@ -1,6 +1,6 @@
 # Active Context
 
-- Mode: checkpoint finalization; draft PR #1 open, review stopped by user.
+- Mode: checkpoint finalization; local review and Stop regression checks complete.
 - Phase: review/finalize `roadmap-slices` before the Linux adapter.
 - State: per-utterance stream (`71d4657`) and Playback tab tuning (`21316be`)
   committed; the WASAPI stream is verified only by build and fake-endpoint tests.
@@ -10,8 +10,10 @@
 - Checkpoint fix committed as `0b6391e`; draft PR:
   https://github.com/vardan6/tts-host/pull/1. Claude Opus 5.5 review of
   `1ad34c1..0b6391e` was stopped at the user's request without a findings report.
-- Next action: arrange a fresh checkpoint review and triage before finalizing
-  the PR; native acceptance gaps remain explicit in its description.
+- Local review/triage: `docs/reviews/code-review-2026-10-14-checkpoint.md`;
+  desktop Stop queue-clearing fix passes native regression coverage. No
+  external agent was used. Windows/Linux 46/46 CTests pass. Commit and merge PR #1,
+  then create `desktop-follow-ups` from updated `main`.
 - Then: HITL — with the user's permission, rerun the audible
   `tts-host-playback-gap-probe` (now has a `stream` condition) and record it
   under [finding 16](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-16).

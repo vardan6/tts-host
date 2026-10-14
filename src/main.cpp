@@ -305,11 +305,7 @@ class TraySpeechScheduler {
   std::string playback_command(const std::string &command) {
     if (command == "pause") playback_controller_.pause();
     if (command == "resume") playback_controller_.resume();
-    if (command == "stop") {
-      std::lock_guard lock(mutex_);
-      pending_.clear();
-      playback_controller_.stop();
-    }
+    if (command == "stop") stop_speech();
     const auto status = playback_controller_.status();
     const char *state = "idle";
     switch (status.state) {
@@ -323,6 +319,12 @@ class TraySpeechScheduler {
     return nlohmann::json{{"state", state}, {"positionSeconds", status.position_seconds},
                           {"generatedSeconds", status.generated_seconds},
                           {"error", status.error}}.dump();
+  }
+
+  void stop_speech() {
+    std::lock_guard lock(mutex_);
+    pending_.clear();
+    playback_controller_.stop();
   }
 
  private:
@@ -477,7 +479,8 @@ int run_main(int argc, char **argv) {
           }, tray_speech_scheduler.playback_controller(),
           [&tray_speech_scheduler](const tts_host::ConfigDocument &edited) {
             tray_speech_scheduler.publish_config(edited);
-          }, &tray_speech_scheduler.sessions());
+          }, &tray_speech_scheduler.sessions(),
+          [&tray_speech_scheduler] { tray_speech_scheduler.stop_speech(); });
       return EXIT_SUCCESS;
     }
 

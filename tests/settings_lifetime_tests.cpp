@@ -1,6 +1,7 @@
 #include "tts_host/tray_icon.hpp"
 #include "tts_host/settings_window.hpp"
 #include "tts_host/model_session.hpp"
+#include "tts_host/now_playing_window.hpp"
 #include <windows.h>
 #include <commctrl.h>
 #include <chrono>
@@ -86,10 +87,36 @@ int main(int argc, char **argv) {
     const auto ui_thread = GetCurrentThreadId();
     std::string failure;
     int publications = 0;
+    tts_host::PlaybackController controller;
+    const auto active = controller.begin();
+    controller.mark_playing(active.get());
+    int queued_reads = 2;
+    int stops = 0;
+    HWND now_playing = nullptr;
     std::thread driver([&] {
       try {
         HWND tray = nullptr;
         await([&] { tray = tray_window(); return tray != nullptr; });
+        PostMessageW(tray, WM_COMMAND, 5, 0);
+        await([&] {
+          HWND previous = nullptr;
+          while ((previous = FindWindowExW(nullptr, previous, L"TtsHostNowPlayingWindow", nullptr))) {
+            DWORD process = 0;
+            GetWindowThreadProcessId(previous, &process);
+            if (process == GetCurrentProcessId() && IsWindowVisible(previous) &&
+                GetDlgItem(previous, 2)) { now_playing = previous; return true; }
+          }
+          return false;
+        });
+        // The actual native Stop button must invoke the Host's queue owner,
+        // rather than only cancelling the active playback token.
+        SendMessageW(now_playing, WM_COMMAND, MAKEWPARAM(2, BN_CLICKED),
+                     reinterpret_cast<LPARAM>(GetDlgItem(now_playing, 2)));
+        require(stops == 1 && queued_reads == 0 && active->cancelled(),
+                "Now Playing Stop did not clear queued reads through the Host callback");
+        SendMessageW(now_playing, WM_CLOSE, 0, 0);
+        require(!IsWindowVisible(now_playing) && stops == 1,
+                "closing Now Playing invoked Stop instead of hiding");
         PostMessageW(tray, WM_COMMAND, 1, 0);
         await([] { return settings() && IsWindowVisible(settings()); });
         const auto first = settings();
@@ -164,14 +191,16 @@ int main(int argc, char **argv) {
         PostThreadMessageW(ui_thread, WM_QUIT, 0, 0);
       }
     });
-    tts_host::PlaybackController controller;
     tts_host::run_tray_icon(document, std::filesystem::path(argv[0]).parent_path(),
         [](const std::string &, tts_host::SpeechQueueMode) {}, controller,
-        [&](const tts_host::ConfigDocument &) { ++publications; }, &sessions);
+        [&](const tts_host::ConfigDocument &) { ++publications; }, &sessions,
+        [&] { queued_reads = 0; ++stops; controller.stop(); });
     driver.join();
     require(failure.empty(), failure.c_str());
     require(sessions.status().loaded, "tray window lifecycle destroyed the owner's resident model");
     require(settings() == nullptr, "Quit left Settings alive with destroyed stack state");
+    require(!IsWindow(now_playing) && stops == 1,
+            "tray Quit did not destroy Now Playing before its owner exits");
     require(publications == 1, "Settings close/Quit published unexpected number of times");
     // A standalone Settings close must leave no WM_QUIT for a later caller.
     std::thread closer([] {

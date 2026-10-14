@@ -511,6 +511,18 @@ Each fix includes regressions for its failure mode; #17 audits remaining gaps.
 
 ### Remaining phase work
 
+- [ ] **AFK — Reload external configuration edits:** validate file changes,
+  publish an immutable snapshot only when valid, retain the last valid state
+  on errors, and report restart-only server settings. See
+  [finding 2](docs/reviews/code-review-2026-10-14-checkpoint.md#finding-2) and
+  [design](docs/design/architecture.md#live-reload).
+- [ ] **AFK — Now Playing read actions and source targeting:** add Read
+  selection/Read clipboard plus source and capture status; preserve speech
+  on failed capture and target the saved external application. The accepted
+  visuals remain accepted. See
+  [finding 3](docs/reviews/code-review-2026-10-14-checkpoint.md#finding-3) and
+  [design](docs/design/architecture.md#desktop-integration).
+
 - [x] **HITL — Decide startup registration synchronization:** decided
   2026-10-06: the OS registration owns the state and launches never write it —
   see [ADR 0008](docs/adr/0008-os-owned-login-startup.md). Implementation is
@@ -521,6 +533,11 @@ Each fix includes regressions for its failure mode; #17 audits remaining gaps.
 - [x] **AFK — Audit runtime regression coverage:** Close concurrent config, wait-race, native Windows collision, and runner hang/death coverage gaps left after owning fixes. See [finding 17](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-17) and [governing spec](docs/adr/0002-runner-protocol.md#runner-failure).
 
 ### Review backlog and disposition
+
+- [ ] **AFK — Coalesce download activity progress:** throttle transient updates
+  so model downloads do not repaint the full log per network read or evict
+  recent actionable messages. See
+  [finding 4](docs/reviews/code-review-2026-10-14-checkpoint.md#finding-4).
 
 - [x] **AFK — Correct catalogue verification note:** verification ordering now matches code; documentation-only correction. See [finding 15](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-15).
 - [x] **AFK — Measure sentence transitions:** about 80 ms (p95 about 90 ms) of added silence per sentence boundary on Windows; a continuous utterance stream is justified, but not scheduled yet. See [finding 16](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-16).

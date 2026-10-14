@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cwchar>
 #include <iterator>
+#include <memory>
 #include <stdexcept>
 #include <string>
 
@@ -19,6 +20,22 @@ constexpr int kSpeedComboId = 4;
 constexpr int kSeekBackId = 5;
 constexpr int kSeekForwardId = 6;
 constexpr UINT_PTR kStateTimerId = 1;
+constexpr wchar_t kWindowClass[] = L"TtsHostNowPlayingWindow";
+
+struct WindowState {
+  PlaybackController *controller;
+  std::function<void()> stop_speech;
+};
+
+HWND current_window() {
+  HWND window = nullptr;
+  while ((window = FindWindowExW(nullptr, window, kWindowClass, nullptr))) {
+    DWORD process = 0;
+    GetWindowThreadProcessId(window, &process);
+    if (process == GetCurrentProcessId()) return window;
+  }
+  return nullptr;
+}
 
 std::wstring utf8_to_wide(const std::string &text) {
   if (text.empty()) return {};
@@ -44,8 +61,9 @@ const wchar_t *state_label(PlaybackState state) {
 }
 
 void refresh(HWND window) {
-  auto *controller = reinterpret_cast<PlaybackController *>(GetWindowLongPtrW(window, GWLP_USERDATA));
-  if (controller == nullptr) return;
+  auto *data = reinterpret_cast<WindowState *>(GetWindowLongPtrW(window, GWLP_USERDATA));
+  if (data == nullptr) return;
+  auto *controller = data->controller;
   const auto state = controller->state();
   SetWindowTextW(GetDlgItem(window, 3), state_label(state));
   if (state == PlaybackState::Error) {
@@ -86,12 +104,19 @@ LRESULT CALLBACK proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
   switch (message) {
     case WM_CLOSE: ShowWindow(window, SW_HIDE); return 0;
     case WM_TIMER: refresh(window); return 0;
+    case WM_NCDESTROY:
+      delete reinterpret_cast<WindowState *>(GetWindowLongPtrW(window, GWLP_USERDATA));
+      SetWindowLongPtrW(window, GWLP_USERDATA, 0);
+      return DefWindowProcW(window, message, wparam, lparam);
     case WM_COMMAND: {
-      auto *controller = reinterpret_cast<PlaybackController *>(GetWindowLongPtrW(window, GWLP_USERDATA));
-      if (controller == nullptr) return 0;
+      auto *data = reinterpret_cast<WindowState *>(GetWindowLongPtrW(window, GWLP_USERDATA));
+      if (data == nullptr) return 0;
+      auto *controller = data->controller;
       if (LOWORD(wparam) == kPauseResumeId && HIWORD(wparam) == BN_CLICKED) {
         if (controller->state() == PlaybackState::Paused) controller->resume(); else controller->pause();
-      } else if (LOWORD(wparam) == kStopId && HIWORD(wparam) == BN_CLICKED) controller->stop();
+      } else if (LOWORD(wparam) == kStopId && HIWORD(wparam) == BN_CLICKED) {
+        if (data->stop_speech) data->stop_speech(); else controller->stop();
+      }
       else if (LOWORD(wparam) == kSeekBackId && HIWORD(wparam) == BN_CLICKED)
         controller->seek_by_interval(-1);
       else if (LOWORD(wparam) == kSeekForwardId && HIWORD(wparam) == BN_CLICKED)
@@ -111,8 +136,8 @@ LRESULT CALLBACK proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
 }
 }  // namespace
 
-void show_now_playing_window(PlaybackController &controller) {
-  const wchar_t *name = L"TtsHostNowPlayingWindow";
+void show_now_playing_window(PlaybackController &controller, std::function<void()> stop_speech) {
+  const wchar_t *name = kWindowClass;
   const HINSTANCE instance = GetModuleHandleW(nullptr);
   WNDCLASSW wc{};
   wc.lpfnWndProc = proc;
@@ -122,12 +147,13 @@ void show_now_playing_window(PlaybackController &controller) {
   wc.hCursor = LoadCursorW(nullptr, MAKEINTRESOURCEW(32512));
   if (!RegisterClassW(&wc) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS)
     throw std::runtime_error("failed to register the Now Playing window class");
-  HWND window = FindWindowW(name, nullptr);
+  HWND window = current_window();
   if (window == nullptr) {
     window = CreateWindowExW(0, name, L"TTS Host — Now Playing", WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU,
                              CW_USEDEFAULT, CW_USEDEFAULT, 330, 245, nullptr, nullptr, instance, nullptr);
     if (window == nullptr) throw std::runtime_error("failed to create the Now Playing window");
-    SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(&controller));
+    auto data = std::make_unique<WindowState>(WindowState{&controller, std::move(stop_speech)});
+    SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(data.release()));
     CreateWindowExW(0, L"STATIC", L"Idle", WS_CHILD | WS_VISIBLE, 16, 16, 250, 24, window,
                     reinterpret_cast<HMENU>(static_cast<UINT_PTR>(3)), instance, nullptr);
     CreateWindowExW(0, L"STATIC", L"0.0 s elapsed  /  0.0 s generated", WS_CHILD | WS_VISIBLE, 16,
@@ -154,11 +180,15 @@ void show_now_playing_window(PlaybackController &controller) {
   ShowWindow(window, SW_SHOWNORMAL);
   SetForegroundWindow(window);
 }
+void destroy_now_playing_window() {
+  if (const HWND window = current_window()) DestroyWindow(window);
+}
 }  // namespace tts_host
 #else
 namespace tts_host {
-void show_now_playing_window(PlaybackController &) {
+void show_now_playing_window(PlaybackController &, std::function<void()>) {
   throw std::runtime_error("Now Playing is not implemented on this platform yet (Windows only)");
 }
+void destroy_now_playing_window() {}
 }  // namespace tts_host
 #endif

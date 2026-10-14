@@ -1,5 +1,14 @@
 # Progress
 
+- 2026-10-14: Local checkpoint review and Stop fix — reviewed the desktop
+  checkpoint directly in Codex at the user's request, without other agents or
+  Claude Code. Report/triage: `docs/reviews/code-review-2026-10-14-checkpoint.md`.
+  Found desktop Stop leaving queued reads; routed it through the same scheduler
+  queue-clearing operation as browser Stop and added native UI/lifetime
+  regression coverage. External JSON reload and Now Playing read/source
+  controls are explicit unfinished slices; download progress coalescing is
+  backlog. Windows/Linux Debug builds and 46/46 CTests on each platform pass.
+
 - 2026-10-14: Checkpoint PR — committed GUI-launch/Activity log and pending
   developer-workflow changes as `0b6391e`, pushed `roadmap-slices`, and opened
   draft PR #1 (https://github.com/vardan6/tts-host/pull/1). Started a read-only

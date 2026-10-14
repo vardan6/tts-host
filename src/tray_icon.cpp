@@ -36,6 +36,7 @@ struct TrayContext {
   PlaybackController *playback_controller;
   const PublishConfigFunction *publish_config;
   ModelSessionManager *sessions;
+  const std::function<void()> *stop_speech;
   std::uint64_t capture_generation = 0;
   bool capture_timed_out = false;
   bool settings_open = false;
@@ -286,7 +287,8 @@ LRESULT CALLBACK tray_window_proc(HWND window, UINT message, WPARAM wparam, LPAR
       } else if (LOWORD(wparam) == kQueueClipboardMenuItemId) {
         speak_clipboard(window, SpeechQueueMode::Enqueue);
       } else if (LOWORD(wparam) == kNowPlayingMenuItemId) {
-        show_now_playing_window(*tray_context(window)->playback_controller);
+        show_now_playing_window(*tray_context(window)->playback_controller,
+                               *tray_context(window)->stop_speech);
       }
       return 0;
     case WM_HOTKEY:
@@ -322,7 +324,11 @@ LRESULT CALLBACK tray_window_proc(HWND window, UINT message, WPARAM wparam, LPAR
 void run_tray_icon(ConfigDocument &document,
                    const std::filesystem::path &runner_directory,
                    const SpeakTextFunction &speak_text, PlaybackController &playback_controller,
-                   const PublishConfigFunction &publish_config, ModelSessionManager *sessions) {
+                   const PublishConfigFunction &publish_config, ModelSessionManager *sessions,
+                   const std::function<void()> &stop_speech) {
+  struct NowPlayingCleanup {
+    ~NowPlayingCleanup() { destroy_now_playing_window(); }
+  } now_playing_cleanup;
   const wchar_t *kClassName = L"TtsHostTrayWindow";
   const HINSTANCE instance = GetModuleHandleW(nullptr);
 
@@ -342,7 +348,7 @@ void run_tray_icon(ConfigDocument &document,
     throw std::runtime_error("failed to create the tray message window");
   }
   const TrayContext context{&document, &runner_directory, &speak_text, &playback_controller,
-                            &publish_config, sessions};
+                            &publish_config, sessions, &stop_speech};
   auto mutable_context = context;
   SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(&mutable_context));
 
@@ -386,7 +392,8 @@ namespace tts_host {
 void run_tray_icon(ConfigDocument & /*document*/,
                    const std::filesystem::path & /*runner_directory*/,
                    const SpeakTextFunction & /*speak_text*/, PlaybackController & /*playback_controller*/,
-                   const PublishConfigFunction & /*publish_config*/, ModelSessionManager *) {
+                   const PublishConfigFunction & /*publish_config*/, ModelSessionManager *,
+                   const std::function<void()> &) {
   throw std::runtime_error(
       "the tray icon is not implemented on this platform yet (Windows only, see "
       "docs/adr/0007-native-ui-per-platform.md)");
