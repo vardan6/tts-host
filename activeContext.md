@@ -1,11 +1,9 @@
 # Active Context
 
 - Mode: implementation; step closed.
-- Branch: `roadmap-slices`. Config reload committed (`e3e72c3`). Now Playing
-  read actions (finding 3) are implemented and verified but **uncommitted**;
-  `/doc-update` pending for [desktop integration](docs/design/architecture.md#desktop-integration).
-- Next: `/doc-update`, then `/next-slice` → **Coalesce download activity
-  progress** ([finding 4](docs/reviews/code-review-2026-10-14-checkpoint.md#finding-4)).
+- Branch: `roadmap-slices`. Config reload (`e3e72c3`) and Now Playing read
+  actions (`0bbc4f5`) committed; design updated for saved-control capture.
+- Next: `/next-slice` → **Coalesce download activity progress** ([finding 4](docs/reviews/code-review-2026-10-14-checkpoint.md#finding-4)).
 - After that: finalize the `roadmap-slices` review with the user. Played-text
   history/queue is a roadmap planning item, not scheduled work. The local review is
   same-provider and focused, not an independent full audit.

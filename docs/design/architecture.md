@@ -575,6 +575,15 @@ discard late results; repeated timeouts must not create unbounded workers.
 Never inspect password/protected controls. Capture diagnostics record method,
 target identity, and failure reason, not selected text.
 
+Only a global-shortcut capture sets the saved target; the Host does not track
+foreground changes. The saved target is the window, its process, and the
+focused control's UI Automation RuntimeId, kept even when the selection read
+failed. **Read selection** re-finds that RuntimeId under the saved window and
+reads its TextPattern selection with no foreground check. The window, process,
+and protected-field checks still apply. Now Playing reports failures in its
+status line and in Activity rather than a dialog. Each queued request carries a
+source label, which Now Playing shows once that request begins playing.
+
 `uiAutomationOnly` never writes the clipboard. `clipboardOnly` reads the
 existing clipboard without sending input; the user must copy the intended text
 first, and stale clipboard text may be read. In `automatic`, the host labels the
