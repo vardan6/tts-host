@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
@@ -18,6 +19,23 @@ struct DownloadProgress {
 };
 
 using DownloadProgressCallback = std::function<void(const DownloadProgress &)>;
+
+// Decides which progress updates are worth showing. The fetcher reports after
+// every network read (up to 64 KiB), thousands of times per model; showing each
+// would repaint the UI per read. Reports the first update of each file, the
+// update completing it, and otherwise at most one per `interval`.
+class DownloadProgressThrottle {
+ public:
+  explicit DownloadProgressThrottle(std::chrono::steady_clock::duration interval) : interval_(interval) {}
+
+  bool should_report(const DownloadProgress &progress, std::chrono::steady_clock::time_point now);
+
+ private:
+  std::chrono::steady_clock::duration interval_;
+  std::string last_path_;
+  bool reported_ = false;
+  std::chrono::steady_clock::time_point last_report_{};
+};
 
 // Fetches `url` into `destination`, resuming from `resume_from_bytes` (the
 // number of bytes already on disk) when it is greater than zero, and reports

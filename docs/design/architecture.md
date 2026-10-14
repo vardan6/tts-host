@@ -536,7 +536,9 @@ Three UI surfaces, divided by task:
   runner restarts, eager-load failures, selection-capture results) is
   timestamped there too, including what happened while Settings was closed.
   The record is bounded, in memory only, and never holds selected or spoken
-  text. Restart-requiring settings are marked. It opens independently of the tray (`tts-host --settings`), so a
+  text. Download progress is transient: each file's progress replaces its own
+  newest entry and is shown at most every 250 ms, so a download cannot evict
+  earlier messages; start, completion, and failure stay separate entries. Restart-requiring settings are marked. It opens independently of the tray (`tts-host --settings`), so a
   platform with no usable tray still has a full path to configuration.
 
 The global hotkey and selection capture belong to the host: it is already

@@ -155,3 +155,22 @@ and nothing is read. Reading a real external application's selection from
 Now Playing was not exercised; it is part of the combined Windows
 walkthrough. Validation: Linux Debug and native Windows Debug, 47/47 CTests
 each.
+
+## Resolution of finding 4
+
+Settings download progress now goes through `DownloadProgressThrottle`
+(`src/catalogue_download.cpp`). It passes the first update of each file and
+the update that completes it, and otherwise at most one update every 250 ms.
+Passed updates call `record_transient_activity`: while the newest Activity
+entry is the same file's progress, it is replaced with a fresh sequence
+instead of appended. Any other entry ends the replacement, so start,
+completion, and failure messages stay separate. A download now uses one
+retained entry per file, and Settings rebuilds and repaints the log only for
+throttled updates.
+
+Regressions: `tts_host_selection_capture` (1,000 progress updates occupy one
+entry, sequence readers see a replacement, an intervening failure is not
+replaced) and `tts_host_catalogue_download` (interval, new-file, and
+completion rules). A live download in Settings was not exercised and no
+performance was measured. Validation: Linux Debug and native Windows Debug,
+47/47 CTests each.

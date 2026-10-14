@@ -500,10 +500,6 @@ regressions for its failure mode.
 
 ### Next
 
-- [ ] **AFK — Coalesce download activity progress:** throttle transient updates
-  so model downloads do not repaint the full log per network read or evict
-  recent actionable messages. See
-  [finding 4](docs/reviews/code-review-2026-10-14-checkpoint.md#finding-4).
 - [ ] **HITL — Plan played-text history and visible queue:** user idea
   (2026-10-14): list played/playing reads, step back/forward and replay a
   chosen one, and show the queue. Needs `/planning-capture` first; a history
@@ -513,6 +509,7 @@ regressions for its failure mode.
 
 ### Completed
 
+- [x] **AFK — Coalesce download activity progress:** [Oct 14 finding 4](docs/reviews/code-review-2026-10-14-checkpoint.md#finding-4).
 - [x] **AFK — Now Playing Stop clears queued speech:** [Oct 14 finding 1](docs/reviews/code-review-2026-10-14-checkpoint.md#finding-1).
 - [x] **AFK — Now Playing read actions and source targeting:** [Oct 14 finding 3](docs/reviews/code-review-2026-10-14-checkpoint.md#finding-3), [design](docs/design/architecture.md#desktop-integration).
 - [x] **AFK — Reload external configuration edits:** [Oct 14 finding 2](docs/reviews/code-review-2026-10-14-checkpoint.md#finding-2), [design](docs/design/architecture.md#live-reload).

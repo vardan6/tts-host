@@ -205,6 +205,19 @@ std::string sha256_hex_of_file(const std::filesystem::path &path) {
   return to_lowercase_hex(hasher.finalize());
 }
 
+bool DownloadProgressThrottle::should_report(const DownloadProgress &progress,
+                                             std::chrono::steady_clock::time_point now) {
+  const bool new_file = !reported_ || progress.relative_path != last_path_;
+  const bool complete = progress.bytes_downloaded >= progress.bytes_total;
+  if (!new_file && !complete && now - last_report_ < interval_) {
+    return false;
+  }
+  reported_ = true;
+  last_path_ = progress.relative_path;
+  last_report_ = now;
+  return true;
+}
+
 ImportedModelPackage download_catalogue_entry(const CatalogueEntry &entry,
                                               const std::filesystem::path &destination_root,
                                               const ConfigDocument &config, const HttpFetchFunction &fetch,

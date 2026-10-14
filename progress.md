@@ -1,3 +1,11 @@
+- 2026-10-14: Coalesce download activity progress — `DownloadProgressThrottle`
+  passes each file's first and completing update and otherwise one per 250 ms;
+  `record_transient_activity` replaces that file's newest progress entry, so a
+  download keeps one Activity entry per file and repaints only throttled
+  updates. Regressions in `tts_host_selection_capture` and
+  `tts_host_catalogue_download`; design and finding 4 resolution updated.
+  47/47 CTests on Linux and native Windows Debug; no live download exercised.
+
 - 2026-10-14: Now Playing read actions and source targeting — Read
   selection/Read clipboard, saved-target label, utterance source, and capture
   status. Read selection re-finds the shortcut's saved control by UI

@@ -63,6 +63,24 @@ int main() {
     require(retained.size() == 200 && retained.front().text == "bounded entry 5" &&
                 retained.back().text == "bounded entry 204",
             "activity log did not evict its oldest entries");
+    for (int i = 0; i < 1000; ++i)
+      tts_host::record_transient_activity("download:a.bin", "a.bin: " + std::to_string(i) + " bytes");
+    auto progress = tts_host::activity_since(0);
+    require(progress.size() == 200 && progress[0].text == "bounded entry 6" &&
+                progress.back().text == "a.bin: 999 bytes" &&
+                progress.back().sequence > progress[198].sequence,
+            "repeated download progress did not replace its single entry");
+    const auto before_update = progress.back().sequence;
+    tts_host::record_transient_activity("download:a.bin", "a.bin: done");
+    require(tts_host::activity_since(before_update).size() == 1,
+            "replaced progress was not visible to sequence readers");
+    tts_host::record_transient_activity("download:b.bin", "b.bin: 1 bytes");
+    tts_host::record_activity("Download failed: network");
+    tts_host::record_transient_activity("download:b.bin", "b.bin: 2 bytes");
+    progress = tts_host::activity_since(0);
+    require(progress[196].text == "a.bin: done" && progress[197].text == "b.bin: 1 bytes" &&
+                progress[198].text == "Download failed: network" && progress[199].text == "b.bin: 2 bytes",
+            "progress replaced an entry other than its own newest transient entry");
   } catch (const std::exception &error) {
     std::cerr << error.what() << '\n';
     return 1;
