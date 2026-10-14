@@ -38,6 +38,25 @@ int main(int argc, char **argv) {
     if (peeked || error != ERROR_BROKEN_PIPE) {
       throw std::runtime_error("runner inherited an unrelated pipe writer");
     }
+    // Explorer/login GUI launches have no stderr. Both Windows representations
+    // of a missing standard handle must still allow protocol and audio I/O.
+    const HANDLE original_stderr = GetStdHandle(STD_ERROR_HANDLE);
+    for (HANDLE missing : {static_cast<HANDLE>(nullptr), INVALID_HANDLE_VALUE}) {
+      SetStdHandle(STD_ERROR_HANDLE, missing);
+      try {
+        tts_host::RunnerSession gui_session{std::filesystem::path(argv[1])};
+        gui_session.send_request(tts_host::make_runner_initialize_request(1));
+        gui_session.send_request(tts_host::make_runner_synthesize_request(2, "GUI launch"));
+        if (gui_session.read_audio_stream_until_end().empty()) {
+          throw std::runtime_error("GUI-launched runner produced no audio");
+        }
+        if (gui_session.finish() != 0) throw std::runtime_error("GUI-launched runner failed");
+      } catch (...) {
+        SetStdHandle(STD_ERROR_HANDLE, original_stderr);
+        throw;
+      }
+    }
+    SetStdHandle(STD_ERROR_HANDLE, original_stderr);
   } catch (const std::exception &error) {
     std::cerr << error.what() << '\n';
     return 1;

@@ -9,6 +9,7 @@
 
 #include "resource.h"
 
+#include "tts_host/activity_log.hpp"
 #include "tts_host/clipboard.hpp"
 #include "tts_host/global_hotkey.hpp"
 #include "tts_host/selection_hotkey_state.hpp"
@@ -94,6 +95,7 @@ bool register_read_selection_hotkey(HWND window, const ConfigDocument &document)
   const auto hotkey = configured_read_selection_hotkey(document, error);
   if (!hotkey.has_value()) {
     if (!error.empty()) {
+      record_activity("The configured selection hotkey is invalid: " + error);
       MessageBoxW(window, L"The configured selection hotkey is invalid. Open Settings and choose another one.",
                   L"TTS Host", MB_OK | MB_ICONWARNING);
     }
@@ -101,6 +103,7 @@ bool register_read_selection_hotkey(HWND window, const ConfigDocument &document)
   }
   if (!RegisterHotKey(window, kReadSelectionHotkeyId, hotkey->modifiers | MOD_NOREPEAT,
                       hotkey->virtual_key)) {
+    record_activity("The configured selection hotkey is unavailable: Windows or another application is using it.");
     MessageBoxW(window,
                 L"The configured selection hotkey is unavailable. Open Settings and choose another one.",
                 L"TTS Host", MB_OK | MB_ICONWARNING);
@@ -119,6 +122,7 @@ TrayContext *tray_context(HWND window) {
 }
 
 void show_error(HWND window, const std::string &message) {
+  record_activity(message);
   const int required = MultiByteToWideChar(CP_UTF8, 0, message.c_str(), -1, nullptr, 0);
   std::wstring wide_message(required > 0 ? static_cast<std::size_t>(required) : 0, L'\0');
   if (required > 0) {

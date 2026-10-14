@@ -1,3 +1,4 @@
+#include "tts_host/activity_log.hpp"
 #include "tts_host/catalogue_download.hpp"
 #include "tts_host/path_encoding.hpp"
 #include "tts_host/audio_history.hpp"
@@ -254,6 +255,7 @@ class TraySpeechScheduler {
     tts_host::apply_playback_settings(*config_.current(), playback_controller_);
     try { sessions_.load_eager(*config_.current()); }
     catch (const std::exception &error) {
+      tts_host::record_activity(std::string("Eager model load failed: ") + error.what());
       std::cerr << "Eager model load failed: " << error.what() << '\n';
     }
     worker_ = std::thread(&TraySpeechScheduler::run, this);
@@ -349,6 +351,7 @@ class TraySpeechScheduler {
             } catch (const tts_host::RunnerCancelled &) {
               // A new read or Quit cancels background warming immediately.
             } catch (const std::exception &error) {
+              tts_host::record_activity(std::string("Eager model load failed: ") + error.what());
               std::cerr << "Eager model load failed: " << error.what() << '\n';
             }
           }
@@ -371,6 +374,7 @@ class TraySpeechScheduler {
         // Stop/replacement terminates runner I/O without retry or an error state.
       } catch (const std::exception &error) {
         playback_controller_.fail(control, error.what());
+        tts_host::record_activity(std::string("Speech failed: ") + error.what());
         std::cerr << "Tray speech request failed: " << error.what() << '\n';
       }
 
@@ -437,6 +441,7 @@ int run_main(int argc, char **argv) {
             tts_host::show_startup_choice_dialog,
             [&document] { tts_host::set_start_at_login(true, document.paths.config_path); });
       } catch (const std::exception &error) {
+        tts_host::record_activity(std::string("Could not record the login startup choice: ") + error.what());
         std::cerr << "Could not record the login startup choice: " << error.what() << '\n';
       }
 #endif

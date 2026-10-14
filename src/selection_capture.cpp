@@ -1,9 +1,8 @@
 #include "tts_host/selection_capture.hpp"
+#include "tts_host/activity_log.hpp"
 
 #include <stdexcept>
 #include <cwchar>
-#include <mutex>
-#include <vector>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -12,13 +11,6 @@
 #endif
 
 namespace tts_host {
-namespace {
-
-std::mutex diagnostics_mutex;
-std::vector<std::string> diagnostics;
-constexpr std::size_t kMaximumDiagnostics = 32;
-
-}  // namespace
 
 SelectionCapturePolicy parse_selection_capture_policy(std::string_view value) {
   if (value.empty() || value == "automatic") return SelectionCapturePolicy::Automatic;
@@ -40,14 +32,7 @@ void record_selection_capture_diagnostic(const SelectionCaptureResult &result) {
   std::string line = "Selection capture — method: " + result.method + ", target: " +
                      (result.target.empty() ? "unknown" : result.target) + ", result: " +
                      (result.succeeded ? "success" : result.failure);
-  std::lock_guard lock(diagnostics_mutex);
-  if (diagnostics.size() == kMaximumDiagnostics) diagnostics.erase(diagnostics.begin());
-  diagnostics.push_back(std::move(line));
-}
-
-std::vector<std::string> selection_capture_diagnostics() {
-  std::lock_guard lock(diagnostics_mutex);
-  return diagnostics;
+  record_activity(std::move(line));
 }
 
 #ifdef _WIN32

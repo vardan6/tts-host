@@ -32,7 +32,10 @@ Keep three operations distinct:
   but retains the configured generator, CMake cache, and fetched dependencies.
 - **Fresh:** `fresh-win.ps1` removes `build/`, configures it again, then builds
   all targets and runs CTest. Keep `build-linux/` and the dependency cache unless
-  the user explicitly passes `-ResetDependencyCache`.
+  the user explicitly passes `-ResetDependencyCache`. Before removing either
+  directory, reject running processes whose executable is inside this build
+  tree and list their names and PIDs. The user closes the Host through tray Quit
+  and ends any remaining runner before retrying.
 
 The Windows generator is Visual Studio, so a handwritten `Makefile` or direct
 `make clean` command is the wrong abstraction for that build tree.

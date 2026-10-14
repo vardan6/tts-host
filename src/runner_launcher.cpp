@@ -35,6 +35,17 @@ namespace {
 }
 
 HANDLE make_inheritable_child_handle(HANDLE original) {
+  // GUI-subsystem launches (Explorer, login) have no standard handles; give
+  // the child the NUL device instead of failing to duplicate a null handle.
+  if (original == nullptr || original == INVALID_HANDLE_VALUE) {
+    SECURITY_ATTRIBUTES inheritable{sizeof(SECURITY_ATTRIBUTES), nullptr, TRUE};
+    HANDLE null_device = CreateFileW(L"NUL", GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                                     &inheritable, OPEN_EXISTING, 0, nullptr);
+    if (null_device == INVALID_HANDLE_VALUE) {
+      throw_windows_error("could not open the null device for runner inheritance");
+    }
+    return null_device;
+  }
   HANDLE duplicate = nullptr;
   if (!DuplicateHandle(GetCurrentProcess(), original, GetCurrentProcess(), &duplicate, 0, TRUE,
                        DUPLICATE_SAME_ACCESS)) {

@@ -1,9 +1,15 @@
 # Active Context
 
-- Mode: implementation; gap-free utterance stream AFK slices done.
+- Mode: checkpoint finalization; GUI-launch fixes verified, branch review next.
 - Phase: review/finalize `roadmap-slices` before the Linux adapter.
-- State: per-utterance stream (`71d4657`) and Playback tab tuning committed.
-- Next action: HITL — with the user's permission, rerun the audible
+- State: per-utterance stream (`71d4657`) and Playback tab tuning (`21316be`)
+  committed; the WASAPI stream is verified only by build and fake-endpoint tests.
+- GUI-launch stderr `NUL` fallback and bounded shared Settings activity log
+  verified on 2026-10-14: shell-launched Kokoro load, error display, and reopen
+  retention pass; 46/46 Windows and Linux CTests. See `progress.md`.
+- Next action: cross-provider review of the checkpoint, triage findings, then
+  prepare the `roadmap-slices` PR to `main` with native acceptance gaps explicit.
+- Then: HITL — with the user's permission, rerun the audible
   `tts-host-playback-gap-probe` (now has a `stream` condition) and record it
   under [finding 16](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-16).
   Pending native checks: tab layout incl. new Playback controls, first-run

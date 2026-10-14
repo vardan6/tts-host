@@ -17,6 +17,7 @@
 #include <utility>
 #include <vector>
 
+#include "tts_host/activity_log.hpp"
 #include "tts_host/catalogue_download.hpp"
 #include "tts_host/config_persistence.hpp"
 #include "tts_host/global_hotkey.hpp"
@@ -77,6 +78,11 @@ constexpr UINT kIdleTimerIntervalMs = 5000;
 constexpr UINT_PTR kDirectoryWatchTimerId = 2;
 constexpr UINT kDirectoryWatchTimerIntervalMs = 5000;
 
+// Shows activity recorded elsewhere in the Host (speech worker, tray, runner
+// recovery) while Settings is open; tts_host/activity_log.hpp.
+constexpr UINT_PTR kActivityTimerId = 3;
+constexpr UINT kActivityTimerIntervalMs = 500;
+
 // Edits the tray-owned document and retains the last successfully saved value.
 // Tray sessions outlive this window; standalone Settings owns its own manager.
 struct SettingsState {
@@ -97,6 +103,8 @@ struct SettingsState {
   // The lower pane is the one durable place for user-visible settings-window
   // output: model information, progress, successes, and actionable failures.
   HWND activity_log = nullptr;
+  // Sequence of the newest process-wide activity entry already shown.
+  std::uint64_t activity_shown = 0;
   HWND tabs = nullptr;
   // Every page control with its tab index; switching tabs shows one page.
   std::vector<std::pair<HWND, int>> page_controls;
@@ -392,20 +400,36 @@ std::string edit_text(HWND edit) {
   return wide_to_utf8(text.c_str());
 }
 
-void append_activity_log(SettingsState &state, const std::wstring &text) {
+// Appends process-wide activity entries not yet shown in this window.
+void show_new_activity(SettingsState &state) {
   if (state.activity_log == nullptr) {
     return;
   }
+  const auto entries = activity_since(state.activity_shown);
+  if (entries.empty()) {
+    return;
+  }
+  std::wstring text;
+  // Rebuild from the bounded record so an open Settings window does not retain
+  // entries already evicted by the process-wide log.
+  for (const auto &entry : activity_since(0)) {
+    if (!text.empty()) text += L"\r\n";
+    text += utf8_to_wide("[" + entry.time + "] " + entry.text);
+    state.activity_shown = entry.sequence;
+  }
+  SetWindowTextW(state.activity_log, text.c_str());
   const int length = GetWindowTextLengthW(state.activity_log);
   SendMessageW(state.activity_log, EM_SETSEL, length, length);
-  if (length != 0) {
-    SendMessageW(state.activity_log, EM_REPLACESEL, FALSE, reinterpret_cast<LPARAM>(L"\r\n"));
-  }
-  SendMessageW(state.activity_log, EM_REPLACESEL, FALSE, reinterpret_cast<LPARAM>(text.c_str()));
   SendMessageW(state.activity_log, EM_SCROLLCARET, 0, 0);
   // Loading and download setup block this UI thread, so repaint the message
   // announcing that work before entering either operation.
   UpdateWindow(state.activity_log);
+}
+
+// Settings messages join the process-wide log so they outlive this window.
+void append_activity_log(SettingsState &state, const std::wstring &text) {
+  record_activity(wide_to_utf8(text.c_str()));
+  show_new_activity(state);
 }
 
 std::wstring captured_hotkey_text(WPARAM virtual_key) {
@@ -889,6 +913,7 @@ LRESULT CALLBACK settings_window_proc(HWND window, UINT message, WPARAM wparam, 
     case WM_DESTROY:
       KillTimer(window, kIdleTimerId);
       KillTimer(window, kDirectoryWatchTimerId);
+      KillTimer(window, kActivityTimerId);
       return 0;
     case WM_TIMER: {
       auto *state = reinterpret_cast<SettingsState *>(GetWindowLongPtrW(window, GWLP_USERDATA));
@@ -899,6 +924,8 @@ LRESULT CALLBACK settings_window_proc(HWND window, UINT message, WPARAM wparam, 
         on_idle_timer(*state);
       } else if (wparam == kDirectoryWatchTimerId) {
         on_directory_watch_timer(*state, window);
+      } else if (wparam == kActivityTimerId) {
+        show_new_activity(*state);
       }
       return 0;
     }
@@ -1219,7 +1246,7 @@ void run_settings_window(ConfigDocument &document,
   show_settings_page(state, kGeneralPage);
 
   // Activity log, below the tabs and visible on every page.
-  CreateWindowExW(0, L"STATIC", L"Activity and installed models:", WS_CHILD | WS_VISIBLE, 16, 336,
+  CreateWindowExW(0, L"STATIC", L"Activity log:", WS_CHILD | WS_VISIBLE, 16, 336,
                   240, 24, window, nullptr, instance, nullptr);
   state.activity_log = CreateWindowExW(
       WS_EX_CLIENTEDGE, L"EDIT", nullptr,
@@ -1228,10 +1255,11 @@ void run_settings_window(ConfigDocument &document,
   if (state.activity_log == nullptr) {
     throw std::runtime_error("failed to create the settings activity log");
   }
+  // The process-wide record bounds retention; allow its full text to display.
+  SendMessageW(state.activity_log, EM_SETLIMITTEXT, 0, 0);
+  // Earlier activity in this Host process, then the current installed models.
+  show_new_activity(state);
   append_activity_log(state, L"Installed models and licences:\r\n" + format_installed_models(state.last_scan));
-  for (const auto &diagnostic : selection_capture_diagnostics()) {
-    append_activity_log(state, utf8_to_wide(diagnostic));
-  }
   // Tray Settings shows the existing resident model and does not unload on close.
   report_session_status(state);
 
@@ -1240,6 +1268,7 @@ void run_settings_window(ConfigDocument &document,
   EnumChildWindows(window, apply_shell_ui_font, reinterpret_cast<LPARAM>(shell_ui_font()));
 
   SetTimer(window, kIdleTimerId, kIdleTimerIntervalMs, nullptr);
+  SetTimer(window, kActivityTimerId, kActivityTimerIntervalMs, nullptr);
   if (state.document.value["modelRegistry"]["watchForChanges"].get<bool>()) {
     SetTimer(window, kDirectoryWatchTimerId, kDirectoryWatchTimerIntervalMs, nullptr);
   }

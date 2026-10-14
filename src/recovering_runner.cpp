@@ -1,5 +1,6 @@
 #include "tts_host/recovering_runner.hpp"
 #include "tts_host/path_encoding.hpp"
+#include "tts_host/activity_log.hpp"
 #include <iostream>
 
 namespace tts_host {
@@ -63,6 +64,7 @@ SynthesizedChunk RecoveringRunner::synthesize(const std::string &text, double sp
           std::string("runner failed again after one restart: ") + error.what() +
           "; check the model/runner installation and available memory, or choose another model");
       const auto message = std::string("Restarting runner and retrying unplayed chunk once: ") + error.what();
+      record_activity(message);
       if (log_) log_(message); else std::cerr << message << '\n';
     }
   }

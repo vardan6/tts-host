@@ -1,5 +1,25 @@
 # Progress
 
+- 2026-10-14: GUI-launch and Activity log checkpoint — verified native
+  `compile-win.ps1` rebuild and a separate shell launch using development
+  config: Kokoro loads, Settings records timestamped model-selection errors,
+  and messages survive closing/reopening Settings. Bounded the visible pane
+  to the retained process-wide record; regression checks cover 200-entry
+  eviction and runner synthesis with null/invalid Windows stderr. 46/46
+  CTests pass on Windows and Linux. No login-startup changes or audible probe.
+
+- 2026-10-13: Fresh-build process check — `fresh-win.ps1` now rejects running
+  executables from its build tree before deleting build files or dependency
+  cache, listing names/PIDs and shutdown instructions. Native verification
+  identified Host 22484 and its Kokoro runner 29920 and stopped before cleanup;
+  the runner holds `onnxruntime.dll`. Full fresh build awaits Host shutdown.
+
+- 2026-10-13: Windows build-script paths — anchored build, configure, test,
+  cleanup, config, marker, and executable paths to `$PSScriptRoot` in
+  `compile-win.ps1` and `fresh-win.ps1`; filesystem reads/removals use literal
+  paths. Both scripts passed native Windows PowerShell syntax parsing. A full
+  fresh run remains pending closing the running development Host.
+
 - 2026-10-02: TTS application icon — added original document/speaker artwork
   inspired by the supplied examples, embedded a multi-resolution Windows ICO,
   and replaced the generic tray icon with the embedded resource at the system
@@ -272,3 +292,5 @@
 - 2026-10-07: Per-utterance stream — `PlaybackSink::open_stream` returns one `PlaybackStream` per utterance; the Windows stream opens an event-driven WASAPI client on the first audio, queues each sentence without draining, flushes on seek, stops on pause/Stop, reopens on a changed default endpoint, format, or invalidation, and drains once at the end (a seek during the drain replays retained audio into the same stream). Fake-endpoint regression in `tts_host_synthesis_pipeline`; gap probe gained a `stream` condition. 46/46 CTests on Windows and Linux. Audible re-measure pending (HITL).
 
 - 2026-10-08: Playback tab tuning — schema adds `audio.bufferMilliseconds`, `sentencePauseMilliseconds`, `lookaheadSentences`; the Playback tab edits them and **Reset to defaults** restores only that tab. The pipeline now appends each synthesized sentence to retained history at once, keeps up to the configured depth of unheard sentences, discards all of them on a speed change at first launch, and inserts the pause as retained source PCM. Pause and lookahead come from the controller (live after Settings publishes); the buffer applies per utterance. Pipeline and Settings regressions; 46/46 CTests on Windows and Linux. Native view of the new controls not yet done.
+
+- 2026-10-13: Unplanned fixes (uncommitted) — GUI-launched Host has no stderr, so runner launch failed with "could not duplicate a handle for runner inheritance (Windows error 6)"; runner stderr now falls back to `NUL`. New process-wide `activity_log` (bounded, in-memory, timestamped) records speech failures, runner restarts, eager-load failures, tray error dialogs, hotkey warnings, selection-capture results, and Settings messages; Settings replays it on open, polls every 500 ms, and its pane is renamed "Activity log". 46/46 CTests on Windows; `tts-host.exe` not re-linked (was running) and not natively verified.

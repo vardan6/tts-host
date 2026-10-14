@@ -166,6 +166,7 @@ endif()
 
 add_executable(
   tts-host
+  src/activity_log.cpp
   src/audio_conversion.cpp
   src/audio_history.cpp
   src/catalogue_download.cpp
@@ -408,6 +409,7 @@ if(BUILD_TESTING)
 
   add_executable(
     tts-host-selection-capture-tests
+    src/activity_log.cpp
     src/selection_capture.cpp
     tests/selection_capture_tests.cpp
   )
@@ -523,7 +525,7 @@ if(BUILD_TESTING)
   set_tests_properties(tts_host_unicode_cli_paths PROPERTIES TIMEOUT 20)
 
   add_executable(tts-host-synthesis-pipeline-tests tests/synthesis_pipeline_tests.cpp
-    src/synthesis_pipeline.cpp src/recovering_runner.cpp src/runner_launcher.cpp
+    src/synthesis_pipeline.cpp src/recovering_runner.cpp src/activity_log.cpp src/runner_launcher.cpp
     src/runner_protocol.cpp src/playback_controller.cpp src/playback_sink.cpp
     src/audio_conversion.cpp src/audio_history.cpp src/text_splitter.cpp src/wav_writer.cpp)
   target_include_directories(tts-host-synthesis-pipeline-tests PRIVATE include)
@@ -540,7 +542,8 @@ if(BUILD_TESTING)
   target_include_directories(tts-host-runner-failure-fixture PRIVATE include)
   target_link_libraries(tts-host-runner-failure-fixture PRIVATE nlohmann_json::nlohmann_json)
   add_executable(tts-host-runner-recovery-tests tests/runner_recovery_tests.cpp
-    src/runner_launcher.cpp src/recovering_runner.cpp src/runner_protocol.cpp src/stub_runner.cpp)
+    src/runner_launcher.cpp src/recovering_runner.cpp src/activity_log.cpp src/runner_protocol.cpp
+    src/stub_runner.cpp)
   target_include_directories(tts-host-runner-recovery-tests PRIVATE include)
   target_link_libraries(tts-host-runner-recovery-tests PRIVATE nlohmann_json::nlohmann_json)
   add_test(NAME tts_host_runner_recovery COMMAND tts-host-runner-recovery-tests
@@ -548,7 +551,7 @@ if(BUILD_TESTING)
   set_tests_properties(tts_host_runner_recovery PROPERTIES TIMEOUT 15)
 
   add_executable(tts-host-resident-synthesis-tests tests/resident_synthesis_tests.cpp
-    src/model_session.cpp src/model_registry.cpp src/recovering_runner.cpp
+    src/model_session.cpp src/model_registry.cpp src/recovering_runner.cpp src/activity_log.cpp
     src/synthesis_pipeline.cpp src/runner_launcher.cpp src/runner_protocol.cpp
     src/playback_controller.cpp src/playback_sink.cpp src/audio_conversion.cpp
     src/audio_history.cpp src/text_splitter.cpp src/wav_writer.cpp)
@@ -574,6 +577,7 @@ if(BUILD_TESTING)
     src/model_registry.cpp
     src/model_session.cpp
     src/recovering_runner.cpp
+    src/activity_log.cpp
     src/runner_launcher.cpp
     src/runner_protocol.cpp
     tests/model_session_tests.cpp
