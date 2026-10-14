@@ -78,12 +78,44 @@ A real-time factor above 1.0 cannot sustain streaming playback and is a hard
 failure. Blind A/B listening breaks ties between candidates that pass; it never
 overrides a hard failure.
 
+#### English bake-off corpus
+
+Use these exact, original passages for every English default-model measurement
+and blind listening comparison. Do not normalize or edit them before submitting
+them to the Host. The technical passage exercises acronyms, identifiers,
+numbers, units, punctuation, and a URL. The long-form passage exercises natural
+connected prose and sentence transitions.
+
+**Technical passage**
+
+> At 08:45 UTC, API gateway node EU-2 returned HTTP 503 for 17 of 2,400
+> requests. The on-call engineer reduced the cache TTL from 15 minutes to
+> 90 seconds, then restarted worker process 3. CPU use fell from 82 percent to
+> 41 percent. Confirm the repair at https://status.example.test before the
+> 09:30 release review.
+
+**Long-form passage**
+
+> Mira arrived at the workshop before sunrise, when the street was quiet and
+> the windows still reflected the lamps. She opened the doors, checked the
+> tools, and placed a clean sheet of paper beside each machine. The new team
+> would begin work that morning, and she wanted the room to feel clear rather
+> than hurried. At nine o'clock, the first visitors came in with questions
+> about the schedule, the safety rules, and the small wooden model on the
+> central table. Mira showed them how the pieces connected. She explained that
+> careful work was not slow work: it was work that prevented a problem before
+> it became expensive. By midday, the team had made its first test part. It was
+> not perfect, but it fit the model, and everyone could see what to improve.
+
 ## Speech behaviour
 
 - A new read request interrupts whatever is currently speaking. Queueing is
   available but is not the default.
 - Long text begins playing quickly rather than after full synthesis, and can be
   cancelled at any point.
+- Engine input limits must not silently truncate a read request or terminate
+  its runner. The complete normalized request is spoken in bounded engine
+  batches when a model cannot accept it as one input.
 - Markdown and HTML input are read correctly by default, not read as literal
   markup: code blocks are announced and skipped, inline code is read, links are
   read as their text, tables are skipped with a marker, headings are read with a
@@ -94,6 +126,33 @@ overrides a hard failure.
   data.
 - Audio follows the operating system's default output device and follows changes
   to it, unless a device is pinned in configuration.
+- A global **Read selection** command reads the active application's selected
+  text without requiring the user to copy it manually whenever that application
+  exposes a selection. It must report which capture path failed rather than
+  silently reading stale clipboard content. Direct accessibility capture is
+  preferred; a synthetic Copy fallback must preserve the focused application's
+  normal Copy semantics and must never send an interrupting command to a
+  terminal or console. Browser-page selection is a first-class path, not a
+  lower-priority fallback.
+- The desktop offers a persistent, independently opened **Now Playing** window
+  for the active utterance. It shows state and source, provides read-selection,
+  read-clipboard, pause/resume, and stop controls, and provides backward and
+  forward seek controls plus a speech-speed control from 0.5× to 2.0×. The seek
+  interval is configurable, defaults to five seconds, and a control that cannot
+  reach its target is disabled rather than pretending that the utterance moved.
+- Pause retains the current position; Stop ends playback and clears queued
+  requests. Closing Now Playing hides the window without stopping playback.
+  Capture failure does not interrupt the current utterance. Read selection
+  from Host controls targets the identified last external application, never
+  the Host window itself.
+- Backward seek remains available through retained generated audio. Retention
+  must have bounded memory and storage use, with an actionable error on resource
+  exhaustion. Display elapsed and generated duration without claiming a final
+  duration before synthesis finishes.
+- A speed change applies to an active utterance at its next sentence boundary:
+  finish already audible PCM unchanged, discard unplayed lookahead, and
+  regenerate that lookahead at the new speed. It must not skip or repeat text,
+  change pitch by resampling PCM, or claim seamless mid-sentence adjustment.
 
 ## Configuration and controls
 
@@ -104,6 +163,40 @@ overrides a hard failure.
   a second source of truth.
 - Every setting is reachable from the settings window. The tray menu duplicates
   only the frequently changed subset.
+- Selection capture is configurable: automatic direct selection with a Copy/
+  clipboard fallback is the default; users can choose direct-selection-only or
+  clipboard-only operation. Clipboard-only reads the existing clipboard and
+  never sends Copy, so users must copy the intended selection first and may
+  otherwise read stale text. Automatic Copy fallback may change the clipboard
+  and cannot work for protected or elevated targets. When a safe platform-native
+  Copy action is unknown, automatic capture reports that limitation and leaves
+  the foreground application untouched.
+  Application names alone must not authorize synthetic input. The initial
+  direct-capture prototype may leave automatic Copy fallback unavailable and
+  direct users to manual copy followed by Read clipboard.
+- The playback seek interval is configurable from one to 30 seconds and takes
+  effect for the next button press.
+- The tray can suspend or resume the configured global selection shortcut for
+  the current Host process without clearing its saved `hotkeys.readSelection`
+  binding. On startup, the Host attempts to register that saved binding.
+- Login startup appears in the operating system's standard startup page
+  (Windows Task Manager and Settings → Apps → Startup, KDE/GNOME autostart,
+  macOS Login Items) and in a Settings **General** tab switch; both control the
+  same entry. A choice made in the system page is shown and never overridden by
+  the Host; Settings links to that page. Ordinary launches never change the
+  entry. It uses only per-user registration, without a service or administrator
+  access. A registration failure is reported without preventing the Host from
+  starting — see [design](../design/architecture.md#login-startup).
+- The first desktop launch asks once whether to start at login, pre-ticked from
+  `startup.launchOnLogin` (default `true`); the Host is never registered
+  silently.
+- The Settings **Playback** tab sets the audio buffer (20–200 ms, default 50),
+  the pause between sentences (0–1000 ms, default 0), and sentences prepared
+  ahead (1–4, default 1), with **Reset to defaults** for that tab. Changes apply
+  without a restart. Sentence boundaries add no audible device gap beyond the
+  configured pause.
+- Default speech speed is configurable from 0.5× to 2.0×, defaults to 1.0×, and
+  is also adjustable from Now Playing for the active utterance.
 - Configuration changes take effect without a restart wherever possible.
   Settings that genuinely require a restart say so rather than being silently
   ignored.
@@ -127,6 +220,10 @@ overrides a hard failure.
 - Portable mode keeps configuration, model packages, logs, and other mutable
   data in user-visible portable locations. Installed mode uses normal per-user
   OS data directories.
+- A future Windows installer must offer a pre-ticked launch-at-login choice,
+  register it in the same OS entry the application uses, and remove that entry on
+  uninstall; the application and the system page can change it afterward.
+  Portable users get the same choice on first launch.
 - Windows releases should distinguish CPU/generic and NVIDIA-capable packages if
   bundling every acceleration runtime would make one distribution unreasonably
   large.
@@ -150,7 +247,9 @@ overrides a hard failure.
   plus a settings window reachable independently of the tray.
 - A global shortcut that reads the current selection from whatever application
   has focus.
-- A browser extension client.
+- A browser extension client that reads selected page text from its toolbar
+  action or readable article text from the page context menu, without touching
+  the clipboard.
 
 ## Explicit non-goals for the first release
 

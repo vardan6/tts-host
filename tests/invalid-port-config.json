@@ -1,0 +1,31 @@
+{
+  "$schema": "../schemas/config.schema.json",
+  "schemaVersion": 1,
+  "server": {
+    "host": "127.0.0.1",
+    "port": 70000,
+    "authentication": "none",
+    "allowedOrigins": []
+  },
+  "audio": {
+    "outputDevice": "system-default"
+  },
+  "modelRegistry": {
+    "directories": [
+      "./models"
+    ],
+    "watchForChanges": true,
+    "idleUnloadSeconds": 600,
+    "maximumLoadedGpuModels": 1
+  },
+  "profiles": {
+    "fast": {
+      "model": "kokoro-en-v1",
+      "device": "cpu",
+      "loadPolicy": "eager"
+    }
+  },
+  "languageDefaults": {
+    "en": "fast"
+  }
+}

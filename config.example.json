@@ -1,0 +1,50 @@
+{
+  "$schema": "./schemas/config.schema.json",
+  "audio": {
+    "outputDevice": "system-default",
+    "playbackSkipSeconds": 5,
+    "speechSpeed": 1.25
+  },
+  "hotkeys": {
+    "readSelection": "Ctrl + F8"
+  },
+  "languageDefaults": {
+    "en": "quality"
+  },
+  "modelRegistry": {
+    "directories": [
+      "./models"
+    ],
+    "idleUnloadSeconds": 600,
+    "maximumLoadedGpuModels": 1,
+    "watchForChanges": true
+  },
+  "profiles": {
+    "fast": {
+      "device": "cpu",
+      "loadPolicy": "eager",
+      "model": "kokoro-en-v1"
+    },
+    "quality": {
+      "device": "auto",
+      "fallbackProfile": "fast",
+      "loadPolicy": "onDemand",
+      "model": "qwen3-tts-1.7b"
+    }
+  },
+  "schemaVersion": 1,
+  "selection": {
+    "capturePolicy": "clipboardOnly"
+  },
+  "server": {
+    "allowedOrigins": [
+      "chrome-extension://npjbojajmindlaifibnikkepflkbpnnn"
+    ],
+    "authentication": "none",
+    "host": "127.0.0.1",
+    "port": 7861
+  },
+  "startup": {
+    "launchOnLogin": true
+  }
+}

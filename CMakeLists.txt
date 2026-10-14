@@ -1,0 +1,1109 @@
+cmake_minimum_required(VERSION 3.28)
+
+project(tts_host VERSION 0.1.0 LANGUAGES CXX)
+
+include(CTest)
+include(FetchContent)
+
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
+# Without this, MSVC encodes \uXXXX universal-character-names in narrow
+# string/char literals (e.g. the IPA phoneme constants in
+# kokoro_phoneme_mapping.cpp) using the locale-dependent execution charset
+# instead of UTF-8, silently corrupting them. Applied to every target,
+# including FetchContent'd dependencies, since it's harmless for ASCII-only
+# sources.
+add_compile_options($<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
+
+set(JSON_BuildTests OFF CACHE BOOL "" FORCE)
+set(JSON_Install OFF CACHE BOOL "" FORCE)
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+
+FetchContent_Declare(
+  nlohmann_json
+  URL https://github.com/nlohmann/json/archive/refs/tags/v3.12.0.tar.gz
+)
+
+FetchContent_Declare(
+  json_schema_validator
+  URL https://github.com/pboettch/json-schema-validator/archive/refs/tags/2.4.0.tar.gz
+)
+
+FetchContent_MakeAvailable(nlohmann_json json_schema_validator)
+
+# The local ingress follows the documented Boost.Asio/Beast stack. The
+# components used here are header-only, so populate headers without building
+# the rest of Boost.
+FetchContent_Declare(
+  boost_headers
+  URL https://archives.boost.io/release/1.89.0/source/boost_1_89_0.tar.gz
+  URL_HASH SHA256=9de758db755e8330a01d995b0a24d09798048400ac25c03fc5ea9be364b13c93
+  DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+)
+FetchContent_Populate(boost_headers)
+
+# ONNX Runtime ships prebuilt release archives with no top-level CMakeLists.txt
+# (its lib/cmake/onnxruntime config package assumes an installed layout with
+# lib64/ and include/onnxruntime/, which does not match the release archive's
+# lib/ and include/ layout), so FetchContent_MakeAvailable's add_subdirectory
+# step cannot be used. Populate the archive and define the IMPORTED target by
+# hand instead.
+set(ONNXRUNTIME_VERSION 1.29.0)
+
+if(WIN32)
+  FetchContent_Declare(
+    onnxruntime
+    URL https://github.com/microsoft/onnxruntime/releases/download/v${ONNXRUNTIME_VERSION}/onnxruntime-win-x64-${ONNXRUNTIME_VERSION}.zip
+    URL_HASH SHA256=c9b4b7086b529ad814f428c1bad028e20a25d7dc0699836775faace4ab5b78b2
+  )
+else()
+  FetchContent_Declare(
+    onnxruntime
+    URL https://github.com/microsoft/onnxruntime/releases/download/v${ONNXRUNTIME_VERSION}/onnxruntime-linux-x64-${ONNXRUNTIME_VERSION}.tgz
+    URL_HASH SHA256=c3fddc4f139a045b0c4902c57410f0694f1c2fdf9b6939fbe38b1aeae7cd14ba
+  )
+endif()
+
+FetchContent_Populate(onnxruntime)
+
+add_library(onnxruntime::onnxruntime SHARED IMPORTED)
+target_include_directories(
+  onnxruntime::onnxruntime
+  INTERFACE ${onnxruntime_SOURCE_DIR}/include
+)
+
+if(WIN32)
+  set_target_properties(
+    onnxruntime::onnxruntime PROPERTIES
+    IMPORTED_LOCATION ${onnxruntime_SOURCE_DIR}/lib/onnxruntime.dll
+    IMPORTED_IMPLIB ${onnxruntime_SOURCE_DIR}/lib/onnxruntime.lib
+  )
+  set(ONNXRUNTIME_RUNTIME_FILE ${onnxruntime_SOURCE_DIR}/lib/onnxruntime.dll)
+else()
+  set_target_properties(
+    onnxruntime::onnxruntime PROPERTIES
+    IMPORTED_LOCATION ${onnxruntime_SOURCE_DIR}/lib/libonnxruntime.so.${ONNXRUNTIME_VERSION}
+    IMPORTED_SONAME libonnxruntime.so.1
+  )
+  set(ONNXRUNTIME_RUNTIME_FILE ${onnxruntime_SOURCE_DIR}/lib/libonnxruntime.so.${ONNXRUNTIME_VERSION})
+endif()
+
+# espeak-ng vendoring (Windows only, see docs/adr/0006-espeak-ng-vendoring-and-phoneme-mapping.md).
+# The GitHub release publishes a single unversioned espeak-ng.msi asset (no
+# Linux archive). Unpack it with an msiexec administrative install rather than
+# 7-Zip: 7z reads the MSI's embedded CAB, but the CAB stores every one of the
+# 441 payload files under a flat name, and the directory tree that gives them
+# meaning lives in the MSI's own Directory/File tables, which 7z does not
+# apply. A 7z extraction therefore produces a heap of files where espeak-ng
+# expects espeak-ng-data/lang/gmw/en and espeak-ng-data/voices/!v/..., so
+# looking up a voice finds nothing and espeak-ng dies with an access
+# violation. It also mangles libespeak-ng.dll to libespeak_ng.dll, which the
+# executable's import table will not resolve. msiexec applies both tables and
+# yields the real layout, so no post-hoc reshuffling or renaming is needed.
+#
+# The tradeoff is that configuring now requires Windows (msiexec) rather than
+# working from WSL too. That costs nothing here: this block is already gated on
+# WIN32 and only produces artifacts for Windows builds. Linux is out of scope
+# (ADR 0006 point 2) and uses the system espeak-ng that
+# scripts/setup-dev-env.sh installs.
+set(ESPEAK_NG_RELEASE_TAG 1.52.0)
+
+if(WIN32)
+  FetchContent_Declare(
+    espeak_ng_msi
+    URL https://github.com/espeak-ng/espeak-ng/releases/download/${ESPEAK_NG_RELEASE_TAG}/espeak-ng.msi
+    URL_HASH SHA256=7f673c709ea5dd579d3b5ebb98688cc575328a6ab7438d2bc405b88cedaeafb9
+    DOWNLOAD_NO_EXTRACT TRUE
+  )
+  FetchContent_Populate(espeak_ng_msi)
+
+  # An administrative install unpacks the payload with the Directory table
+  # applied, producing "<TARGETDIR>/eSpeak NG/" holding espeak-ng.exe,
+  # libespeak-ng.dll, and a correctly nested espeak-ng-data/ (lang/gmw/en,
+  # voices/!v/..., phondata, *_dict). That is already the layout
+  # default_espeak_ng_executable() expects beside the runner executable
+  # (src/espeak_phonemizer.cpp), so the POST_BUILD step below is a plain copy.
+  #
+  # msiexec needs a native absolute path for both arguments and re-runs
+  # cheaply, but guard it anyway so reconfiguring does not repeat the unpack.
+  set(ESPEAK_NG_EXTRACT_DIR ${CMAKE_BINARY_DIR}/_deps/espeak_ng-extracted)
+  set(ESPEAK_NG_INSTALL_DIR "${ESPEAK_NG_EXTRACT_DIR}/eSpeak NG")
+  if(NOT EXISTS "${ESPEAK_NG_INSTALL_DIR}/espeak-ng.exe")
+    file(MAKE_DIRECTORY ${ESPEAK_NG_EXTRACT_DIR})
+    file(TO_NATIVE_PATH "${espeak_ng_msi_SOURCE_DIR}/espeak-ng.msi" ESPEAK_NG_MSI_NATIVE)
+    file(TO_NATIVE_PATH "${ESPEAK_NG_EXTRACT_DIR}" ESPEAK_NG_TARGETDIR_NATIVE)
+    execute_process(
+      COMMAND msiexec /a "${ESPEAK_NG_MSI_NATIVE}" /qn "TARGETDIR=${ESPEAK_NG_TARGETDIR_NATIVE}"
+      RESULT_VARIABLE ESPEAK_NG_EXTRACT_RESULT
+      OUTPUT_QUIET
+    )
+    if(NOT ESPEAK_NG_EXTRACT_RESULT EQUAL 0)
+      message(FATAL_ERROR
+        "msiexec failed to unpack espeak-ng.msi (exit code ${ESPEAK_NG_EXTRACT_RESULT}). "
+        "See docs/adr/0006-espeak-ng-vendoring-and-phoneme-mapping.md.")
+    endif()
+    if(NOT EXISTS "${ESPEAK_NG_INSTALL_DIR}/espeak-ng.exe")
+      message(FATAL_ERROR
+        "msiexec reported success but '${ESPEAK_NG_INSTALL_DIR}/espeak-ng.exe' is missing; "
+        "the MSI's internal layout may have changed for release ${ESPEAK_NG_RELEASE_TAG}.")
+    endif()
+  endif()
+
+  set(ESPEAK_NG_EXECUTABLE "${ESPEAK_NG_INSTALL_DIR}/espeak-ng.exe")
+  set(ESPEAK_NG_LIBRARY "${ESPEAK_NG_INSTALL_DIR}/libespeak-ng.dll")
+  set(ESPEAK_NG_DATA_DIR "${ESPEAK_NG_INSTALL_DIR}/espeak-ng-data")
+endif()
+
+if(TARGET nlohmann_json_schema_validator::validator)
+  set(JSON_SCHEMA_VALIDATOR_TARGET nlohmann_json_schema_validator::validator)
+elseif(TARGET nlohmann_json_schema_validator)
+  set(JSON_SCHEMA_VALIDATOR_TARGET nlohmann_json_schema_validator)
+else()
+  message(FATAL_ERROR "Could not find a JSON schema validator target")
+endif()
+
+add_executable(
+  tts-host
+  src/activity_log.cpp
+  src/audio_conversion.cpp
+  src/audio_history.cpp
+  src/catalogue_download.cpp
+  src/clipboard.cpp
+  src/config_loader.cpp
+  src/config_persistence.cpp
+  src/config_snapshot.cpp
+  src/global_hotkey.cpp
+  src/language_selection.cpp
+  src/local_api_server.cpp
+  src/model_catalogue.cpp
+  src/model_import.cpp
+  src/model_registry.cpp
+  src/model_session.cpp
+  src/recovering_runner.cpp
+  src/now_playing_window.cpp
+  src/playback_controller.cpp
+  src/playback_sink.cpp
+  src/runner_protocol.cpp
+  src/runner_launcher.cpp
+  src/synthesis_pipeline.cpp
+  src/selection_capture.cpp
+  src/settings_window.cpp
+  src/startup_choice.cpp
+  src/text_normalizer.cpp
+  src/text_splitter.cpp
+  src/tray_icon.cpp
+  src/wav_writer.cpp
+  src/main.cpp
+)
+
+add_executable(
+  tts-host-stub-runner
+  src/process_stats.cpp
+  src/runner_audio_output.cpp
+  src/runner_control_io.cpp
+  src/runner_protocol.cpp
+  src/stub_runner.cpp
+  src/stub_runner_main.cpp
+)
+
+target_include_directories(tts-host-stub-runner PRIVATE include)
+target_link_libraries(tts-host-stub-runner PRIVATE nlohmann_json::nlohmann_json)
+if(WIN32)
+  target_link_libraries(tts-host-stub-runner PRIVATE psapi)
+endif()
+
+# The real engine runner for the tts-host-<engine>-runner naming convention
+# (src/main.cpp's runner_path_for_engine()). Speaks the same protocol as the
+# stub runner but backed by an actual ONNX Runtime session, currently running
+# the vendored placeholder identity model in place of real Kokoro-82M weights
+# (not yet vendored, see roadmap.md).
+add_executable(
+  tts-host-kokoro-onnx-runner
+  src/espeak_phonemizer.cpp
+  src/kokoro_batching.cpp
+  src/kokoro_phoneme_mapping.cpp
+  src/kokoro_runner.cpp
+  src/kokoro_runner_main.cpp
+  src/process_stats.cpp
+  src/runner_audio_output.cpp
+  src/runner_control_io.cpp
+  src/runner_protocol.cpp
+)
+
+target_include_directories(tts-host-kokoro-onnx-runner PRIVATE include)
+target_link_libraries(
+  tts-host-kokoro-onnx-runner
+  PRIVATE
+    nlohmann_json::nlohmann_json
+    onnxruntime::onnxruntime
+)
+if(WIN32)
+  target_link_libraries(tts-host-kokoro-onnx-runner PRIVATE psapi)
+endif()
+
+# Manual measurement tool for review finding #16; plays audible tones.
+if(WIN32)
+  add_executable(tts-host-playback-gap-probe tools/playback_gap_probe.cpp
+    src/playback_sink.cpp src/playback_controller.cpp src/audio_conversion.cpp)
+  target_include_directories(tts-host-playback-gap-probe PRIVATE include)
+  target_link_libraries(tts-host-playback-gap-probe PRIVATE ole32 uuid)
+endif()
+if(NOT WIN32)
+  set_target_properties(
+    tts-host-kokoro-onnx-runner PROPERTIES
+    BUILD_RPATH "$ORIGIN"
+  )
+endif()
+add_custom_command(
+  TARGET tts-host-kokoro-onnx-runner POST_BUILD
+  COMMAND
+    ${CMAKE_COMMAND} -E copy
+    ${ONNXRUNTIME_RUNTIME_FILE}
+    $<TARGET_FILE_DIR:tts-host-kokoro-onnx-runner>/$<IF:$<BOOL:${WIN32}>,onnxruntime.dll,libonnxruntime.so.1>
+)
+
+# Places the vendored espeak-ng binaries and data next to the runner
+# executable, matching default_espeak_ng_executable()'s expected layout
+# (src/espeak_phonemizer.cpp). Windows-only; see the FetchContent/7z block
+# above and ADR 0006.
+if(WIN32)
+  add_custom_command(
+    TARGET tts-host-kokoro-onnx-runner POST_BUILD
+    COMMAND
+      ${CMAKE_COMMAND} -E copy
+      "${ESPEAK_NG_EXECUTABLE}"
+      "${ESPEAK_NG_LIBRARY}"
+      $<TARGET_FILE_DIR:tts-host-kokoro-onnx-runner>
+    COMMAND
+      ${CMAKE_COMMAND} -E copy_directory
+      "${ESPEAK_NG_DATA_DIR}"
+      $<TARGET_FILE_DIR:tts-host-kokoro-onnx-runner>/espeak-ng-data
+  )
+endif()
+
+target_include_directories(tts-host PRIVATE include ${boost_headers_SOURCE_DIR})
+target_compile_definitions(tts-host PRIVATE BOOST_ERROR_CODE_HEADER_ONLY)
+
+target_link_libraries(
+  tts-host
+  PRIVATE
+    nlohmann_json::nlohmann_json
+    ${JSON_SCHEMA_VALIDATOR_TARGET}
+)
+if(WIN32)
+  set_target_properties(tts-host PROPERTIES WIN32_EXECUTABLE TRUE)
+  enable_language(RC)
+  target_sources(tts-host PRIVATE src/startup_registration.cpp resources/tts-host.rc)
+  target_include_directories(tts-host PRIVATE resources)
+  # uuid supplies CLSID_FileOpenDialog for the settings window's Import… folder
+  # picker (src/settings_window.cpp); winhttp is catalogue download's outbound
+  # HTTPS client (src/catalogue_download.cpp); advapi32 provides the per-user
+  # Run-key registration (src/startup_registration.cpp); comctl32 provides the
+  # Settings tab control.
+  target_link_libraries(
+    tts-host
+    PRIVATE
+      advapi32
+      comctl32
+      user32
+      ole32
+      oleaut32
+      shell32
+      uuid
+      winhttp
+      ws2_32
+      mswsock
+  )
+endif()
+
+# Beast's asynchronous HTTP/WebSocket instantiations exceed the COFF section
+# limit in MSVC Debug builds; keep the larger object format scoped to this file.
+if(MSVC)
+  set_source_files_properties(src/local_api_server.cpp PROPERTIES COMPILE_OPTIONS /bigobj)
+endif()
+
+if(MSVC)
+  target_compile_options(tts-host PRIVATE /W4 /permissive-)
+  target_compile_options(tts-host-stub-runner PRIVATE /W4 /permissive-)
+  target_compile_options(tts-host-kokoro-onnx-runner PRIVATE /W4 /permissive-)
+else()
+  target_compile_options(tts-host PRIVATE -Wall -Wextra -Wpedantic)
+  target_compile_options(tts-host-stub-runner PRIVATE -Wall -Wextra -Wpedantic)
+  target_compile_options(tts-host-kokoro-onnx-runner PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
+# Convenience target for the manual edit/build/run loop. On Linux use
+# `cmake --build build-linux --target list-models`; on Windows use
+# `cmake --build build --config Debug --target list-models`. It rebuilds only
+# what changed and runs the host against the registry fixture, without the full
+# CTest suite (see compile-win.ps1 for the incremental build/test/launch loop).
+add_custom_target(
+  list-models
+  COMMAND $<TARGET_FILE:tts-host> --headless --list-models
+          --config ${CMAKE_SOURCE_DIR}/tests/fixtures/registry/config.json
+  DEPENDS tts-host
+  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+  USES_TERMINAL
+)
+
+# Packaging: assembles the self-contained, zip distribution described in
+# docs/design/architecture.md's "Distribution" section (host, its runner(s),
+# schemas, an example config, and a portable.marker) and lets CPack zip it via
+# the conventional `package` target. Reuses the exact runtime-file name/path
+# the post-build copy commands above already produce next to each runner, so
+# the installed layout matches what the host actually looks for at runtime.
+# Currently mirrors today's flat "runner beside tts-host" convention
+# (src/main.cpp's runner_path_for_engine()) rather than a per-engine
+# subdirectory — revisit together if/when that convention changes.
+install(TARGETS tts-host tts-host-kokoro-onnx-runner RUNTIME DESTINATION .)
+install(
+  FILES $<TARGET_FILE_DIR:tts-host-kokoro-onnx-runner>/$<IF:$<BOOL:${WIN32}>,onnxruntime.dll,libonnxruntime.so.1>
+  DESTINATION .
+)
+if(WIN32)
+  install(FILES "${ESPEAK_NG_EXECUTABLE}" "${ESPEAK_NG_LIBRARY}" DESTINATION .)
+  install(DIRECTORY "${ESPEAK_NG_DATA_DIR}/" DESTINATION espeak-ng-data)
+endif()
+install(DIRECTORY schemas DESTINATION .)
+install(FILES config.example.json DESTINATION . RENAME config.json)
+install(CODE "file(TOUCH \"\${CMAKE_INSTALL_PREFIX}/portable.marker\")")
+if(EXISTS ${CMAKE_SOURCE_DIR}/models/kokoro-en-v1)
+  install(DIRECTORY ${CMAKE_SOURCE_DIR}/models/kokoro-en-v1 DESTINATION models)
+endif()
+
+set(CPACK_PACKAGE_NAME "tts-host")
+set(CPACK_PACKAGE_VERSION ${PROJECT_VERSION})
+set(CPACK_GENERATOR "ZIP")
+set(CPACK_PACKAGE_FILE_NAME "tts-host-${PROJECT_VERSION}-${CMAKE_SYSTEM_NAME}-${CMAKE_SYSTEM_PROCESSOR}")
+set(CPACK_PACKAGE_DIRECTORY "${CMAKE_BINARY_DIR}/dist")
+include(CPack)
+
+if(BUILD_TESTING)
+  if(WIN32)
+    add_executable(tts-host-desktop-launch-tests tests/desktop_launch_tests.cpp)
+    add_dependencies(tts-host-desktop-launch-tests tts-host)
+    target_link_libraries(tts-host-desktop-launch-tests PRIVATE user32)
+    add_test(NAME tts_host_desktop_launch COMMAND tts-host-desktop-launch-tests $<TARGET_FILE:tts-host>)
+    set_tests_properties(tts_host_desktop_launch PROPERTIES TIMEOUT 20)
+  endif()
+
+  add_executable(tts-host-selection-hotkey-tests tests/selection_hotkey_tests.cpp)
+  target_include_directories(tts-host-selection-hotkey-tests PRIVATE include)
+  add_test(NAME tts_host_selection_hotkey COMMAND tts-host-selection-hotkey-tests)
+
+  if(WIN32)
+    add_executable(
+      tts-host-startup-registration-tests
+      src/startup_registration.cpp
+      tests/startup_registration_tests.cpp
+    )
+    target_include_directories(tts-host-startup-registration-tests PRIVATE include)
+    target_link_libraries(tts-host-startup-registration-tests PRIVATE advapi32 shell32)
+    if(MSVC)
+      target_compile_options(tts-host-startup-registration-tests PRIVATE /W4 /permissive-)
+    endif()
+    add_test(NAME tts_host_startup_registration COMMAND tts-host-startup-registration-tests)
+  endif()
+
+  add_executable(
+    tts-host-selection-capture-tests
+    src/activity_log.cpp
+    src/selection_capture.cpp
+    tests/selection_capture_tests.cpp
+  )
+  target_include_directories(tts-host-selection-capture-tests PRIVATE include)
+  if(WIN32)
+    target_link_libraries(tts-host-selection-capture-tests PRIVATE ole32 oleaut32)
+  endif()
+  if(MSVC)
+    target_compile_options(tts-host-selection-capture-tests PRIVATE /W4 /permissive-)
+  else()
+    target_compile_options(tts-host-selection-capture-tests PRIVATE -Wall -Wextra -Wpedantic)
+  endif()
+  add_test(NAME tts_host_selection_capture COMMAND tts-host-selection-capture-tests)
+
+  add_executable(
+    tts-host-audio-conversion-tests
+    src/audio_conversion.cpp
+    tests/audio_conversion_tests.cpp
+  )
+  target_include_directories(tts-host-audio-conversion-tests PRIVATE include)
+  if(MSVC)
+    target_compile_options(tts-host-audio-conversion-tests PRIVATE /W4 /permissive-)
+  else()
+    target_compile_options(tts-host-audio-conversion-tests PRIVATE -Wall -Wextra -Wpedantic)
+  endif()
+  add_test(NAME tts_host_audio_conversion COMMAND tts-host-audio-conversion-tests)
+
+  add_executable(
+    tts-host-runner-protocol-tests
+    src/runner_audio_output.cpp
+    src/runner_protocol.cpp
+    src/stub_runner.cpp
+    tests/runner_protocol_tests.cpp
+  )
+  target_include_directories(tts-host-runner-protocol-tests PRIVATE include)
+  target_link_libraries(tts-host-runner-protocol-tests PRIVATE nlohmann_json::nlohmann_json)
+  if(MSVC)
+    target_compile_options(tts-host-runner-protocol-tests PRIVATE /W4 /permissive-)
+  else()
+    target_compile_options(tts-host-runner-protocol-tests PRIVATE -Wall -Wextra -Wpedantic)
+  endif()
+
+  add_test(NAME tts_host_runner_control_framing COMMAND tts-host-runner-protocol-tests)
+
+  add_executable(
+    tts-host-config-loader-tests
+    src/config_loader.cpp
+    tests/config_loader_tests.cpp
+  )
+  target_include_directories(tts-host-config-loader-tests PRIVATE include)
+  target_link_libraries(
+    tts-host-config-loader-tests
+    PRIVATE
+      nlohmann_json::nlohmann_json
+      ${JSON_SCHEMA_VALIDATOR_TARGET}
+  )
+  if(MSVC)
+    target_compile_options(tts-host-config-loader-tests PRIVATE /W4 /permissive-)
+  else()
+    target_compile_options(tts-host-config-loader-tests PRIVATE -Wall -Wextra -Wpedantic)
+  endif()
+  add_test(NAME tts_host_cli_text_sources COMMAND tts-host-config-loader-tests)
+
+  add_executable(tts-host-config-persistence-tests
+    src/config_loader.cpp src/config_persistence.cpp tests/config_persistence_tests.cpp)
+  target_include_directories(tts-host-config-persistence-tests PRIVATE include)
+  target_link_libraries(tts-host-config-persistence-tests PRIVATE
+    nlohmann_json::nlohmann_json ${JSON_SCHEMA_VALIDATOR_TARGET})
+  add_test(NAME tts_host_config_persistence COMMAND tts-host-config-persistence-tests
+    ${CMAKE_SOURCE_DIR}/config.example.json ${CMAKE_SOURCE_DIR}/schemas/config.schema.json)
+
+  add_executable(tts-host-startup-choice-tests
+    src/startup_choice.cpp tests/startup_choice_tests.cpp)
+  target_include_directories(tts-host-startup-choice-tests PRIVATE include)
+  if(WIN32)
+    target_link_libraries(tts-host-startup-choice-tests PRIVATE user32 gdi32)
+  endif()
+  add_test(NAME tts_host_startup_choice COMMAND tts-host-startup-choice-tests)
+
+  if(WIN32)
+    # Exercise the real UI entrypoints without main's startup registration.
+    get_target_property(host_ui_sources tts-host SOURCES)
+    list(REMOVE_ITEM host_ui_sources src/main.cpp)
+    get_target_property(host_ui_libraries tts-host LINK_LIBRARIES)
+    add_executable(tts-host-settings-lifetime-tests
+      ${host_ui_sources} tests/settings_lifetime_tests.cpp)
+    target_include_directories(tts-host-settings-lifetime-tests PRIVATE
+      include resources ${boost_headers_SOURCE_DIR})
+    target_compile_definitions(tts-host-settings-lifetime-tests PRIVATE BOOST_ERROR_CODE_HEADER_ONLY)
+    target_link_libraries(tts-host-settings-lifetime-tests PRIVATE ${host_ui_libraries})
+    add_test(NAME tts_host_settings_lifetime COMMAND tts-host-settings-lifetime-tests
+      ${CMAKE_SOURCE_DIR}/config.example.json
+      ${CMAKE_SOURCE_DIR}/tests/fixtures/model_session/config.json)
+    add_dependencies(tts-host-settings-lifetime-tests tts-host-stub-runner)
+    set_tests_properties(tts_host_settings_lifetime PROPERTIES TIMEOUT 30)
+  endif()
+
+  if(WIN32)
+    add_executable(tts-host-runner-inheritance-tests src/runner_launcher.cpp
+      src/runner_protocol.cpp tests/runner_inheritance_tests.cpp)
+    target_include_directories(tts-host-runner-inheritance-tests PRIVATE include)
+    target_link_libraries(tts-host-runner-inheritance-tests PRIVATE nlohmann_json::nlohmann_json)
+    add_test(NAME tts_host_runner_inheritance COMMAND tts-host-runner-inheritance-tests
+      $<TARGET_FILE:tts-host-stub-runner>)
+    set_tests_properties(tts_host_runner_inheritance PROPERTIES TIMEOUT 15)
+  endif()
+
+  add_test(NAME tts_host_unicode_cli_paths COMMAND ${CMAKE_COMMAND}
+    -Dexe=$<TARGET_FILE:tts-host> -Drunner=$<TARGET_FILE:tts-host-stub-runner>
+    -Dschemas=${CMAKE_SOURCE_DIR}/schemas -Dconfig=${CMAKE_SOURCE_DIR}/config.example.json
+    -Dwork=${CMAKE_CURRENT_BINARY_DIR}/unicode-cli-paths
+    -P ${CMAKE_SOURCE_DIR}/tests/assert_unicode_paths.cmake)
+  set_tests_properties(tts_host_unicode_cli_paths PROPERTIES TIMEOUT 20)
+
+  add_executable(tts-host-synthesis-pipeline-tests tests/synthesis_pipeline_tests.cpp
+    src/synthesis_pipeline.cpp src/recovering_runner.cpp src/activity_log.cpp src/runner_launcher.cpp
+    src/runner_protocol.cpp src/playback_controller.cpp src/playback_sink.cpp
+    src/audio_conversion.cpp src/audio_history.cpp src/text_splitter.cpp src/wav_writer.cpp)
+  target_include_directories(tts-host-synthesis-pipeline-tests PRIVATE include)
+  target_link_libraries(tts-host-synthesis-pipeline-tests PRIVATE nlohmann_json::nlohmann_json)
+  if(WIN32)
+    target_link_libraries(tts-host-synthesis-pipeline-tests PRIVATE ole32 uuid)
+  endif()
+  add_test(NAME tts_host_synthesis_pipeline COMMAND tts-host-synthesis-pipeline-tests
+    $<TARGET_FILE:tts-host-runner-failure-fixture> ${CMAKE_CURRENT_BINARY_DIR})
+  set_tests_properties(tts_host_synthesis_pipeline PROPERTIES TIMEOUT 15)
+
+  add_executable(tts-host-runner-failure-fixture tests/runner_failure_fixture.cpp
+    src/runner_audio_output.cpp src/runner_control_io.cpp src/runner_protocol.cpp src/stub_runner.cpp)
+  target_include_directories(tts-host-runner-failure-fixture PRIVATE include)
+  target_link_libraries(tts-host-runner-failure-fixture PRIVATE nlohmann_json::nlohmann_json)
+  add_executable(tts-host-runner-recovery-tests tests/runner_recovery_tests.cpp
+    src/runner_launcher.cpp src/recovering_runner.cpp src/activity_log.cpp src/runner_protocol.cpp
+    src/stub_runner.cpp)
+  target_include_directories(tts-host-runner-recovery-tests PRIVATE include)
+  target_link_libraries(tts-host-runner-recovery-tests PRIVATE nlohmann_json::nlohmann_json)
+  add_test(NAME tts_host_runner_recovery COMMAND tts-host-runner-recovery-tests
+    $<TARGET_FILE:tts-host-runner-failure-fixture> ${CMAKE_CURRENT_BINARY_DIR})
+  set_tests_properties(tts_host_runner_recovery PROPERTIES TIMEOUT 15)
+
+  add_executable(tts-host-resident-synthesis-tests tests/resident_synthesis_tests.cpp
+    src/model_session.cpp src/model_registry.cpp src/recovering_runner.cpp src/activity_log.cpp
+    src/synthesis_pipeline.cpp src/runner_launcher.cpp src/runner_protocol.cpp
+    src/playback_controller.cpp src/playback_sink.cpp src/audio_conversion.cpp
+    src/audio_history.cpp src/text_splitter.cpp src/wav_writer.cpp)
+  target_include_directories(tts-host-resident-synthesis-tests PRIVATE include)
+  target_link_libraries(tts-host-resident-synthesis-tests PRIVATE
+    nlohmann_json::nlohmann_json ${JSON_SCHEMA_VALIDATOR_TARGET})
+  if(WIN32)
+    target_link_libraries(tts-host-resident-synthesis-tests PRIVATE ole32 uuid)
+  endif()
+  add_dependencies(tts-host-resident-synthesis-tests tts-host-runner-failure-fixture)
+  add_test(NAME tts_host_resident_synthesis COMMAND tts-host-resident-synthesis-tests
+    $<TARGET_FILE:tts-host-runner-failure-fixture>
+    ${CMAKE_SOURCE_DIR}/tests/fixtures/model_session/config.json
+    ${CMAKE_CURRENT_BINARY_DIR}/resident-synthesis-tests)
+  set_tests_properties(tts_host_resident_synthesis PROPERTIES TIMEOUT 20)
+
+  # Drives ModelSessionManager (src/model_session.cpp) against a real runner
+  # process: the fixture package declares engine "stub", which the
+  # tts-host-<engine>-runner naming convention resolves to the stub runner
+  # built beside these tests.
+  add_executable(
+    tts-host-model-session-tests
+    src/model_registry.cpp
+    src/model_session.cpp
+    src/recovering_runner.cpp
+    src/activity_log.cpp
+    src/runner_launcher.cpp
+    src/runner_protocol.cpp
+    tests/model_session_tests.cpp
+  )
+  add_dependencies(tts-host-model-session-tests tts-host-stub-runner)
+  if(NOT WIN32)
+    add_dependencies(tts-host-model-session-tests tts-host-kokoro-onnx-runner)
+  endif()
+  target_include_directories(tts-host-model-session-tests PRIVATE include)
+  target_link_libraries(
+    tts-host-model-session-tests
+    PRIVATE
+      nlohmann_json::nlohmann_json
+      ${JSON_SCHEMA_VALIDATOR_TARGET}
+  )
+  if(MSVC)
+    target_compile_options(tts-host-model-session-tests PRIVATE /W4 /permissive-)
+  else()
+    target_compile_options(tts-host-model-session-tests PRIVATE -Wall -Wextra -Wpedantic)
+  endif()
+  add_test(
+    NAME tts_host_model_load_unload
+    COMMAND
+      tts-host-model-session-tests
+      $<TARGET_FILE_DIR:tts-host-stub-runner>
+      ${CMAKE_SOURCE_DIR}/tests/fixtures/model_session/config.json
+  )
+
+  # Drives import_model_package (src/model_import.cpp) against generated source
+  # packages and a generated model directory under the build tree, so the test
+  # never writes into the source tree.
+  add_executable(
+    tts-host-model-import-tests
+    src/model_import.cpp
+    src/model_registry.cpp
+    tests/model_import_tests.cpp
+  )
+  target_include_directories(tts-host-model-import-tests PRIVATE include)
+  target_link_libraries(
+    tts-host-model-import-tests
+    PRIVATE
+      nlohmann_json::nlohmann_json
+      ${JSON_SCHEMA_VALIDATOR_TARGET}
+  )
+  if(MSVC)
+    target_compile_options(tts-host-model-import-tests PRIVATE /W4 /permissive-)
+  else()
+    target_compile_options(tts-host-model-import-tests PRIVATE -Wall -Wextra -Wpedantic)
+  endif()
+  add_test(
+    NAME tts_host_model_import
+    COMMAND
+      tts-host-model-import-tests
+      ${CMAKE_SOURCE_DIR}/schemas
+      ${CMAKE_CURRENT_BINARY_DIR}/model-import-tests
+  )
+
+  add_test(
+    NAME tts_host_cli_model_import
+    COMMAND
+      ${CMAKE_COMMAND}
+      -Dexe=$<TARGET_FILE:tts-host>
+      -Dschemas=${CMAKE_SOURCE_DIR}/schemas
+      -Dwork=${CMAKE_CURRENT_BINARY_DIR}/cli-model-import
+      -P ${CMAKE_SOURCE_DIR}/tests/assert_model_import.cmake
+  )
+
+  # Validates the compiled-in download catalogue (src/model_catalogue.cpp)
+  # itself, so a mistyped checksum, a plain-HTTP URL, or an entry with no
+  # licence to disclose fails here rather than during a user's download. The
+  # rejection cases drive entries the test constructs, not the shipped ones.
+  add_executable(
+    tts-host-model-catalogue-tests
+    src/model_catalogue.cpp
+    tests/model_catalogue_tests.cpp
+  )
+  target_include_directories(tts-host-model-catalogue-tests PRIVATE include)
+  target_link_libraries(tts-host-model-catalogue-tests PRIVATE nlohmann_json::nlohmann_json)
+  if(MSVC)
+    target_compile_options(tts-host-model-catalogue-tests PRIVATE /W4 /permissive-)
+  else()
+    target_compile_options(tts-host-model-catalogue-tests PRIVATE -Wall -Wextra -Wpedantic)
+  endif()
+  add_test(NAME tts_host_model_catalogue COMMAND tts-host-model-catalogue-tests)
+
+  add_test(
+    NAME tts_host_cli_list_catalogue
+    COMMAND
+      ${CMAKE_COMMAND}
+      -Dexe=$<TARGET_FILE:tts-host>
+      -Dschemas=${CMAKE_SOURCE_DIR}/schemas
+      -Dwork=${CMAKE_CURRENT_BINARY_DIR}/cli-list-catalogue
+      -P ${CMAKE_SOURCE_DIR}/tests/assert_list_catalogue.cmake
+  )
+
+  # Drives download_catalogue_entry (src/catalogue_download.cpp) end to end
+  # against a fake HttpFetchFunction that writes fixture bytes instead of
+  # touching the network -- the WinHTTP-backed fetch_url_to_file is
+  # Windows-only and needs a native run to verify, per
+  # docs/design/architecture.md#download-catalogue. The fake still exercises
+  # resume-from-partial and checksum-verification/rejection, since those are
+  # download_catalogue_entry's job, not the transport's.
+  add_executable(
+    tts-host-catalogue-download-tests
+    src/catalogue_download.cpp
+    src/model_catalogue.cpp
+    src/model_registry.cpp
+    tests/catalogue_download_tests.cpp
+  )
+  target_include_directories(tts-host-catalogue-download-tests PRIVATE include)
+  target_link_libraries(
+    tts-host-catalogue-download-tests
+    PRIVATE
+      nlohmann_json::nlohmann_json
+      ${JSON_SCHEMA_VALIDATOR_TARGET}
+  )
+  if(WIN32)
+    target_link_libraries(tts-host-catalogue-download-tests PRIVATE winhttp)
+  endif()
+  if(MSVC)
+    target_compile_options(tts-host-catalogue-download-tests PRIVATE /W4 /permissive-)
+  else()
+    target_compile_options(tts-host-catalogue-download-tests PRIVATE -Wall -Wextra -Wpedantic)
+  endif()
+  add_test(
+    NAME tts_host_catalogue_download
+    COMMAND
+      tts-host-catalogue-download-tests
+      ${CMAKE_SOURCE_DIR}/schemas
+      ${CMAKE_CURRENT_BINARY_DIR}/catalogue-download-tests
+  )
+
+  # Exercises registry_scan_changed (src/model_registry.cpp) against real
+  # filesystem scans, since directory watching's poll-and-refresh decision has
+  # to survive scan_model_registry rebuilding every candidate on every call.
+  add_executable(
+    tts-host-model-registry-scan-diff-tests
+    src/model_registry.cpp
+    tests/model_registry_scan_diff_tests.cpp
+  )
+  target_include_directories(tts-host-model-registry-scan-diff-tests PRIVATE include)
+  target_link_libraries(
+    tts-host-model-registry-scan-diff-tests
+    PRIVATE
+      nlohmann_json::nlohmann_json
+      ${JSON_SCHEMA_VALIDATOR_TARGET}
+  )
+  if(MSVC)
+    target_compile_options(tts-host-model-registry-scan-diff-tests PRIVATE /W4 /permissive-)
+  else()
+    target_compile_options(tts-host-model-registry-scan-diff-tests PRIVATE -Wall -Wextra -Wpedantic)
+  endif()
+  add_test(
+    NAME tts_host_model_registry_scan_diff
+    COMMAND
+      tts-host-model-registry-scan-diff-tests
+      ${CMAKE_SOURCE_DIR}/schemas
+  )
+
+  add_executable(
+    tts-host-espeak-phonemizer-tests
+    src/espeak_phonemizer.cpp
+    tests/espeak_phonemizer_tests.cpp
+  )
+  target_include_directories(tts-host-espeak-phonemizer-tests PRIVATE include)
+  target_link_libraries(tts-host-espeak-phonemizer-tests PRIVATE nlohmann_json::nlohmann_json)
+  if(MSVC)
+    target_compile_options(tts-host-espeak-phonemizer-tests PRIVATE /W4 /permissive-)
+  else()
+    target_compile_options(tts-host-espeak-phonemizer-tests PRIVATE -Wall -Wextra -Wpedantic)
+  endif()
+  add_test(NAME tts_host_espeak_phonemizer COMMAND tts-host-espeak-phonemizer-tests)
+
+  add_executable(
+    tts-host-text-normalizer-tests
+    src/text_normalizer.cpp
+    tests/text_normalizer_tests.cpp
+  )
+  target_include_directories(tts-host-text-normalizer-tests PRIVATE include)
+  if(MSVC)
+    target_compile_options(tts-host-text-normalizer-tests PRIVATE /W4 /permissive-)
+  else()
+    target_compile_options(tts-host-text-normalizer-tests PRIVATE -Wall -Wextra -Wpedantic)
+  endif()
+  add_test(NAME tts_host_text_normalization COMMAND tts-host-text-normalizer-tests)
+
+  add_executable(
+    tts-host-language-selection-tests
+    src/language_selection.cpp
+    tests/language_selection_tests.cpp
+  )
+  target_include_directories(tts-host-language-selection-tests PRIVATE include)
+  if(MSVC)
+    target_compile_options(tts-host-language-selection-tests PRIVATE /W4 /permissive-)
+  else()
+    target_compile_options(tts-host-language-selection-tests PRIVATE -Wall -Wextra -Wpedantic)
+  endif()
+  add_test(NAME tts_host_language_selection COMMAND tts-host-language-selection-tests)
+
+  # Proves the language rule end to end through the real CLI: Cyrillic text
+  # reaches the Russian profile's model, Latin text the English one, and
+  # --language overrides both.
+  add_test(
+    NAME tts_host_cli_language_selection
+    COMMAND
+      ${CMAKE_COMMAND}
+      -Dexe=$<TARGET_FILE:tts-host>
+      -Dschemas=${CMAKE_SOURCE_DIR}/schemas
+      -Dwork=${CMAKE_CURRENT_BINARY_DIR}/cli-language-selection
+      -P ${CMAKE_SOURCE_DIR}/tests/assert_language_selection.cmake
+  )
+
+  add_executable(
+    tts-host-text-splitter-tests
+    src/text_splitter.cpp
+    tests/text_splitter_tests.cpp
+  )
+  target_include_directories(tts-host-text-splitter-tests PRIVATE include)
+  if(MSVC)
+    target_compile_options(tts-host-text-splitter-tests PRIVATE /W4 /permissive-)
+  else()
+    target_compile_options(tts-host-text-splitter-tests PRIVATE -Wall -Wextra -Wpedantic)
+  endif()
+  add_test(NAME tts_host_text_splitting COMMAND tts-host-text-splitter-tests)
+
+  add_executable(
+    tts-host-playback-controller-tests
+    src/playback_controller.cpp
+    tests/playback_controller_tests.cpp
+  )
+  target_include_directories(tts-host-playback-controller-tests PRIVATE include)
+  if(MSVC)
+    target_compile_options(tts-host-playback-controller-tests PRIVATE /W4 /permissive-)
+  else()
+    target_compile_options(tts-host-playback-controller-tests PRIVATE -Wall -Wextra -Wpedantic)
+  endif()
+  add_test(NAME tts_host_playback_controller COMMAND tts-host-playback-controller-tests)
+
+  add_executable(
+    tts-host-config-snapshot-tests
+    src/config_snapshot.cpp
+    src/playback_controller.cpp
+    tests/config_snapshot_tests.cpp
+  )
+  target_include_directories(tts-host-config-snapshot-tests PRIVATE include)
+  target_link_libraries(tts-host-config-snapshot-tests PRIVATE nlohmann_json::nlohmann_json)
+  if(MSVC)
+    target_compile_options(tts-host-config-snapshot-tests PRIVATE /W4 /permissive-)
+  else()
+    target_compile_options(tts-host-config-snapshot-tests PRIVATE -Wall -Wextra -Wpedantic)
+  endif()
+  add_test(NAME tts_host_config_snapshot COMMAND tts-host-config-snapshot-tests)
+
+  add_executable(tts-host-audio-history-tests src/audio_history.cpp tests/audio_history_tests.cpp)
+  target_include_directories(tts-host-audio-history-tests PRIVATE include)
+  if(MSVC)
+    target_compile_options(tts-host-audio-history-tests PRIVATE /W4 /permissive-)
+  else()
+    target_compile_options(tts-host-audio-history-tests PRIVATE -Wall -Wextra -Wpedantic)
+  endif()
+  add_test(NAME tts_host_audio_history COMMAND tts-host-audio-history-tests)
+
+  add_executable(tts-host-local-api-tests src/local_api_server.cpp src/playback_controller.cpp
+    tests/local_api_server_tests.cpp)
+  target_include_directories(tts-host-local-api-tests PRIVATE include ${boost_headers_SOURCE_DIR})
+  target_compile_definitions(tts-host-local-api-tests PRIVATE BOOST_ERROR_CODE_HEADER_ONLY)
+  target_link_libraries(tts-host-local-api-tests PRIVATE nlohmann_json::nlohmann_json)
+  if(WIN32)
+    target_link_libraries(tts-host-local-api-tests PRIVATE ws2_32 mswsock)
+  endif()
+  if(MSVC)
+    target_compile_options(tts-host-local-api-tests PRIVATE /W4 /permissive-)
+  else()
+    target_compile_options(tts-host-local-api-tests PRIVATE -Wall -Wextra -Wpedantic)
+  endif()
+  add_test(NAME tts_host_local_api COMMAND tts-host-local-api-tests)
+  set_tests_properties(tts_host_local_api PROPERTIES TIMEOUT 10)
+
+  find_program(TTS_HOST_NODE_EXECUTABLE NAMES node)
+  if(TTS_HOST_NODE_EXECUTABLE)
+    add_test(NAME tts_host_browser_playback
+      COMMAND ${TTS_HOST_NODE_EXECUTABLE} --test
+        ${CMAKE_SOURCE_DIR}/tests/extension_playback_tests.js)
+  endif()
+
+  add_executable(
+    tts-host-kokoro-phoneme-mapping-tests
+    src/kokoro_phoneme_mapping.cpp
+    tests/kokoro_phoneme_mapping_tests.cpp
+  )
+  target_include_directories(tts-host-kokoro-phoneme-mapping-tests PRIVATE include)
+  if(MSVC)
+    target_compile_options(tts-host-kokoro-phoneme-mapping-tests PRIVATE /W4 /permissive-)
+  else()
+    target_compile_options(tts-host-kokoro-phoneme-mapping-tests PRIVATE -Wall -Wextra -Wpedantic)
+  endif()
+  add_test(NAME tts_host_kokoro_phoneme_mapping COMMAND tts-host-kokoro-phoneme-mapping-tests)
+
+  add_executable(
+    tts-host-kokoro-batching-tests
+    src/kokoro_batching.cpp
+    src/runner_protocol.cpp
+    tests/kokoro_batching_tests.cpp
+  )
+  target_include_directories(tts-host-kokoro-batching-tests PRIVATE include)
+  target_link_libraries(tts-host-kokoro-batching-tests PRIVATE nlohmann_json::nlohmann_json)
+  if(MSVC)
+    target_compile_options(tts-host-kokoro-batching-tests PRIVATE /W4 /permissive-)
+  else()
+    target_compile_options(tts-host-kokoro-batching-tests PRIVATE -Wall -Wextra -Wpedantic)
+  endif()
+  add_test(NAME tts_host_kokoro_batching COMMAND tts-host-kokoro-batching-tests)
+
+  # Proves the vendored ONNX Runtime toolchain (see the onnxruntime::onnxruntime
+  # target above) with a standalone, non-protocol executable. Named distinctly
+  # from tts-host-kokoro-onnx-runner (defined above), which speaks the runner
+  # protocol.
+  add_executable(tts-host-onnxruntime-smoketest tests/onnxruntime_smoketest_main.cpp)
+  target_link_libraries(tts-host-onnxruntime-smoketest PRIVATE onnxruntime::onnxruntime)
+  if(MSVC)
+    target_compile_options(tts-host-onnxruntime-smoketest PRIVATE /W4 /permissive-)
+  else()
+    target_compile_options(tts-host-onnxruntime-smoketest PRIVATE -Wall -Wextra -Wpedantic)
+  endif()
+  if(NOT WIN32)
+    set_target_properties(
+      tts-host-onnxruntime-smoketest PROPERTIES
+      BUILD_RPATH "$ORIGIN"
+    )
+  endif()
+
+  add_custom_command(
+    TARGET tts-host-onnxruntime-smoketest POST_BUILD
+    COMMAND
+      ${CMAKE_COMMAND} -E copy
+      ${ONNXRUNTIME_RUNTIME_FILE}
+      $<TARGET_FILE_DIR:tts-host-onnxruntime-smoketest>/$<IF:$<BOOL:${WIN32}>,onnxruntime.dll,libonnxruntime.so.1>
+  )
+
+  add_test(
+    NAME tts_host_onnxruntime_toolchain_smoketest
+    COMMAND
+      tts-host-onnxruntime-smoketest
+      ${CMAKE_SOURCE_DIR}/tests/fixtures/kokoro_runner/placeholder.onnx
+  )
+
+  add_test(
+    NAME tts_host_valid_config
+    COMMAND tts-host --headless --config ${CMAKE_SOURCE_DIR}/config.example.json
+  )
+
+  add_test(
+    NAME tts_host_valid_example_model_manifest
+    COMMAND
+      ${CMAKE_COMMAND}
+      -Dexe=$<TARGET_FILE:tts-host>
+      -Dconfig=${CMAKE_SOURCE_DIR}/tests/fixtures/registry/config.json
+      "-Dneedles=OK  alternate-package (kokoro-onnx, en);OK  demo-package (kokoro-onnx, en)"
+      "-Dordered_needles=OK  alternate-package (kokoro-onnx, en);OK  demo-package (kokoro-onnx, en)"
+      -P ${CMAKE_SOURCE_DIR}/tests/assert_success_contains.cmake
+  )
+
+  add_test(
+    NAME tts_host_invalid_port
+    COMMAND
+      ${CMAKE_COMMAND}
+      -Dexe=$<TARGET_FILE:tts-host>
+      -Dconfig=${CMAKE_SOURCE_DIR}/tests/invalid-port-config.json
+      -Dneedle=/server/port
+      -P ${CMAKE_SOURCE_DIR}/tests/assert_failure_contains.cmake
+  )
+
+  add_test(
+    NAME tts_host_unsupported_schema_version
+    COMMAND
+      ${CMAKE_COMMAND}
+      -Dexe=$<TARGET_FILE:tts-host>
+      -Dconfig=${CMAKE_SOURCE_DIR}/tests/unsupported-schema-version.json
+      -Dneedle=/schemaVersion
+      -P ${CMAKE_SOURCE_DIR}/tests/assert_failure_contains.cmake
+  )
+
+  add_test(
+    NAME tts_host_list_models
+    COMMAND
+      ${CMAKE_COMMAND}
+      -Dexe=$<TARGET_FILE:tts-host>
+      -Dconfig=${CMAKE_SOURCE_DIR}/tests/fixtures/registry/config.json
+      "-Dneedles=Discovered model packages: 2;OK  alternate-package (kokoro-onnx, en);OK  demo-package (kokoro-onnx, en);Unsupported registry entries: 5;missing model.json;registry entry is not a directory;registry directory does not exist;schema validation failed at /: required property 'displayName' not found in object;manifest file path /files/model escapes the package root"
+      "-Dordered_needles=OK  alternate-package (kokoro-onnx, en);OK  demo-package (kokoro-onnx, en);escaping-file-path;invalid-manifest"
+      -P ${CMAKE_SOURCE_DIR}/tests/assert_success_contains.cmake
+  )
+
+  add_test(
+    NAME tts_host_end_to_end_stub_synthesis
+    COMMAND
+      ${CMAKE_COMMAND}
+      -Dexe=$<TARGET_FILE:tts-host>
+      -Dconfig=${CMAKE_SOURCE_DIR}/config.example.json
+      -Drunner=$<TARGET_FILE:tts-host-stub-runner>
+      -Dout=${CMAKE_CURRENT_BINARY_DIR}/e2e-synthesis.wav
+      -P ${CMAKE_SOURCE_DIR}/tests/assert_wav_synthesis.cmake
+  )
+
+  # Proves the host splits multi-sentence text into separate back-to-back
+  # synthesize requests (src/text_splitter.cpp) rather than one request for
+  # the whole text: two sentences against the stub runner's fixed
+  # 4-sample-frame/8-byte-payload response yield double the frames and bytes
+  # a single chunk would.
+  add_test(
+    NAME tts_host_end_to_end_stub_synthesis_chunks_sentences
+    COMMAND
+      ${CMAKE_COMMAND}
+      -Dexe=$<TARGET_FILE:tts-host>
+      -Dconfig=${CMAKE_SOURCE_DIR}/config.example.json
+      -Drunner=$<TARGET_FILE:tts-host-stub-runner>
+      -Dout=${CMAKE_CURRENT_BINARY_DIR}/e2e-synthesis-chunked.wav
+      "-Dtext=Hello world. Second sentence!"
+      -Dexpected_sample_frames=8
+      -P ${CMAKE_SOURCE_DIR}/tests/assert_wav_synthesis.cmake
+  )
+
+  add_test(
+    NAME tts_host_end_to_end_stub_synthesis_stats
+    COMMAND
+      ${CMAKE_COMMAND}
+      -Dexe=$<TARGET_FILE:tts-host>
+      -Dconfig=${CMAKE_SOURCE_DIR}/config.example.json
+      -Drunner=$<TARGET_FILE:tts-host-stub-runner>
+      -Dout=${CMAKE_CURRENT_BINARY_DIR}/e2e-synthesis-stats.wav
+      -Dstats=1
+      -P ${CMAKE_SOURCE_DIR}/tests/assert_wav_synthesis.cmake
+  )
+
+  add_test(
+    NAME tts_host_synthesis_selects_runner_by_engine
+    COMMAND
+      ${CMAKE_COMMAND}
+      -Dexe=$<TARGET_FILE:tts-host>
+      -Dconfig=${CMAKE_SOURCE_DIR}/tests/fixtures/registry/config.json
+      -Dmodel=demo-package
+      -Dout=${CMAKE_CURRENT_BINARY_DIR}/model-selected-synthesis.wav
+      -P ${CMAKE_SOURCE_DIR}/tests/assert_wav_synthesis.cmake
+  )
+
+  add_test(
+    NAME tts_host_synthesis_unknown_model
+    COMMAND
+      ${CMAKE_COMMAND}
+      -Dexe=$<TARGET_FILE:tts-host>
+      -Dconfig=${CMAKE_SOURCE_DIR}/tests/fixtures/registry/config.json
+      "-Dargs=--model;does-not-exist;--synthesize;Hello world;--out;${CMAKE_CURRENT_BINARY_DIR}/unknown-model.wav"
+      -Dneedle=Unknown model id
+      -P ${CMAKE_SOURCE_DIR}/tests/assert_failure_contains.cmake
+  )
+
+  # run_tray_icon (src/tray_icon.cpp) is Windows-only in this slice; on other
+  # platforms it throws a clear error instead of doing nothing when tts-host
+  # runs without --headless. Real tray verification needs a manual check on
+  # Windows (no GUI/display in this WSL environment).
+  if(NOT WIN32)
+    add_test(
+      NAME tts_host_tray_not_implemented_on_this_platform
+      COMMAND $<TARGET_FILE:tts-host> --config ${CMAKE_SOURCE_DIR}/config.example.json
+    )
+    set_tests_properties(
+      tts_host_tray_not_implemented_on_this_platform PROPERTIES
+      PASS_REGULAR_EXPRESSION "tray icon is not implemented on this platform yet"
+    )
+  endif()
+
+  # run_settings_window (src/settings_window.cpp) is Windows-only in this
+  # slice; on other platforms it throws a clear error instead of doing
+  # nothing when tts-host runs with --settings. Real window verification
+  # needs a manual check on Windows (no GUI/display in this WSL environment).
+  if(NOT WIN32)
+    add_test(
+      NAME tts_host_settings_not_implemented_on_this_platform
+      COMMAND $<TARGET_FILE:tts-host> --settings --config ${CMAKE_SOURCE_DIR}/config.example.json
+    )
+    set_tests_properties(
+      tts_host_settings_not_implemented_on_this_platform PROPERTIES
+      PASS_REGULAR_EXPRESSION "settings window is not implemented on this platform yet"
+    )
+  endif()
+
+  # SystemPlaybackSink (src/playback_sink.cpp) is Windows-only in this slice;
+  # on other platforms it throws a clear error instead of writing a WAV file,
+  # which this proves end to end through the real CLI plumbing. Real playback
+  # on Windows needs a manual check (no audio hardware in CI/WSL).
+  if(NOT WIN32)
+    add_test(
+      NAME tts_host_play_not_implemented_on_this_platform
+      COMMAND
+        ${CMAKE_COMMAND}
+        -Dexe=$<TARGET_FILE:tts-host>
+        -Dconfig=${CMAKE_SOURCE_DIR}/config.example.json
+        "-Dargs=--runner;$<TARGET_FILE:tts-host-stub-runner>;--synthesize;Hello world;--play"
+        "-Dneedle=audio playback is not implemented on this platform yet"
+        -P ${CMAKE_SOURCE_DIR}/tests/assert_failure_contains.cmake
+    )
+
+    # Proves config's audio.outputDevice (schemas/config.schema.json) reaches
+    # SystemPlaybackSink::play end to end through the real CLI plumbing: the
+    # pinned device name from tests/fixtures/pinned-output-device-config.json
+    # surfaces in the platform's not-implemented error.
+    add_test(
+      NAME tts_host_play_forwards_pinned_output_device
+      COMMAND
+        ${CMAKE_COMMAND}
+        -Dexe=$<TARGET_FILE:tts-host>
+        -Dconfig=${CMAKE_SOURCE_DIR}/tests/fixtures/pinned-output-device-config.json
+        "-Dargs=--runner;$<TARGET_FILE:tts-host-stub-runner>;--synthesize;Hello world;--play"
+        "-Dneedle=requested output device: \"Example Pinned Speakers\""
+        -P ${CMAKE_SOURCE_DIR}/tests/assert_failure_contains.cmake
+    )
+  endif()
+
+  add_test(
+    NAME tts_host_model_and_runner_mutually_exclusive
+    COMMAND
+      ${CMAKE_COMMAND}
+      -Dexe=$<TARGET_FILE:tts-host>
+      -Dconfig=${CMAKE_SOURCE_DIR}/tests/fixtures/registry/config.json
+      "-Dargs=--model;demo-package;--runner;$<TARGET_FILE:tts-host-stub-runner>;--synthesize;Hello world;--out;${CMAKE_CURRENT_BINARY_DIR}/conflicting-selectors.wav"
+      -Dneedle=mutually exclusive
+      -P ${CMAKE_SOURCE_DIR}/tests/assert_failure_contains.cmake
+  )
+endif()

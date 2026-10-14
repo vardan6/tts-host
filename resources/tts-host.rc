@@ -1,0 +1,3 @@
+#include "resource.h"
+
+IDI_TTS_HOST ICON "tts-host.ico"

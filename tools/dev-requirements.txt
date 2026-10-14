@@ -1,0 +1,5 @@
+
+# Dev-only Python tooling. Never a runtime dependency of tts-host, its
+# runners, or the released package/zip — see README.md "Dev-only Python
+# tooling".
+onnx==1.22.0

@@ -1,19 +1,39 @@
 # Active Context
 
-- Mode: planning captured; implementation not started
-- Phase/slice: first roadmap slice — host starts and reads its configuration
-- State: architecture accepted and recorded in ADRs 0001-0004; requirements,
-  architecture, and roadmap rewritten to match; Apache-2.0 `LICENSE` added
-- Next atomic step: use `/next-slice` to scope the headless host startup and
-  `config.json` load/validate/reload path
-- Blockers/environment: none blocking. Repository is still private; the licence
-  decision that kept it private is now settled, so making it public is a
-  pending action, not a pending decision
-- Open questions: UI toolkit and its licensing (decided at the model-manager
-  slice); llama.cpp versus PyTorch and Qwen quantization (outputs of the
-  bake-off); whether a WSL headless distribution is published
-- Discarded as noise: WSL-only deployment; end-user Python; treating roadmap
-  product slices as one-session implementation slices; assuming JSON-RPC framing
-  solves binary audio; forcing every runner to be C++; a real Windows Service
-  (Session 0 cannot reach audio or the tray); token auth for v1; cloud providers
-  for v1; a shell context menu and a floating widget in this project
+- Mode: checkpoint finalization; local review and Stop regression checks complete.
+- Phase: review/finalize `roadmap-slices` before the Linux adapter.
+- State: per-utterance stream (`71d4657`) and Playback tab tuning (`21316be`)
+  committed; the WASAPI stream is verified only by build and fake-endpoint tests.
+- GUI-launch stderr `NUL` fallback and bounded shared Settings activity log
+  verified on 2026-10-14: shell-launched Kokoro load, error display, and reopen
+  retention pass; 46/46 Windows and Linux CTests. See `progress.md`.
+- Checkpoint fix committed as `0b6391e`; draft PR:
+  https://github.com/vardan6/tts-host/pull/1. Claude Opus 5.5 review of
+  `1ad34c1..0b6391e` was stopped at the user's request without a findings report.
+- Local review/triage: `docs/reviews/code-review-2026-10-14-checkpoint.md`;
+  desktop Stop queue-clearing fix passes native regression coverage. No
+  external agent was used. Windows/Linux 46/46 CTests pass. Commit and merge PR #1,
+  then create `desktop-follow-ups` from updated `main`.
+- Then: HITL — with the user's permission, rerun the audible
+  `tts-host-playback-gap-probe` (now has a `stream` condition) and record it
+  under [finding 16](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-16).
+  Pending native checks: tab layout incl. new Playback controls, first-run
+  dialog appearance; isolated-environment sign-in acceptance.
+- Verification: 46/46 CTests on Windows and Linux (`build-linux` boost override
+  now points at `cache/fetchcontent/windows-vs2022/boost_headers-src`). Resident reuse, warm-up cancellation, shared Settings
+  lifetime, desktop fatal dialog, and Unicode spool cleanup covered. Native
+  audible/browser acceptance and Settings-to-Now-Playing skip check remain;
+  Now Playing visuals accepted. Real-model performance measurement remains pending.
+- Blockers/env: never change developer login startup (`PROJECT.md`); launch with
+  `config.development.json`. Quit Host before replacing its binary. Managed
+  Chrome disallows Developer mode; use the user's permitted browser.
+  Never confirm the first-run dialog with yes on this machine; `compile-win.ps1`
+  pre-creates `%LOCALAPPDATA%\TTS Host\startup-choice.marker`.
+- Open questions: bake-off execution, Qwen runtime
+  and quantization, release layout. Model manager currently has one resident slot;
+  eager priority and lifecycle are in [design](docs/design/architecture.md#desktop-integration).
+- Discarded as noise: native UI lookups must use process id; invoke full Windows
+  PowerShell path from WSL. No #14 spool transaction fix without a recovery use
+  case, no Chrome policy bypass retries. ONNX DLL resolution is a separate fix.
+  Gap probe: broadband loopback detection is unreliable with other system audio;
+  use the 440 Hz detector. Rerunning the probe plays audible tones, so ask first.

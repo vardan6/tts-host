@@ -1,5 +1,6 @@
 # Build output
 build/
+build*/
 out/
 cmake-build-*/
 CMakeFiles/
@@ -31,6 +32,7 @@ tts-app/
 models/
 *.gguf
 *.onnx
+!tests/fixtures/kokoro_runner/placeholder.onnx
 *.safetensors
 *.bin
 *.pt
@@ -46,6 +48,9 @@ models/
 
 # Runtime and user state
 config.json
+config.json.last-valid
+config.development.json
+config.development.json.last-valid
 portable.marker
 runtimes/
 logs/
@@ -56,6 +61,8 @@ cache/
 __pycache__/
 *.py[cod]
 .venv/
+.venv-linux/
+.venv-windows/
 venv/
 *.egg-info/
 .nuitka-build/

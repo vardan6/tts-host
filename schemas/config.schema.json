@@ -1,0 +1,226 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "TTS Host Configuration",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "$schema",
+    "schemaVersion",
+    "server",
+    "audio",
+    "modelRegistry",
+    "profiles",
+    "languageDefaults"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "schemaVersion": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "server": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "host",
+        "port",
+        "authentication",
+        "allowedOrigins"
+      ],
+      "properties": {
+        "host": {
+          "type": "string",
+          "minLength": 1
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "authentication": {
+          "type": "string",
+          "enum": [
+            "none",
+            "automatic",
+            "token"
+          ]
+        },
+        "allowedOrigins": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "startup": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "launchOnLogin"
+      ],
+      "properties": {
+        "launchOnLogin": {
+          "type": "boolean",
+          "default": true,
+          "description": "Pre-ticked answer for the first-run startup question and the installer. The operating system's startup registration, not this value, records whether TTS Host starts at login (docs/adr/0008-os-owned-login-startup.md)."
+        }
+      }
+    },
+    "audio": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "outputDevice"
+      ],
+      "properties": {
+        "outputDevice": {
+          "type": "string",
+          "minLength": 1
+        },
+        "speechSpeed": {
+          "type": "number",
+          "minimum": 0.5,
+          "maximum": 2.0,
+          "default": 1.0
+        },
+        "playbackSkipSeconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 30,
+          "default": 5
+        },
+        "bufferMilliseconds": {
+          "type": "integer",
+          "minimum": 20,
+          "maximum": 200,
+          "default": 50,
+          "description": "Requested endpoint buffer; applies to the next utterance."
+        },
+        "sentencePauseMilliseconds": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000,
+          "default": 0,
+          "description": "Silence inserted between sentences; applies at the next sentence boundary."
+        },
+        "lookaheadSentences": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4,
+          "default": 1,
+          "description": "Sentences synthesized ahead of playback; applies at the next sentence boundary."
+        }
+      }
+    },
+    "hotkeys": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "readSelection": {
+          "type": "string"
+        }
+      }
+    },
+    "selection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "capturePolicy"
+      ],
+      "properties": {
+        "capturePolicy": {
+          "type": "string",
+          "enum": [
+            "automatic",
+            "uiAutomationOnly",
+            "clipboardOnly"
+          ]
+        }
+      }
+    },
+    "modelRegistry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "directories",
+        "watchForChanges",
+        "idleUnloadSeconds",
+        "maximumLoadedGpuModels"
+      ],
+      "properties": {
+        "directories": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "watchForChanges": {
+          "type": "boolean"
+        },
+        "idleUnloadSeconds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "maximumLoadedGpuModels": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "profiles": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": false,
+      "patternProperties": {
+        "^[A-Za-z0-9][A-Za-z0-9_-]*$": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "model",
+            "device",
+            "loadPolicy"
+          ],
+          "properties": {
+            "model": {
+              "type": "string",
+              "minLength": 1
+            },
+            "device": {
+              "type": "string",
+              "minLength": 1
+            },
+            "loadPolicy": {
+              "type": "string",
+              "enum": [
+                "eager",
+                "onDemand"
+              ]
+            },
+            "idleUnloadSeconds": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "fallbackProfile": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
+    },
+    "languageDefaults": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  }
+}
