@@ -1,5 +1,10 @@
 # Progress
 
+- 2026-10-14: Removed temporary branch — verified local and remote
+  `desktop-follow-ups` tips are ancestors of `roadmap-slices`, then deleted
+  both branch references. All commits remain reachable through the merge;
+  current branch remains `roadmap-slices`.
+
 - 2026-10-14: Branch correction — the user clarified that the proposed merge
   and new branch were future steps, not authorization to execute them. Returned
   to `roadmap-slices` and cherry-picked all four state/policy documentation

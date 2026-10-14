@@ -1,8 +1,8 @@
 # Active Context
 
 - Mode: review/finalization of `roadmap-slices`; no new implementation slice.
-- Branch: `roadmap-slices`. All work saved on `desktop-follow-ups` has been
-  brought back here; that extra branch is retained, not used for current work.
+- Branch: `roadmap-slices`. All `desktop-follow-ups` commits are merged here;
+  its local and remote branches were deleted after ancestry verification.
 - PR #1 was prematurely merged into `main` as `001192c` by the assistant.
   The user intended review/finalization first and a later PR merge. Do not
   revert that merge, merge again, or create/switch another branch without an
