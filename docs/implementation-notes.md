@@ -30,8 +30,11 @@ Settings edits in place. Only the tray thread may touch it. The speech worker
 document for the whole utterance, so a Settings edit can neither race the
 worker nor mix old and new values within one request.
 
-Publication happens when Settings closes, via the tray's `publish_config`
-callback. That is also where `apply_playback_settings` pushes the default
+Publication happens when Settings closes, or when the tray's
+`ConfigFileWatcher` (`config_watch.hpp`) applies a settled external edit; both go
+through the tray's `publish_config` callback. The watcher pauses while Settings
+is open, because Settings edits the same document; its own saves compare equal
+afterward and are not treated as changes. That callback is also where `apply_playback_settings` pushes the default
 speech speed and seek interval into the running `PlaybackController`. A new
 live setting that the worker or controller needs must be read from the
 published document there, not from the tray's copy. Changes made while

@@ -67,6 +67,18 @@ void replacement_cancels_stale_work_without_erasing_the_new_state() {
           "active completion did not return to idle");
 }
 
+void each_utterance_publishes_its_source() {
+  tts_host::PlaybackController controller;
+  require(controller.source().empty(), "a new controller should have no source");
+  const auto first = controller.begin("Clipboard");
+  require(controller.source() == "Clipboard", "begin did not publish the utterance source");
+  controller.finish(first);
+  require(controller.source() == "Clipboard", "idle should keep the last utterance's source");
+  const auto second = controller.begin("Local API");
+  require(controller.source() == "Local API", "a replacement did not publish its own source");
+  controller.finish(second);
+}
+
 void speech_speed_changes_identify_stale_lookahead() {
   tts_host::PlaybackController controller;
   controller.set_default_speech_speed(1.25);
@@ -194,6 +206,7 @@ int main() {
   try {
     pause_resume_and_stop_publish_the_active_lifecycle();
     replacement_cancels_stale_work_without_erasing_the_new_state();
+    each_utterance_publishes_its_source();
     speech_speed_changes_identify_stale_lookahead();
     paused_seek_wakes_playback_without_resuming_it();
     stop_cannot_be_lost_before_a_paused_wait_blocks();

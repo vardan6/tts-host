@@ -174,6 +174,7 @@ add_executable(
   src/config_loader.cpp
   src/config_persistence.cpp
   src/config_snapshot.cpp
+  src/config_watch.cpp
   src/global_hotkey.cpp
   src/language_selection.cpp
   src/local_api_server.cpp
@@ -479,6 +480,14 @@ if(BUILD_TESTING)
   target_link_libraries(tts-host-config-persistence-tests PRIVATE
     nlohmann_json::nlohmann_json ${JSON_SCHEMA_VALIDATOR_TARGET})
   add_test(NAME tts_host_config_persistence COMMAND tts-host-config-persistence-tests
+    ${CMAKE_SOURCE_DIR}/config.example.json ${CMAKE_SOURCE_DIR}/schemas/config.schema.json)
+
+  add_executable(tts-host-config-watch-tests
+    src/config_loader.cpp src/config_watch.cpp tests/config_watch_tests.cpp)
+  target_include_directories(tts-host-config-watch-tests PRIVATE include)
+  target_link_libraries(tts-host-config-watch-tests PRIVATE
+    nlohmann_json::nlohmann_json ${JSON_SCHEMA_VALIDATOR_TARGET})
+  add_test(NAME tts_host_config_watch COMMAND tts-host-config-watch-tests
     ${CMAKE_SOURCE_DIR}/config.example.json ${CMAKE_SOURCE_DIR}/schemas/config.schema.json)
 
   add_executable(tts-host-startup-choice-tests

@@ -1,4 +1,57 @@
+- 2026-10-14: Coalesce download activity progress — `DownloadProgressThrottle`
+  passes each file's first and completing update and otherwise one per 250 ms;
+  `record_transient_activity` replaces that file's newest progress entry, so a
+  download keeps one Activity entry per file and repaints only throttled
+  updates. Regressions in `tts_host_selection_capture` and
+  `tts_host_catalogue_download`; design and finding 4 resolution updated.
+  47/47 CTests on Linux and native Windows Debug; no live download exercised.
+
+- 2026-10-14: Now Playing read actions and source targeting — Read
+  selection/Read clipboard, saved-target label, utterance source, and capture
+  status. Read selection re-finds the shortcut's saved control by UI
+  Automation RuntimeId without focus or input and fails closed into the
+  status line without interrupting playback. Linux and native Windows Debug
+  47/47 CTests each; live external-target read pending the Windows walkthrough.
+  The user's played-text history/queue idea is recorded as a roadmap planning item.
+
 # Progress
+
+- 2026-10-14: Reload external configuration edits — re-triaged the checkpoint
+  review in Claude Code (no new findings; #1 already fixed). The tray now polls
+  `config.json` once a second via `ConfigFileWatcher`: settled valid edits go
+  through the Settings-close publication path (hotkey re-registered if
+  changed); invalid JSON, schema violations, and a missing file keep the last
+  valid document and log the failing path once; changed `/server/*` keys log
+  that a restart is needed; polling pauses while Settings is open. New
+  `tts_host_config_watch` regression; Linux and native Windows Debug 47/47
+  CTests each. Live external-edit acceptance in the running tray not yet done.
+  Roadmap follow-up section condensed; review findings 3 and 4 made the next work.
+
+- 2026-10-14: Branch history restored — merged `desktop-follow-ups` into
+  `roadmap-slices` as `b4e3e4f` at the user's request, preserving its original
+  commits in addition to the earlier cherry-pick. Verified the merge changed
+  no file contents and pushed it. Subsequent temporary-branch deletion is
+  recorded below. Session closed with review/finalization and PR-workflow
+  recovery still pending; no further merge to `main` performed.
+
+- 2026-10-14: Removed temporary branch — verified local and remote
+  `desktop-follow-ups` tips are ancestors of `roadmap-slices`, then deleted
+  both branch references. All commits remain reachable through the merge;
+  current branch remains `roadmap-slices`.
+
+- 2026-10-14: Branch correction — the user clarified that the proposed merge
+  and new branch were future steps, not authorization to execute them. Returned
+  to `roadmap-slices` and cherry-picked all four state/policy documentation
+  changes from `desktop-follow-ups`; implementation and review were already on
+  `roadmap-slices`. PR #1 remains prematurely merged into `main`; no revert,
+  further merge, or branch deletion performed. Current work is review/finalization.
+
+- 2026-10-14: Windows checkpoint merged — Stop fix/review committed as
+  `514c65e`; PR #1 merged with merge commit `001192c`. Updated local `main`
+  and created `desktop-follow-ups` for remaining work. Review limits and native
+  acceptance gaps remain explicit; no other agent or Claude Code was used for
+  the completed review. Saved the user's explicit-agent-approval rule in
+  `PROJECT.md`. The development Host was quit for the rebuild and left stopped.
 
 - 2026-10-14: Local checkpoint review and Stop fix — reviewed the desktop
   checkpoint directly in Codex at the user's request, without other agents or

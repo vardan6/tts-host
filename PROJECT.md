@@ -1,5 +1,12 @@
 # Project instructions
 
+## Agent launches
+
+- Never launch another agent or an external agent CLI (including Claude Code)
+  without asking first and receiving the user's explicit approval for that run.
+  A review request or skill invocation alone is not approval. State the proposed
+  scope and resource limits before requesting approval.
+
 ## Local Windows development
 
 - Do not enable TTS Host launch at Windows login on this developer machine or

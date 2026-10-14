@@ -1,39 +1,26 @@
 # Active Context
 
-- Mode: checkpoint finalization; local review and Stop regression checks complete.
-- Phase: review/finalize `roadmap-slices` before the Linux adapter.
-- State: per-utterance stream (`71d4657`) and Playback tab tuning (`21316be`)
-  committed; the WASAPI stream is verified only by build and fake-endpoint tests.
-- GUI-launch stderr `NUL` fallback and bounded shared Settings activity log
-  verified on 2026-10-14: shell-launched Kokoro load, error display, and reopen
-  retention pass; 46/46 Windows and Linux CTests. See `progress.md`.
-- Checkpoint fix committed as `0b6391e`; draft PR:
-  https://github.com/vardan6/tts-host/pull/1. Claude Opus 5.5 review of
-  `1ad34c1..0b6391e` was stopped at the user's request without a findings report.
-- Local review/triage: `docs/reviews/code-review-2026-10-14-checkpoint.md`;
-  desktop Stop queue-clearing fix passes native regression coverage. No
-  external agent was used. Windows/Linux 46/46 CTests pass. Commit and merge PR #1,
-  then create `desktop-follow-ups` from updated `main`.
-- Then: HITL — with the user's permission, rerun the audible
-  `tts-host-playback-gap-probe` (now has a `stream` condition) and record it
-  under [finding 16](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-16).
-  Pending native checks: tab layout incl. new Playback controls, first-run
-  dialog appearance; isolated-environment sign-in acceptance.
-- Verification: 46/46 CTests on Windows and Linux (`build-linux` boost override
-  now points at `cache/fetchcontent/windows-vs2022/boost_headers-src`). Resident reuse, warm-up cancellation, shared Settings
-  lifetime, desktop fatal dialog, and Unicode spool cleanup covered. Native
-  audible/browser acceptance and Settings-to-Now-Playing skip check remain;
-  Now Playing visuals accepted. Real-model performance measurement remains pending.
-- Blockers/env: never change developer login startup (`PROJECT.md`); launch with
-  `config.development.json`. Quit Host before replacing its binary. Managed
-  Chrome disallows Developer mode; use the user's permitted browser.
-  Never confirm the first-run dialog with yes on this machine; `compile-win.ps1`
-  pre-creates `%LOCALAPPDATA%\TTS Host\startup-choice.marker`.
-- Open questions: bake-off execution, Qwen runtime
-  and quantization, release layout. Model manager currently has one resident slot;
-  eager priority and lifecycle are in [design](docs/design/architecture.md#desktop-integration).
-- Discarded as noise: native UI lookups must use process id; invoke full Windows
-  PowerShell path from WSL. No #14 spool transaction fix without a recovery use
-  case, no Chrome policy bypass retries. ONNX DLL resolution is a separate fix.
-  Gap probe: broadband loopback detection is unreliable with other system audio;
-  use the 440 Hz detector. Rerunning the probe plays audible tones, so ask first.
+- Mode: review finalized.
+- Branch: `roadmap-slices`. All October 3 and October 14 review findings are
+  resolved or deliberately discarded. On 2026-10-14 the user explicitly
+  approved merging `roadmap-slices` into `main` by pull request.
+- Next: native Windows acceptance walkthrough (list below), or plan
+  played-text history/queue (roadmap HITL item, `/planning-capture`). The
+  local review is same-provider and focused, not an independent full audit.
+- Verification: Windows/Linux Debug, 47/47 CTests each. Open acceptance: live
+  external config edit in the running tray, Now Playing Read selection of a
+  real external target, audible gap probe, combined
+  desktop/browser walkthrough, Settings-to-Now-Playing skip, first-run/tab
+  visuals, isolated startup/sign-in, model performance. The original Now Playing
+  visuals are accepted; the added read controls (taller window) are not.
+- Environment: never change developer login startup; use the development
+  config and pre-created startup-choice marker. Quit Host before replacing its
+  binary (currently stopped). Managed Chrome blocks Developer mode; use the
+  permitted browser. No agents or external agent CLIs without approval
+  (`PROJECT.md`).
+- Open questions: whether played-text history may retain spoken text
+  (roadmap HITL item); benchmark harness versus candidate runners first; Qwen
+  runtime/quantization and defaults; release layout.
+- Discarded as noise: no #14 spool recovery fix without a use case; no
+  browser-policy bypass. Use the 440 Hz gap detector; the audible probe needs
+  permission.

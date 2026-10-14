@@ -1,5 +1,6 @@
 #include "tts_host/catalogue_download.hpp"
 
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -214,6 +215,23 @@ void sha256_matches_known_test_vectors() {
   std::filesystem::remove_all(temp_dir);
 }
 
+void progress_is_throttled_except_for_new_and_completed_files() {
+  using namespace std::chrono_literals;
+  tts_host::DownloadProgressThrottle throttle(250ms);
+  const auto start = std::chrono::steady_clock::time_point{} + 1h;
+  require(throttle.should_report({"a.bin", 65536, 1000000}, start), "first progress was not reported");
+  require(!throttle.should_report({"a.bin", 131072, 1000000}, start + 100ms),
+          "progress inside the interval was reported");
+  require(throttle.should_report({"a.bin", 196608, 1000000}, start + 250ms),
+          "progress after the interval was not reported");
+  require(throttle.should_report({"a.bin", 1000000, 1000000}, start + 260ms),
+          "completed file progress was throttled");
+  require(throttle.should_report({"b.bin", 65536, 500000}, start + 270ms),
+          "the first progress of the next file was throttled");
+  require(!throttle.should_report({"b.bin", 131072, 500000}, start + 300ms),
+          "progress of the next file ignored the interval");
+}
+
 }  // namespace
 
 int main(int argc, char **argv) {
@@ -225,6 +243,7 @@ int main(int argc, char **argv) {
     std::filesystem::create_directories(work_directory);
 
     sha256_matches_known_test_vectors();
+    progress_is_throttled_except_for_new_and_completed_files();
     a_fresh_download_installs_the_verified_package(schemas_directory, work_directory);
     a_partially_downloaded_file_is_resumed_not_refetched(schemas_directory, work_directory);
     a_checksum_mismatch_is_rejected_and_cleaned_up(schemas_directory, work_directory);

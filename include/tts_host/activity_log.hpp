@@ -20,6 +20,13 @@ struct ActivityEntry {
 // the most recent entries. Never record selected or spoken text.
 void record_activity(std::string text);
 
+// Records progress that supersedes itself, such as one file's download bytes.
+// While the newest entry is transient progress for the same `key`, it is
+// replaced (with a new time and sequence) instead of adding another entry, so
+// a long download occupies one entry rather than evicting earlier messages.
+// Any other entry recorded in between ends the replacement.
+void record_transient_activity(const std::string &key, std::string text);
+
 // Entries recorded after `after_sequence`, oldest first. Pass 0 for all.
 std::vector<ActivityEntry> activity_since(std::uint64_t after_sequence);
 

@@ -50,5 +50,8 @@ struct ConfigError {
 std::optional<CliOptions> parse_cli(int argc, char **argv, std::string &error_message);
 void validate_config(const ConfigDocument &document);
 ConfigDocument load_config(const CliOptions &options, const std::filesystem::path &argv0);
+// Re-reads paths.config_path and validates it against the schema it names,
+// keeping the startup data directory (a restart-only location).
+ConfigDocument reload_config(const ResolvedPaths &paths);
 
 }  // namespace tts_host

@@ -247,6 +247,12 @@ void run_synthesis(const tts_host::CliOptions &options, const tts_host::ConfigDo
 // Keeps tray requests asynchronous from the Win32 message loop. A request
 // normally cancels the active utterance and replaces pending work; the Queue
 // clipboard command is the explicit opt-in path that preserves it.
+// One queued read. source labels where the text came from for Now Playing.
+struct SpeechRequest {
+  std::string text;
+  std::string source;
+};
+
 class TraySpeechScheduler {
  public:
   TraySpeechScheduler(tts_host::ConfigDocument document, std::filesystem::path argv0)
@@ -272,14 +278,14 @@ class TraySpeechScheduler {
     worker_.join();
   }
 
-  void submit(std::string text, tts_host::SpeechQueueMode queue_mode) {
+  void submit(std::string text, tts_host::SpeechQueueMode queue_mode, std::string source) {
     {
       std::lock_guard lock(mutex_);
       if (queue_mode == tts_host::SpeechQueueMode::Interrupt) {
         pending_.clear();
         playback_controller_.stop();
       }
-      pending_.push_back(std::move(text));
+      pending_.push_back({std::move(text), std::move(source)});
     }
     condition_.notify_one();
   }
@@ -330,7 +336,7 @@ class TraySpeechScheduler {
  private:
   void run() {
     while (true) {
-      std::string text;
+      SpeechRequest request;
       std::shared_ptr<tts_host::PlaybackControl> control;
       std::shared_ptr<const tts_host::ConfigDocument> config;
       {
@@ -361,15 +367,15 @@ class TraySpeechScheduler {
               config->value.at("modelRegistry").at("idleUnloadSeconds").get<int>()));
           continue;
         }
-        text = std::move(pending_.front());
+        request = std::move(pending_.front());
         pending_.pop_front();
-        control = playback_controller_.begin();
+        control = playback_controller_.begin(std::move(request.source));
         config = config_.current();
       }
 
       try {
         tts_host::CliOptions options;
-        options.synthesize_text = std::move(text);
+        options.synthesize_text = std::move(request.text);
         options.play_audio = true;
         run_synthesis(options, *config, argv0_, control.get(), &playback_controller_, &sessions_);
       } catch (const tts_host::RunnerCancelled &) {
@@ -389,7 +395,7 @@ class TraySpeechScheduler {
   tts_host::ModelSessionManager sessions_;
   std::mutex mutex_;
   std::condition_variable condition_;
-  std::deque<std::string> pending_;
+  std::deque<SpeechRequest> pending_;
   tts_host::PlaybackController playback_controller_;
   bool stopping_ = false;
   bool eager_pending_ = false;
@@ -465,7 +471,8 @@ int run_main(int argc, char **argv) {
           server.at("host").get<std::string>(),
           static_cast<unsigned short>(server.at("port").get<int>()), std::move(allowed_origins),
           [&tray_speech_scheduler](std::string text) {
-            tray_speech_scheduler.submit(std::move(text), tts_host::SpeechQueueMode::Interrupt);
+            tray_speech_scheduler.submit(std::move(text), tts_host::SpeechQueueMode::Interrupt,
+                                         "Local API");
           },
           [&tray_speech_scheduler](const std::string &command) {
             return tray_speech_scheduler.playback_command(command);
@@ -474,8 +481,9 @@ int run_main(int argc, char **argv) {
                 << '\n';
       tts_host::run_tray_icon(
           document, executable_dir(tts_host::path_from_utf8(argv[0])),
-          [&tray_speech_scheduler](const std::string &text, tts_host::SpeechQueueMode queue_mode) {
-            tray_speech_scheduler.submit(text, queue_mode);
+          [&tray_speech_scheduler](const std::string &text, tts_host::SpeechQueueMode queue_mode,
+                                   const std::string &source) {
+            tray_speech_scheduler.submit(text, queue_mode, source);
           }, tray_speech_scheduler.playback_controller(),
           [&tray_speech_scheduler](const tts_host::ConfigDocument &edited) {
             tray_speech_scheduler.publish_config(edited);

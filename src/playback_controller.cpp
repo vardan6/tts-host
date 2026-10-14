@@ -1,6 +1,7 @@
 #include "tts_host/playback_controller.hpp"
 
 #include <stdexcept>
+#include <utility>
 
 namespace tts_host {
 
@@ -78,7 +79,7 @@ void PlaybackControl::set_generated_seconds(double seconds) { generated_seconds_
 
 double PlaybackControl::generated_seconds() const { return generated_seconds_.load(); }
 
-std::shared_ptr<PlaybackControl> PlaybackController::begin() {
+std::shared_ptr<PlaybackControl> PlaybackController::begin(std::string source) {
   std::lock_guard lock(mutex_);
   if (active_) {
     active_->cancel();
@@ -86,6 +87,7 @@ std::shared_ptr<PlaybackControl> PlaybackController::begin() {
   active_ = std::make_shared<PlaybackControl>();
   state_ = PlaybackState::Preparing;
   error_message_.clear();
+  source_ = std::move(source);
   speech_speed_ = default_speech_speed_;
   ++speech_speed_generation_;
   return active_;
@@ -156,6 +158,11 @@ void PlaybackController::fail(const std::shared_ptr<PlaybackControl> &control, s
 std::string PlaybackController::error_message() const {
   std::lock_guard lock(mutex_);
   return error_message_;
+}
+
+std::string PlaybackController::source() const {
+  std::lock_guard lock(mutex_);
+  return source_;
 }
 
 PlaybackState PlaybackController::state() const {

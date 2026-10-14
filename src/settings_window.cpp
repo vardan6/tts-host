@@ -714,12 +714,20 @@ void on_download_model_clicked(SettingsState &state, HWND combo, HWND window) {
 
   try {
     append_activity_log(state, L"Downloading " + utf8_to_wide(found->display_name) + L"…");
+    // One replaceable entry per file, repainted at most every 250 ms, keeps
+    // the bounded log for actionable messages (2026-10-14 review, finding 4).
+    DownloadProgressThrottle throttle(std::chrono::milliseconds(250));
     download_catalogue_entry(
         *found, destination_root, state.document, fetch_url_to_file,
-        [&state](const DownloadProgress &progress) {
-          append_activity_log(state, utf8_to_wide(progress.relative_path) + L": " +
-                                         std::to_wstring(progress.bytes_downloaded) + L" / " +
-                                         std::to_wstring(progress.bytes_total) + L" bytes");
+        [&state, &throttle](const DownloadProgress &progress) {
+          if (!throttle.should_report(progress, std::chrono::steady_clock::now())) {
+            return;
+          }
+          record_transient_activity("download:" + progress.relative_path,
+                                    progress.relative_path + ": " +
+                                        std::to_string(progress.bytes_downloaded) + " / " +
+                                        std::to_string(progress.bytes_total) + " bytes");
+          show_new_activity(state);
         });
     refresh_model_views(state, window);
     append_activity_log(state, L"Downloaded " + utf8_to_wide(found->display_name));
