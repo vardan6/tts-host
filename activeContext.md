@@ -1,31 +1,28 @@
 # Active Context
 
-- Mode: review/finalization of `roadmap-slices`; no new implementation slice.
-- Branch: `roadmap-slices`. All `desktop-follow-ups` commits are merged here;
-  its local and remote branches were deleted after ancestry verification.
-- PR #1 was prematurely merged into `main` as `001192c` by the assistant.
-  The user intended review/finalization first and a later PR merge. Do not
-  revert that merge, merge again, or create/switch another branch without an
-  explicit instruction. The repository default branch is `main`.
-- Review: local Codex review and triage in
-  [checkpoint report](docs/reviews/code-review-2026-10-14-checkpoint.md).
-  Desktop Stop queue clearing fixed in `514c65e`; no unresolved merge blocker
-  in this focused review. It is same-provider, not an independent full audit.
-- Next action: finalize the review of `roadmap-slices` with the user. The local
-  report is a focused same-provider review; confirm its coverage is sufficient
-  before any later PR/merge action. Remaining work stays in the roadmap.
-- Verification: Windows/Linux Debug builds and 46/46 CTests on each pass,
-  including native Stop callback and UI teardown regression; GUI Kokoro load
-  and Activity log retention verified. Audible gap probe, combined desktop/
-  browser acceptance, Settings-to-Now-Playing skip acceptance, first-run/tab
-  visuals, isolated startup/sign-in acceptance, and model performance remain
-  open. Now Playing visuals already accepted.
-- Environment: never change developer login startup; use development config
-  and pre-created startup-choice marker. Quit Host before replacing its binary.
-  Managed Chrome blocks Developer mode; use the permitted browser. The Host
-  was quit for the rebuild and remains stopped.
-- Open decisions: benchmark harness versus candidate runners first; Qwen
+- Mode: session closed.
+- Branch: `roadmap-slices`. Reload of external config edits is implemented
+  and verified but **uncommitted**; commit it before starting new work.
+- Next: `/next-slice` → **Now Playing read actions and source targeting**
+  ([roadmap](roadmap.md#next), [finding 3](docs/reviews/code-review-2026-10-14-checkpoint.md#finding-3)).
+- After that: **Coalesce download activity progress** (finding 4), then
+  finalize the `roadmap-slices` review with the user. The local review is
+  same-provider and focused, not an independent full audit.
+- Blocker: PR #1 was prematurely merged into `main` as `001192c` by the
+  assistant. Do not revert it, merge again, or create/switch branches without
+  explicit instruction. No recovery action is authorized yet.
+- Verification: Windows/Linux Debug, 47/47 CTests each. Open acceptance: live
+  external config edit in the running tray, audible gap probe, combined
+  desktop/browser walkthrough, Settings-to-Now-Playing skip, first-run/tab
+  visuals, isolated startup/sign-in, model performance. Now Playing visuals
+  are already accepted.
+- Environment: never change developer login startup; use the development
+  config and pre-created startup-choice marker. Quit Host before replacing its
+  binary (currently stopped). Managed Chrome blocks Developer mode; use the
+  permitted browser. No agents or external agent CLIs without approval
+  (`PROJECT.md`).
+- Open questions: benchmark harness versus candidate runners first; Qwen
   runtime/quantization and defaults; release layout.
-- Do not launch agents or external agent CLIs without approval: `PROJECT.md`.
-- Discarded: no #14 spool recovery fix without a use case, no browser-policy
-  bypass. Use the 440 Hz gap detector; audible probe requires permission.
+- Discarded as noise: no #14 spool recovery fix without a use case; no
+  browser-policy bypass. Use the 440 Hz gap detector; the audible probe needs
+  permission.

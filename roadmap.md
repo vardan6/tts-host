@@ -3,10 +3,11 @@
 Each item is a thin, independently verifiable product slice. Requirements and
 architecture live under `docs/`; this file records sequence only.
 
-Current checkpoint: review/finalize `roadmap-slices` before any next work or
-platform branch. Pending acceptance and later product slices remain unchecked;
-the premature PR #1 merge recorded in `activeContext.md` does not declare them
-complete. Linux remains the next platform.
+Current checkpoint: next work is [Branch review follow-up → Next](#next)
+(Now Playing read actions, then download progress coalescing); finalize
+`roadmap-slices` review afterward. Pending acceptance and later product slices
+remain unchecked; the premature PR #1 merge recorded in `activeContext.md` does
+not declare them complete. Linux remains the next platform.
 
 Desktop prototype order: Windows direct selection → Now Playing pause/resume/
 stop → generated-audio seek → browser selection → one combined Windows acceptance
@@ -492,61 +493,46 @@ Developer workflow:
 
 ## Branch review follow-up
 
-Complete blockers before checkpoint finalization or beginning the Linux adapter.
-Priority, validation qualifications, and planning constraints live in the
-[review triage](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#triage--2026-10-03)
-and [captured plan](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#captured-implementation-plan).
-Each fix includes regressions for its failure mode; #17 audits remaining gaps.
+Findings come from the [October 3 review](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#triage--2026-10-03) (with its
+[captured plan](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#captured-implementation-plan)) and the
+[October 14 checkpoint review](docs/reviews/code-review-2026-10-14-checkpoint.md#triage--2026-10-14). Each fix includes
+regressions for its failure mode.
 
-### Correctness blockers
+### Next
 
-- [x] **AFK — Now Playing Stop clears queued speech:** route the desktop button
-  through the scheduler operation used by browser Stop; regress native command
-  delegation, close-to-hide, and window teardown. See
-  [finding 1](docs/reviews/code-review-2026-10-14-checkpoint.md#finding-1).
-
-- [x] **AFK — Stop and seek reliably wake paused playback:** Prove cancellation/seek cannot be lost at the predicate-to-wait boundary. See [finding 4](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-4) and [governing spec](docs/design/architecture.md#playback-control-and-position).
-- [x] **AFK — Speech uses a consistent configuration snapshot:** Publish Settings changes safely and keep each in-flight request consistent. See [finding 1](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-1) and [governing spec](docs/design/architecture.md#live-reload).
-- [x] **AFK — Settings and tray shutdown preserve window lifetimes:** Prevent reentrant Settings and safely handle tray Quit while Settings is open. See [finding 6](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-6) and [governing spec](docs/design/architecture.md#desktop-integration).
-- [x] **AFK — Settings preserves valid configuration on save failure:** Validate before atomic replacement and retain a usable last-valid copy. See [finding 8](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-8) and [governing spec](docs/design/architecture.md#configuration).
-- [x] **AFK — A conflicting Windows API listener fails clearly:** Enforce exclusive port ownership and verify a second Host cannot serve that endpoint. See [finding 2](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-2) and [governing spec](docs/design/architecture.md#local-api).
-- [x] **AFK — Runner inherits only its own required handles:** Verify concurrent sessions do not keep each other's pipe writers alive. See [finding 10](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-10) and [governing spec](docs/adr/0002-runner-protocol.md).
-- [x] **AFK — Runner hang and death recover without hanging shutdown:** Bound I/O/process waits; restart and retry the failed chunk once with logs and actionable repeated-failure reporting. See [finding 3](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-3) and [governing spec](docs/adr/0002-runner-protocol.md#runner-failure).
-- [x] **AFK — Unicode Windows paths work end to end:** Cover process launch, model/voice protocol paths, tray synthesis, and Settings loading. See [finding 9](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-9) and [governing spec](docs/requirements/product.md#supported-environments).
-- [x] **AFK — Saved skip interval applies to the next press:** Apply Settings changes to both running seek controls. See [finding 7](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-7) and [governing spec](docs/requirements/product.md#configuration-and-controls).
-
-### Remaining phase work
-
-- [ ] **AFK — Reload external configuration edits:** validate file changes,
-  publish an immutable snapshot only when valid, retain the last valid state
-  on errors, and report restart-only server settings. See
-  [finding 2](docs/reviews/code-review-2026-10-14-checkpoint.md#finding-2) and
-  [design](docs/design/architecture.md#live-reload).
 - [ ] **AFK — Now Playing read actions and source targeting:** add Read
   selection/Read clipboard plus source and capture status; preserve speech
   on failed capture and target the saved external application. The accepted
   visuals remain accepted. See
   [finding 3](docs/reviews/code-review-2026-10-14-checkpoint.md#finding-3) and
   [design](docs/design/architecture.md#desktop-integration).
-
-- [x] **HITL — Decide startup registration synchronization:** decided
-  2026-10-06: the OS registration owns the state and launches never write it —
-  see [ADR 0008](docs/adr/0008-os-owned-login-startup.md). Implementation is
-  under **Windows start at login** above.
-- [x] **AFK — Desktop launch and fatal error reporting:** Keep headless diagnostics usable while making tray launch and fatal errors appropriate for desktop users. See [finding 11](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-11) and [governing spec](docs/requirements/product.md#distribution-and-usability).
-- [x] **AFK — Prompt playback after seek:** Resume retained audio without waiting for unrelated lookahead synthesis. See [finding 12](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-12) and [governing spec](docs/design/architecture.md#playback-control-and-position).
-- [x] **AFK — Resident synthesis lifecycle:** Reuse the tray model session, honor loadPolicy, and use actual activity for idle unloading before performance acceptance. See [finding 13](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-13) and [governing spec](docs/requirements/product.md#models).
-- [x] **AFK — Audit runtime regression coverage:** Close concurrent config, wait-race, native Windows collision, and runner hang/death coverage gaps left after owning fixes. See [finding 17](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-17) and [governing spec](docs/adr/0002-runner-protocol.md#runner-failure).
-
-### Review backlog and disposition
-
 - [ ] **AFK — Coalesce download activity progress:** throttle transient updates
   so model downloads do not repaint the full log per network read or evict
   recent actionable messages. See
   [finding 4](docs/reviews/code-review-2026-10-14-checkpoint.md#finding-4).
 
-- [x] **AFK — Correct catalogue verification note:** verification ordering now matches code; documentation-only correction. See [finding 15](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-15).
-- [x] **AFK — Measure sentence transitions:** about 80 ms (p95 about 90 ms) of added silence per sentence boundary on Windows; a continuous utterance stream is justified, but not scheduled yet. See [finding 16](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-16).
+### Completed
+
+- [x] **AFK — Now Playing Stop clears queued speech:** [Oct 14 finding 1](docs/reviews/code-review-2026-10-14-checkpoint.md#finding-1).
+- [x] **AFK — Reload external configuration edits:** [Oct 14 finding 2](docs/reviews/code-review-2026-10-14-checkpoint.md#finding-2), [design](docs/design/architecture.md#live-reload).
+- [x] **AFK — Stop and seek reliably wake paused playback:** [finding 4](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-4).
+- [x] **AFK — Speech uses a consistent configuration snapshot:** [finding 1](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-1).
+- [x] **AFK — Settings and tray shutdown preserve window lifetimes:** [finding 6](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-6).
+- [x] **AFK — Settings preserves valid configuration on save failure:** [finding 8](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-8).
+- [x] **AFK — A conflicting Windows API listener fails clearly:** [finding 2](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-2).
+- [x] **AFK — Runner inherits only its own required handles:** [finding 10](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-10).
+- [x] **AFK — Runner hang and death recover without hanging shutdown:** [finding 3](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-3).
+- [x] **AFK — Unicode Windows paths work end to end:** [finding 9](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-9).
+- [x] **AFK — Saved skip interval applies to the next press:** [finding 7](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-7).
+- [x] **HITL — Decide startup registration synchronization:** [ADR 0008](docs/adr/0008-os-owned-login-startup.md).
+- [x] **AFK — Desktop launch and fatal error reporting:** [finding 11](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-11).
+- [x] **AFK — Prompt playback after seek:** [finding 12](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-12).
+- [x] **AFK — Resident synthesis lifecycle:** [finding 13](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-13).
+- [x] **AFK — Audit runtime regression coverage:** [finding 17](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-17).
+- [x] **AFK — Correct catalogue verification note:** [finding 15](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-15).
+- [x] **AFK — Measure sentence transitions:** about 80 ms (p95 about 90 ms) of
+  added silence per boundary; a continuous utterance stream is justified but
+  not scheduled. [finding 16](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-16).
 
 Finding #14 is rejected; no implementation slice. See [validation](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-14).
 

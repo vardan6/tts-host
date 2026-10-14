@@ -1,5 +1,23 @@
 # Progress
 
+- 2026-10-14: Reload external configuration edits — re-triaged the checkpoint
+  review in Claude Code (no new findings; #1 already fixed). The tray now polls
+  `config.json` once a second via `ConfigFileWatcher`: settled valid edits go
+  through the Settings-close publication path (hotkey re-registered if
+  changed); invalid JSON, schema violations, and a missing file keep the last
+  valid document and log the failing path once; changed `/server/*` keys log
+  that a restart is needed; polling pauses while Settings is open. New
+  `tts_host_config_watch` regression; Linux and native Windows Debug 47/47
+  CTests each. Live external-edit acceptance in the running tray not yet done.
+  Roadmap follow-up section condensed; review findings 3 and 4 made the next work.
+
+- 2026-10-14: Branch history restored — merged `desktop-follow-ups` into
+  `roadmap-slices` as `b4e3e4f` at the user's request, preserving its original
+  commits in addition to the earlier cherry-pick. Verified the merge changed
+  no file contents and pushed it. Subsequent temporary-branch deletion is
+  recorded below. Session closed with review/finalization and PR-workflow
+  recovery still pending; no further merge to `main` performed.
+
 - 2026-10-14: Removed temporary branch — verified local and remote
   `desktop-follow-ups` tips are ancestors of `roadmap-slices`, then deleted
   both branch references. All commits remain reachable through the merge;

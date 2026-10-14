@@ -417,16 +417,18 @@ void validate_config(const ConfigDocument &document) {
 }
 
 ConfigDocument load_config(const CliOptions &options, const std::filesystem::path &argv0) {
-  const auto config_path = resolve_config_path(options, argv0);
-  const auto config = load_json_file(config_path, "config");
+  return reload_config({resolve_config_path(options, argv0), {}, resolve_data_dir(options, argv0)});
+}
+
+ConfigDocument reload_config(const ResolvedPaths &paths) {
+  const auto config = load_json_file(paths.config_path, "config");
   enforce_supported_schema_version(config);
 
-  const auto schema_path = resolve_schema_path(config, config_path);
+  const auto schema_path = resolve_schema_path(config, paths.config_path);
   const auto schema = load_json_file(schema_path, "schema");
   validate_against_schema(schema, config);
 
-  return ConfigDocument{config,
-                        ResolvedPaths{config_path, schema_path, resolve_data_dir(options, argv0)}};
+  return ConfigDocument{config, ResolvedPaths{paths.config_path, schema_path, paths.data_dir}};
 }
 
 }  // namespace tts_host

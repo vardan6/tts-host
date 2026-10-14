@@ -11,6 +11,7 @@
 
 #include "tts_host/activity_log.hpp"
 #include "tts_host/clipboard.hpp"
+#include "tts_host/config_watch.hpp"
 #include "tts_host/global_hotkey.hpp"
 #include "tts_host/selection_hotkey_state.hpp"
 #include "tts_host/now_playing_window.hpp"
@@ -41,6 +42,7 @@ struct TrayContext {
   bool capture_timed_out = false;
   bool settings_open = false;
   SelectionHotkeyState selection_hotkey;
+  ConfigFileWatcher config_watcher;
 };
 
 struct CaptureCompletion {
@@ -65,6 +67,8 @@ constexpr UINT kSelectionHotkeyToggleMenuItemId = 6;
 constexpr int kReadSelectionHotkeyId = 1;
 constexpr UINT_PTR kSelectionCaptureTimerId = 1;
 constexpr UINT kSelectionCaptureDeadlineMilliseconds = 1500;
+constexpr UINT_PTR kConfigWatchTimerId = 2;
+constexpr UINT kConfigWatchIntervalMilliseconds = 1000;
 std::atomic_bool selection_capture_worker_active = false;
 
 std::optional<GlobalHotkey> configured_read_selection_hotkey(const ConfigDocument &document,
@@ -216,6 +220,38 @@ void show_context_menu(HWND window) {
   DestroyMenu(menu);
 }
 
+// Applies an external config.json edit the same way a Settings close does
+// (docs/design/architecture.md#live-reload). Skipped while Settings is open:
+// it edits this same document, and the next poll after it closes compares
+// the file with what Settings saved.
+void reload_external_config(HWND window) {
+  auto *context = tray_context(window);
+  if (context->settings_open) return;
+  const auto previous_hotkeys = context->document->value.value("hotkeys", nlohmann::json());
+  const auto reload = context->config_watcher.poll(*context->document);
+  if (reload.outcome == ConfigReload::Outcome::Rejected) {
+    record_activity("Configuration change not applied; keeping the last valid configuration. " +
+                    reload.error);
+    return;
+  }
+  if (reload.outcome != ConfigReload::Outcome::Applied) return;
+
+  record_activity("Configuration reloaded from file.");
+  for (const auto &pointer : reload.restart_required) {
+    record_activity("Restart TTS Host to apply " + pointer + ".");
+  }
+  try {
+    (*context->publish_config)(*context->document);
+  } catch (const std::exception &error) {
+    record_activity(std::string("Configuration reload failed: ") + error.what());
+  }
+  if (context->document->value.value("hotkeys", nlohmann::json()) != previous_hotkeys) {
+    context->selection_hotkey.release([&] { UnregisterHotKey(window, kReadSelectionHotkeyId); });
+    context->selection_hotkey.restore(
+        [&] { return register_read_selection_hotkey(window, *context->document); });
+  }
+}
+
 LRESULT CALLBACK tray_window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
   switch (message) {
     case kTrayCallbackMessage:
@@ -297,7 +333,9 @@ LRESULT CALLBACK tray_window_proc(HWND window, UINT message, WPARAM wparam, LPAR
       }
       return 0;
     case WM_TIMER:
-      if (wparam == kSelectionCaptureTimerId) {
+      if (wparam == kConfigWatchTimerId) {
+        reload_external_config(window);
+      } else if (wparam == kSelectionCaptureTimerId) {
         auto *context = tray_context(window);
         KillTimer(window, kSelectionCaptureTimerId);
         context->capture_timed_out = true;
@@ -373,6 +411,8 @@ void run_tray_icon(ConfigDocument &document,
 
   mutable_context.selection_hotkey.restore(
       [&] { return register_read_selection_hotkey(window, document); });
+
+  SetTimer(window, kConfigWatchTimerId, kConfigWatchIntervalMilliseconds, nullptr);
 
   MSG message;
   while (GetMessageW(&message, nullptr, 0, 0) > 0) {

@@ -109,3 +109,23 @@ Validation after the fix: native Windows Debug and Linux Debug builds pass;
 46/46 CTests pass on each platform, including the extended native UI regression.
 Whitespace validation passes. No unresolved must-fix finding remains in this
 focused checkpoint review; this is not a full-release acceptance result.
+
+## Resolution of finding 2
+
+The tray thread polls `config.json` once a second through
+`ConfigFileWatcher` (`src/config_watch.cpp`). A changed file is read only
+after the next poll sees it unchanged; content equal to the tray document
+(Settings' own saves) is not a change. A valid edit replaces the tray
+document and goes through the same publication as Settings close, and it
+re-registers the selection hotkey if it changed. Invalid JSON, schema
+violations, and a missing file keep the last valid document and are logged
+once to Activity with the failing JSON path. Changed `/server/*` keys are
+logged as needing a restart, because the listener is bound only at startup.
+Polling is skipped while Settings is open, since Settings edits the same document.
+
+`tts_host_config_watch` covers settling, same-content saves, partial writes,
+invalid JSON, schema-invalid values, a missing file, and restart-only
+reporting. The Win32 timer wiring was checked by native build only. Live
+external-edit acceptance in the running tray remains part of the combined
+Windows walkthrough. Validation: Linux Debug and native Windows Debug, 47/47
+CTests each.
