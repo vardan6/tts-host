@@ -220,7 +220,8 @@ if(TTS_HOST_QWEN_RUNTIME_DIR)
   FetchContent_Populate(qwen_llama_headers)
   add_executable(tts-host-qwen3-gguf-runner
     src/qwen_runner_main.cpp src/model_registry.cpp src/process_stats.cpp
-    src/runner_audio_output.cpp src/runner_control_io.cpp src/runner_protocol.cpp)
+    src/runner_audio_output.cpp src/runner_control_io.cpp src/runner_protocol.cpp
+    src/time_stretch.cpp)
   target_include_directories(tts-host-qwen3-gguf-runner PRIVATE include
     ${qwen_llama_headers_SOURCE_DIR}/include ${qwen_llama_headers_SOURCE_DIR}/ggml/include
     ${qwen_llama_headers_SOURCE_DIR}/tools/mtmd)
@@ -849,6 +850,19 @@ if(BUILD_TESTING)
     target_compile_options(tts-host-text-splitter-tests PRIVATE -Wall -Wextra -Wpedantic)
   endif()
   add_test(NAME tts_host_text_splitting COMMAND tts-host-text-splitter-tests)
+
+  add_executable(
+    tts-host-time-stretch-tests
+    src/time_stretch.cpp
+    tests/time_stretch_tests.cpp
+  )
+  target_include_directories(tts-host-time-stretch-tests PRIVATE include)
+  if(MSVC)
+    target_compile_options(tts-host-time-stretch-tests PRIVATE /W4 /permissive-)
+  else()
+    target_compile_options(tts-host-time-stretch-tests PRIVATE -Wall -Wextra -Wpedantic)
+  endif()
+  add_test(NAME tts_host_time_stretch COMMAND tts-host-time-stretch-tests)
 
   add_executable(
     tts-host-playback-controller-tests

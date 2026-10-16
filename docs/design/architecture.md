@@ -162,6 +162,8 @@ but the PCM currently submitted to WASAPI finishes unchanged. At the next host
 sentence boundary, the controller discards any unplayed lookahead and
 re-synthesizes those still-pending chunks with the new value. This avoids
 pitch-changing PCM resampling and needs no unreliable audio-to-word alignment.
+An engine with a native speed input uses it (Kokoro); one without stretches its
+own output in the runner while preserving pitch (Qwen).
 The setting travels as the typed runner `synthesize.params.speed` field; do not
 create a generic unvalidated engine-options map. Model-specific voice, accent,
 pronunciation, and sampling controls wait until a shipped engine needs them and
@@ -545,12 +547,15 @@ See [evaluation setup](../../README.md#qwen-evaluation).
 The adapter keeps weights resident between requests, resets generation state
 per sentence, and emits incremental PCM through the common runner protocol.
 Stop uses the Host's bounded process cancellation and discards incomplete
-sentences; engine failures use its existing one-restart recovery. An
-unsupported speed, a prompt exceeding the context, or a generation limit without
-end-of-speech is a request rejection (ADR 0002): the reason is reported and the
-model stays resident without a restart. Evaluation packages expose one declared
+sentences; engine failures use its existing one-restart recovery. A prompt
+exceeding the context or a generation limit without end-of-speech is a request
+rejection (ADR 0002): the reason is reported and the model stays resident
+without a restart. Evaluation packages expose one declared
 reference voice and declare exactly one language, `en` or `ru`, which every
-request uses. Synthesis speed is limited to 1.0. `stats` reports
+request uses. Qwen has no speed input, so the runner applies the requested
+speed with a streaming, pitch-preserving WSOLA time stretch of the generated
+PCM (`time_stretch.cpp`); output is independent of how PCM arrives, so
+incremental emission is kept. `stats` reports
 RSS, time to first emitted PCM, and sample count, with VRAM measurement marked
 unavailable. These limits must be addressed or accounted for before release
 acceptance; first emitted runner PCM does not bypass the Host's complete-sentence

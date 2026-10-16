@@ -42,11 +42,11 @@ Synthetic Copy adapter compatibility remains separate open work below.
     installation produce a selectable, speaking model — see
     [catalogue design](docs/design/architecture.md#download-catalogue) and
     [distribution requirements](docs/requirements/product.md#distribution-and-usability).
-  - [ ] **AFK — Qwen speech-speed control:** in the `qwen3-gguf` release runner,
-    support the typed 0.5–2.0 synthesis multiplier and sentence-boundary speed
-    changes without pitch-changing resampling; the runner currently rejects
-    speeds other than 1.0 — see
+  - [x] **AFK — Qwen speech-speed control:** the `qwen3-gguf` runner applies
+    the typed 0.5–2.0 multiplier with a streaming pitch-preserving time
+    stretch — see
     [playback design](docs/design/architecture.md#playback-control-and-position).
+    Listening check on Windows is collected for combined acceptance.
   - [ ] **HITL — Decide model revision and replacement storage:** capture the
     content-revision representation, installed/portable storage and discovery
     precedence, and runner/runtime release layout before replacement or

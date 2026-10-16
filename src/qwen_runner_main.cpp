@@ -4,6 +4,7 @@
 #include "tts_host/runner_audio_output.hpp"
 #include "tts_host/runner_control_io.hpp"
 #include "tts_host/runner_protocol.hpp"
+#include "tts_host/time_stretch.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -109,8 +110,6 @@ class QwenRunner {
   }
   void generate(const RunnerSynthesizeRequest &request, const RunnerAudioOutput &output,
                 std::uint64_t &sequence) {
-    if (request.speed != 1.0)
-      throw QwenRequestRejected("Qwen evaluation runner supports synthesis speed 1.0 only; set speech speed to 1.0");
     const auto start = std::chrono::steady_clock::now();
     last_first_ms_ = 0; last_samples_ = 0;
     api_.llama_memory_clear(api_.llama_get_memory(context_), true);
@@ -134,6 +133,28 @@ class QwenRunner {
       remaining = api_.mtmd_helper_gen_audio_step_prompt(generator_, 512);
       if (remaining < 0) throw QwenRequestRejected("Qwen prompt processing failed; text may exceed context");
     } while (remaining);
+    // Qwen has no speed input, so its PCM is time-stretched without changing
+    // pitch; the stretcher streams, so first-PCM latency is kept.
+    TimeStretcher stretcher(sample_rate_, request.speed);
+    uint64_t generated = 0;
+    const auto emit = [&](const std::vector<float> &pcm) {
+      for (size_t offset = 0; offset < pcm.size();) {
+        const auto count = std::min<size_t>(pcm.size() - offset, 24000);
+        RunnerAudioFrame audio{sequence++, static_cast<uint32_t>(count), 0, {}};
+        audio.payload.reserve(count * 2);
+        for (size_t i = 0; i < count; ++i) {
+          const auto sample = static_cast<uint16_t>(static_cast<int16_t>(
+              std::lround(std::clamp(pcm[offset + i], -1.0f, 1.0f) * 32767.0f)));
+          audio.payload.push_back(static_cast<uint8_t>(sample & 255));
+          audio.payload.push_back(static_cast<uint8_t>(sample >> 8));
+        }
+        if (!last_samples_) last_first_ms_ = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - start).count();
+        output.write_frame(audio);
+        last_samples_ += count;
+        offset += count;
+      }
+    };
     const float *state = api_.llama_get_embeddings_ith(context_, -1);
     bool stop = false;
     for (int frame = 0; frame < 1024 && !stop; ++frame) {
@@ -149,30 +170,18 @@ class QwenRunner {
         size_t bytes = 0;
         int64_t samples = 0;
         if (api_.mtmd_helper_gen_audio_get_output(generator_, &rate, &data, &bytes, &samples) ||
-            samples < 0 || static_cast<uint64_t>(samples) < last_samples_ ||
+            samples < 0 || static_cast<uint64_t>(samples) < generated ||
             bytes != static_cast<size_t>(samples) * sizeof(float) || rate != static_cast<int32_t>(sample_rate_))
           throw RunnerProtocolError("Qwen returned invalid PCM output");
         const auto *pcm = reinterpret_cast<const float *>(data);
-        while (last_samples_ < static_cast<uint64_t>(samples)) {
-          const auto count = std::min<std::uint64_t>(static_cast<uint64_t>(samples) - last_samples_, 24000);
-          RunnerAudioFrame audio{sequence++, static_cast<uint32_t>(count), 0, {}};
-          audio.payload.reserve(static_cast<size_t>(count) * 2);
-          for (uint64_t i = 0; i < count; ++i) {
-            const auto value = pcm[last_samples_ + i];
-            if (!std::isfinite(value)) throw RunnerProtocolError("Qwen returned non-finite audio");
-            const auto sample = static_cast<uint16_t>(static_cast<int16_t>(
-                std::lround(std::clamp(value, -1.0f, 1.0f) * 32767.0f)));
-            audio.payload.push_back(static_cast<uint8_t>(sample & 255));
-            audio.payload.push_back(static_cast<uint8_t>(sample >> 8));
-          }
-          if (!last_samples_) last_first_ms_ = std::chrono::duration<double, std::milli>(
-              std::chrono::steady_clock::now() - start).count();
-          output.write_frame(audio);
-          last_samples_ += count;
-        }
+        for (auto i = generated; i < static_cast<uint64_t>(samples); ++i)
+          if (!std::isfinite(pcm[i])) throw RunnerProtocolError("Qwen returned non-finite audio");
+        emit(stretcher.push(pcm + generated, static_cast<size_t>(static_cast<uint64_t>(samples) - generated)));
+        generated = static_cast<uint64_t>(samples);
       }
     }
     if (!stop) throw QwenRequestRejected("Qwen reached generation limit without end-of-speech; shorten the text");
+    emit(stretcher.finish());
     if (!last_samples_) throw QwenRequestRejected("Qwen generated no audio");
   }
   nlohmann::json stats(const RunnerStatsRequest &request) const {

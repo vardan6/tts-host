@@ -2,6 +2,9 @@
 #include "tts_host/path_encoding.hpp"
 #include "tts_host/wav_writer.hpp"
 #include <chrono>
+#include <cmath>
+#include <cstdint>
+#include <string>
 #include <iostream>
 #include <stdexcept>
 
@@ -40,15 +43,32 @@ int main(int argc, char **argv) {
                 << " ms to first PCM\n";
     }
     require(restarts == 0, "normal synthesis unexpectedly restarted the runner");
-    // Unsupported speed is a request rejection: no restart or model reload.
+    // Speed is a pitch-preserving stretch of the generated audio. Generation
+    // length itself varies between runs even with a fixed seed (about 5-20%),
+    // so only the scale is checked here; time_stretch_tests pins exact lengths.
+    const std::string sentence = "Speech speed changes the reading pace.";
+    const auto normal = runner.synthesize(sentence, 1.0).format.total_sample_frames;
+    uint64_t previous = UINT64_MAX;
+    for (const double speed : {0.5, 1.5, 2.0}) {
+      const auto frames = runner.synthesize(sentence, speed).format.total_sample_frames;
+      const auto expected = static_cast<double>(normal) / speed;
+      std::cout << "speed " << speed << ": " << frames << " frames, expected about " << expected << '\n';
+      require(frames < previous && std::abs(static_cast<double>(frames) - expected) < 0.3 * expected,
+              "Qwen speed did not scale the synthesized duration");
+      previous = frames;
+    }
+    require(restarts == 0, "speed changes restarted the runner");
+    // A prompt beyond the context is a request rejection: no restart or reload.
+    std::string too_long;
+    while (too_long.size() < 20000) too_long += "This sentence keeps the prompt growing. ";
     bool rejected = false;
-    try { runner.synthesize("This speed is not supported yet.", 1.5); }
+    try { runner.synthesize(too_long, 1.0); }
     catch (const tts_host::RunnerRequestError &error) {
-      rejected = std::string(error.what()).find("speed 1.0") != std::string::npos;
+      rejected = std::string(error.what()).find("context") != std::string::npos;
     }
     require(rejected && restarts == 0 && runner.loaded(),
-            "unsupported speed restarted the runner or lost its reason");
-    require(!runner.synthesize("Speech continues at normal speed.", 1.0).pcm.empty(),
+            "an over-context prompt restarted the runner or lost its reason");
+    require(!runner.synthesize("Speech continues after a rejected request.", 1.0).pcm.empty(),
             "Qwen could not synthesize after a rejected request");
     runner.unload();
     require(!runner.loaded(), "unload left the session loaded");
@@ -66,7 +86,7 @@ int main(int argc, char **argv) {
     require(!runner.synthesize("Reading works again after cancellation.", 1.0).pcm.empty(),
             "Qwen could not restart after cancellation");
     runner.unload();
-    std::cout << "Resident reuse, unload/reload, cancellation and subsequent synthesis passed\n";
+    std::cout << "Resident reuse, speed, rejection, unload/reload, cancellation and subsequent synthesis passed\n";
     return 0;
   } catch (const std::exception &error) {
     std::cerr << error.what() << '\n';

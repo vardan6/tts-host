@@ -222,15 +222,14 @@ python tools/package_qwen_evaluation.py --model path/to/model.gguf --mmproj path
 ```
 
 Point a separate evaluation config's `modelRegistry.directories` at that
-`models` directory, set `audio.speechSpeed` to `1.0` and
-`startup.launchOnLogin` to `false`, then use `--model qwen-evaluation` with the
+`models` directory, set `startup.launchOnLogin` to `false`, then use `--model qwen-evaluation` with the
 normal `--synthesize`, `--out`, and `--stats` options. The package has one
 reference voice; `--language` on the packaging tool selects its primary `en`
-or `ru` language. Other synthesis speeds are rejected with a reason; the model
-stays loaded.
+or `ru` language. Speech speed 0.5–2.0 is applied by a pitch-preserving time
+stretch in the runner.
 
-The opt-in real-model check verifies resident reuse, unsupported-speed rejection
-without restart, unload/reload, cancellation, and subsequent synthesis, writing
+The opt-in real-model check verifies resident reuse, speed scaling, over-context
+rejection without restart, unload/reload, cancellation, and subsequent synthesis, writing
 a WAV without playing it:
 
 ```powershell

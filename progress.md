@@ -1,3 +1,12 @@
+- 2026-10-17: Qwen speech-speed control — Qwen has no speed input, so the
+  `qwen3-gguf` runner streams its PCM through a WSOLA time stretch
+  (`time_stretch.cpp`, 30 ms frames, ±10 ms alignment) that keeps pitch and
+  incremental emission; the Host's sentence-boundary re-synthesis is unchanged.
+  Unit tests pin output length round(n/speed), chunking independence, pitch
+  and loudness. 48/48 Linux CTests pass; the real-GPU check scaled 0.5/1.5/2.0
+  within tolerance without restarts (generation length varies 5–20% between
+  runs even at a fixed seed) and now covers over-context rejection. Not yet
+  rebuilt or listened to on Windows.
 - 2026-10-16: Qwen end-to-end evaluation integration — optional native
   `tts-host-qwen3-gguf-runner` uses pinned llama.cpp b11029 CUDA libraries,
   Q4_K_M backbone, Q8_0 mmproj, and a declared reference voice. Added validated
