@@ -43,6 +43,26 @@ int main(int argc, char **argv) {
       require(restarts == 1, "failed chunk did not restart exactly once");
       require(runner.finish() == 0, "recovered process failed");
     }
+    // A rejected request reports its reason without restarting the runner,
+    // discards its partial PCM, and leaves the session usable.
+    {
+      env("TTS_TEST_RUNNER_MODE", "reject");
+      env("TTS_TEST_REQUIRE_LOAD", "1");
+      int restarts = 0;
+      tts_host::RecoveringRunner runner(executable, std::filesystem::path("model"), {}, deadlines,
+          {}, [&](const std::string &) { ++restarts; });
+      bool rejected = false;
+      try { runner.synthesize("reject this", 1.0); }
+      catch (const tts_host::RunnerRequestError &error) {
+        rejected = std::string(error.what()) == "fixture rejected the request";
+      }
+      require(rejected && restarts == 0 && runner.loaded(),
+              "a rejected request restarted the runner or lost its reason");
+      require(runner.synthesize("next sentence", 1.0).pcm ==
+                  tts_host::make_stub_runner_synthesis_frame().payload,
+              "rejected request's partial PCM leaked into the next sentence");
+      require(restarts == 0 && runner.finish() == 0, "runner did not survive a rejection");
+    }
     // More than a pipe buffer before the control reply must not deadlock.
     // A death during that stream must discard its PCM before the retry.
     for (const auto *mode : {"audio-first", "audio-first-partial-once"}) {

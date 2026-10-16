@@ -484,9 +484,10 @@ nlohmann::json RunnerSession::send_request(const nlohmann::json &request,
     // in its control reply. Drain both pipes to avoid blocking it on audio.
     // The caller still receives only a complete sentence (ADR 0002).
     std::exception_ptr audio_error;
+    bool audio_failed_first = false;
     std::thread reader([&] {
       try { pending_audio_ = receive_audio_stream(); }
-      catch (...) { audio_error = std::current_exception(); abort_io_ = true; }
+      catch (...) { audio_error = std::current_exception(); audio_failed_first = !abort_io_.exchange(true); }
     });
     nlohmann::json response;
     std::exception_ptr control_error;
@@ -495,8 +496,10 @@ nlohmann::json RunnerSession::send_request(const nlohmann::json &request,
     reader.join();
     abort_io_ = false;
     if (control_error || audio_error) pending_audio_.reset();
+    // The first failing reader aborts the other with a generic interruption;
+    // report the original failure rather than that secondary error.
+    if (audio_error && (audio_failed_first || !control_error)) std::rethrow_exception(audio_error);
     if (control_error) std::rethrow_exception(control_error);
-    if (audio_error) std::rethrow_exception(audio_error);
     return response;
   }
   return receive_control_message();

@@ -33,24 +33,19 @@ Synthetic Copy adapter compatibility remains separate open work below.
   Windows and Linux with the provisional configuration — see
   [engine design](docs/design/architecture.md#engines-and-models) and
   [package design](docs/design/architecture.md#model-packages-and-discovery).
-- [ ] **HITL — English model bake-off:** after Qwen synthesis integration,
-  measure Kokoro, Qwen3-TTS 0.6B/1.7B at candidate quantizations, and the strongest
-  lightweight alternative through the Host on the RTX 3070 Laptop GPU against
-  the [acceptance criteria](docs/requirements/product.md#english-bake-off-corpus).
-  Extend candidate runner support and obtain reliable peak VRAM measurements
-  (the evaluation runner currently reports unavailable); compare llama.cpp versus
-  upstream PyTorch before selecting the final Qwen variant/runtime and fast/quality
-  defaults. `--stats` and the frozen corpus already exist — see
-  [engine design](docs/design/architecture.md#engines-and-models).
-  - [ ] **AFK — Qwen catalogue and local import:** add the selected Qwen package
+- [x] **HITL — Select the bundled Qwen package:** bake-off skipped; 1.7B Base
+  Q4_K_M/Q8_0 on llama.cpp b11029 CUDA ships, selectable but not a default —
+  see [ADR 0009](docs/adr/0009-qwen-release-selection-without-bake-off.md).
+- Bundled two-model release, in order:
+  - [ ] **AFK — Qwen catalogue and local import:** add the ADR 0009 Qwen package
     to the pinned catalogue and verify both Settings import and catalogue
     installation produce a selectable, speaking model — see
     [catalogue design](docs/design/architecture.md#download-catalogue) and
     [distribution requirements](docs/requirements/product.md#distribution-and-usability).
-  - [ ] **AFK — Qwen speech-speed control:** after selecting the release runner,
+  - [ ] **AFK — Qwen speech-speed control:** in the `qwen3-gguf` release runner,
     support the typed 0.5–2.0 synthesis multiplier and sentence-boundary speed
-    changes without pitch-changing resampling; the evaluation runner currently
-    accepts only 1.0 — see
+    changes without pitch-changing resampling; the runner currently rejects
+    speeds other than 1.0 — see
     [playback design](docs/design/architecture.md#playback-control-and-position).
   - [ ] **HITL — Decide model revision and replacement storage:** capture the
     content-revision representation, installed/portable storage and discovery
@@ -58,6 +53,9 @@ Synthetic Copy adapter compatibility remains separate open work below.
     installer work — see
     [update design](docs/design/architecture.md#model-installation-and-updates)
     and [distribution design](docs/design/architecture.md#distribution).
+    The layout must replace the Qwen runner's compiled-in absolute runtime path
+    and process-wide DLL search setup — see
+    [Qwen review finding 7](docs/reviews/code-review-2026-10-16-qwen-evaluation.md#triage--2026-10-16).
   - [ ] **AFK — Manual catalogue model update:** expose current/update status
     and user-triggered staged replacement, preserving the working package on
     failure and recovering interrupted commits; verify resident-model handling
@@ -121,13 +119,16 @@ and the `runners/`/`runtimes/` layout decided first.
 - [ ] **AFK — Linux and macOS login startup:** XDG Autostart (Background
   portal under Flatpak) and `SMAppService.mainApp`, with the same Settings
   states as Windows — see [design](docs/design/architecture.md#login-startup).
-- Windows installer and release-layout work is tracked under the English
-  model bake-off above; do not duplicate its implementation slices.
+- Windows installer and release-layout work is tracked under the bundled
+  two-model release above; do not duplicate its implementation slices.
 
 ## Open decisions
 
-- Upstream PyTorch versus llama.cpp for the Qwen quality runner, and the
-  quantization level — an output of the bake-off, not an input.
+- Whether and when Qwen becomes the quality-profile default: it misses the
+  RTF ≤ 1.0 hard limit (≈1.5 warm on Linux) and peak VRAM is unmeasured; the
+  user may measure it against, or change, the
+  [default-model criteria](docs/requirements/product.md#acceptance-criteria-for-default-model-selection)
+  — see [ADR 0009](docs/adr/0009-qwen-release-selection-without-bake-off.md).
 - Whether a WSL headless distribution is published, or `--headless` merely makes
   it possible.
 - Whether played-text history may retain spoken text.
@@ -146,5 +147,8 @@ and the `runners/`/`runtimes/` layout decided first.
 - Token authentication and LAN serving. The config vocabulary is reserved;
   see `docs/adr/0003-no-authentication.md`.
 - Self-updating.
+- Qwen sampling parameters in one source and recorded in stats; seed is fixed
+  at 42 — see
+  [Qwen review finding 6](docs/reviews/code-review-2026-10-16-qwen-evaluation.md#triage--2026-10-16).
 - Spool recovery (October 3 finding 14): rejected without a use case — see
   [validation](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-14).

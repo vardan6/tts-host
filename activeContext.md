@@ -1,27 +1,26 @@
 # Active Context
 
-- Mode: session closed; Qwen evaluation synthesis complete, review pending.
-- Branch: `feature/bundled-models`, tracked on origin. Session-close checkpoint
-  includes Qwen implementation and prior planning/Windows acceptance docs;
-  identify the commit from git history.
-- State: Qwen 1.7B Base Q4_K_M + Q8_0 uses pinned llama.cpp b11029 CUDA.
-  47/47 CTests pass on Linux and Windows; real GPU synthesis and lifecycle checks
-  pass on both. Setup: [README](README.md#qwen-evaluation); evidence: `progress.md`.
-- Next: `/cross-review` of the Qwen checkpoint in a user-opened review
-  session, then prepare the English bake-off, including
-  candidate runner support and reliable peak VRAM measurements. Speed 1.0 only;
-  release speech-speed support is separately tracked in `roadmap.md`.
-- Limits: smoke throughput misses the target; VRAM is unavailable. No final
-  defaults, listening acceptance, catalogue, release artifact or installer claimed.
-- Artifacts: evaluation config/package/WAVs/logs in `build/qwen-evaluation/`;
-  Windows runtime in `cache/qwen-evaluation/b11029/runtime`. Normal registry and
-  development config unchanged; development Host running at close.
-- Blockers/open decisions: final runner/quantization and revision/storage/release
-  layout; see `roadmap.md`. No agents/external agent CLIs without approval.
-- Windows acceptance remains closed on user confirmation:
-  [report](docs/reviews/windows-acceptance-2026-10-16.md#final-closure--all-checks-accepted).
-- Environment: never change developer login startup; use development config and
-  existing startup-choice marker. Quit Host before replacing its binary.
-  `clipboardOnly` needs manual copy before Ctrl+F8. No browser-policy bypass.
-- Discarded as noise: the initial Linux recovery-test failure used a stale
-  fixture binary; rebuilding resolved it and the full suite passed.
+- Mode: session closed; Qwen review fixed, bundled-Qwen selection captured.
+- Branch: `feature/bundled-models`, clean; review fixes and ADR 0009 are
+  committed (not pushed).
+- State: bake-off skipped per
+  [ADR 0009](docs/adr/0009-qwen-release-selection-without-bake-off.md); 1.7B
+  Q4_K_M/Q8_0 llama.cpp b11029 is the release Qwen, selectable but not default.
+  The runner now rejects unsupported speed / long text without restarting
+  ([review](docs/reviews/code-review-2026-10-16-qwen-evaluation.md#triage--2026-10-16)).
+  Linux: 47/47 CTests + real-GPU Qwen test pass. Windows not rebuilt since.
+- Next: `/next-slice` → **Qwen catalogue and local import**
+  (`roadmap.md`, bundled two-model release).
+- Open questions: whether/when Qwen becomes quality default (RTF ≈1.5 warm,
+  VRAM unmeasured) — `roadmap.md` open decisions.
+- Risks for next slice: the Qwen runner is an optional CMake target (normal
+  builds lack it); the catalogue needs a hosted, licensed reference-voice clip.
+- Blockers: release layout / storage / revision decision (HITL) gates update,
+  packaging, and installer slices. No agents/external agent CLIs without approval.
+- Environment: Linux Qwen runs need
+  `LD_LIBRARY_PATH=~/.cache/tts-bakeoff/llama/b11029/cudart-llama-b11029-bin-ubuntu-cuda-13.3-x64:/usr/lib/wsl/lib`.
+  Evaluation package: `build/qwen-evaluation/models/qwen3-tts-1.7b/`. Never
+  change developer login startup; quit Host before replacing its binary.
+  `clipboardOnly` needs manual copy before Ctrl+F8.
+- Discarded as noise: Linux Qwen test "requires a working CUDA runtime" failure
+  was only the missing `LD_LIBRARY_PATH`, not a code fault.

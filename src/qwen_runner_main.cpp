@@ -15,6 +15,12 @@
 
 namespace tts_host {
 namespace {
+// Rejects one request; the loaded model and generator stay usable (ADR 0002).
+class QwenRequestRejected : public RunnerProtocolError {
+ public:
+  using RunnerProtocolError::RunnerProtocolError;
+};
+
 // Models never supply executable paths or code. This directory is selected by
 // the developer at build time; release-layout decisions are a separate slice.
 class QwenRunner {
@@ -84,8 +90,27 @@ class QwenRunner {
   }
   void synthesize(const RunnerSynthesizeRequest &request) {
     if (!generator_) throw RunnerProtocolError("Qwen synthesize requires a loaded package");
+    const auto output = RunnerAudioOutput::open_inherited();
+    std::uint64_t sequence = 0;
+    try {
+      generate(request, output, sequence);
+    } catch (const QwenRequestRejected &error) {
+      // Close the stream before replying so the Host can discard any partial
+      // PCM and keep the resident model instead of restarting it.
+      last_first_ms_ = 0; last_samples_ = 0;
+      output.write_frame({sequence, 0, kRunnerAudioFrameFlagEndOfStream, {}});
+      write_stdout(frame_runner_control_message(
+          make_runner_synthesize_error_response(request, error.what())));
+      return;
+    }
+    output.write_frame({sequence, 0, kRunnerAudioFrameFlagEndOfStream, {}});
+    write_stdout(frame_runner_control_message(make_runner_synthesize_response(
+        request, sample_rate_, 1, "pcm_s16le", last_samples_)));
+  }
+  void generate(const RunnerSynthesizeRequest &request, const RunnerAudioOutput &output,
+                std::uint64_t &sequence) {
     if (request.speed != 1.0)
-      throw RunnerProtocolError("Qwen evaluation runner supports synthesis speed 1.0 only");
+      throw QwenRequestRejected("Qwen evaluation runner supports synthesis speed 1.0 only; set speech speed to 1.0");
     const auto start = std::chrono::steady_clock::now();
     last_first_ms_ = 0; last_samples_ = 0;
     api_.llama_memory_clear(api_.llama_get_memory(context_), true);
@@ -107,12 +132,10 @@ class QwenRunner {
     int remaining;
     do {
       remaining = api_.mtmd_helper_gen_audio_step_prompt(generator_, 512);
-      if (remaining < 0) throw RunnerProtocolError("Qwen prompt processing failed; text may exceed context");
+      if (remaining < 0) throw QwenRequestRejected("Qwen prompt processing failed; text may exceed context");
     } while (remaining);
     const float *state = api_.llama_get_embeddings_ith(context_, -1);
     bool stop = false;
-    std::uint64_t sequence = 0;
-    auto output = RunnerAudioOutput::open_inherited();
     for (int frame = 0; frame < 1024 && !stop; ++frame) {
       const auto token = api_.llama_sampler_sample(sampler, context_, -1);
       const float *next = nullptr;
@@ -149,11 +172,8 @@ class QwenRunner {
         }
       }
     }
-    if (!stop) throw RunnerProtocolError("Qwen reached generation limit without end-of-speech; shorten the text");
-    if (!last_samples_) throw RunnerProtocolError("Qwen generated no audio");
-    output.write_frame({sequence, 0, kRunnerAudioFrameFlagEndOfStream, {}});
-    write_stdout(frame_runner_control_message(make_runner_synthesize_response(
-        request, sample_rate_, 1, "pcm_s16le", last_samples_)));
+    if (!stop) throw QwenRequestRejected("Qwen reached generation limit without end-of-speech; shorten the text");
+    if (!last_samples_) throw QwenRequestRejected("Qwen generated no audio");
   }
   nlohmann::json stats(const RunnerStatsRequest &request) const {
     auto result = make_runner_stats_response(request, peak_resident_set_size_bytes(), 0,

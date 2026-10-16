@@ -132,6 +132,11 @@ ModelPackageCandidate load_manifest_candidate(const std::filesystem::path &packa
   validate_against_schema(schema, manifest);
   validate_manifest_file_paths(manifest, package_path);
   if (manifest.at("engine") == "qwen3-gguf") {
+    // The runner speaks every request in one package language; a second
+    // declared language would be selectable but spoken with the wrong tag.
+    const auto &languages = manifest.at("languages");
+    if (languages.size() != 1 || (languages.front() != "en" && languages.front() != "ru"))
+      throw std::runtime_error("qwen3-gguf package must declare exactly one language: en or ru");
     for (const auto *key : {"model", "mmproj", "voice", "voiceLicense"}) {
       const auto &files = manifest.at("files");
       if (!files.contains(key))

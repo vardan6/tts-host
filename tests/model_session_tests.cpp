@@ -218,6 +218,8 @@ int main(int argc, char **argv) {
       manifest["files"]["voice"] = "../outside.wav"; save(); rejects("escapes the package root");
       manifest["files"]["voice"] = "reference.wav";
       manifest["files"].erase("voiceLicense"); save(); rejects("requires /files/voiceLicense");
+      manifest["files"]["voiceLicense"] = "reference-license.txt";
+      manifest["languages"] = {"en", "ru"}; save(); rejects("exactly one language");
     }
 
     tts_host::ModelSessionManager sessions(runner_directory);

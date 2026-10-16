@@ -294,9 +294,22 @@ nlohmann::json make_runner_synthesize_response(const RunnerSynthesizeRequest &re
                       {"totalSampleFrames", total_sample_frames}}}};
 }
 
+nlohmann::json make_runner_synthesize_error_response(const RunnerSynthesizeRequest &request,
+                                                     std::string message) {
+  return {{"jsonrpc", "2.0"},
+          {"id", request.id},
+          {"error", {{"code", -32000}, {"message", std::move(message)}}}};
+}
+
 RunnerSynthesizeResponse parse_runner_synthesize_response(const nlohmann::json &message) {
   require_jsonrpc_2_0(message);
   const auto &id = required_member(message, "id");
+  if (message.contains("error")) {
+    const auto &error = message.at("error");
+    if (!error.is_object() || !error.contains("message") || !error.at("message").is_string())
+      throw RunnerProtocolError("runner synthesize error has invalid fields");
+    throw RunnerRequestError(error.at("message").get<std::string>());
+  }
   const auto &result = required_member(message, "result");
   const auto &sample_rate_hz = required_member(result, "sampleRateHz");
   const auto &channels = required_member(result, "channels");

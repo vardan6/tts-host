@@ -226,18 +226,21 @@ Point a separate evaluation config's `modelRegistry.directories` at that
 `startup.launchOnLogin` to `false`, then use `--model qwen-evaluation` with the
 normal `--synthesize`, `--out`, and `--stats` options. The package has one
 reference voice; `--language` on the packaging tool selects its primary `en`
-or `ru` language. Other synthesis speeds currently fail explicitly.
+or `ru` language. Other synthesis speeds are rejected with a reason; the model
+stays loaded.
 
-The opt-in real-model check verifies resident reuse, unload/reload, cancellation,
-and subsequent synthesis, writing a WAV without playing it:
+The opt-in real-model check verifies resident reuse, unsupported-speed rejection
+without restart, unload/reload, cancellation, and subsequent synthesis, writing
+a WAV without playing it:
 
 ```powershell
 ./build/Debug/tts-host-qwen-integration-tests.exe ./build/Debug/tts-host-qwen3-gguf-runner.exe path/to/models/qwen-evaluation/model.json qwen-check.wav
 ```
 
 Peak VRAM is reported as **unavailable**, not measured zero. Runner first-PCM
-latency and complete-sentence audible latency differ; the final bake-off still
-needs its full latency, throughput, memory, and listening checks. Linux developers
+latency and complete-sentence audible latency differ; making Qwen a profile
+default still needs the full latency, throughput, memory, and listening checks
+(ADR 0009). Linux developers
 can point the same CMake option at a matching b11029 shared-library runtime;
 its CUDA libraries must be resolvable by the system loader.
 
@@ -434,8 +437,8 @@ Not built yet:
 - Playback and the desktop UI on Linux and macOS — both are Windows-only, and
   other platforms fail with a clear not-implemented error
 - An installer
-- Russian and Armenian models; the English model bake-off (Kokoro vs. Qwen3-TTS
-  and alternatives) that settles the fast/quality defaults
+- Russian and Armenian models; promoting Qwen3-TTS to a fast/quality default
+  (it is bundled but not a default — ADR 0009)
 
 ## Documentation
 

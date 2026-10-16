@@ -71,8 +71,8 @@ end-of-stream flag. One request is active per runner initially. The protocol
 ADR defines the exact wire contract.
 
 `stats` reports peak RSS, VRAM, time-to-first-chunk, and sample count. It exists
-in the first protocol version because the model bake-off must measure those
-numbers, and building it later means building throwaway tooling first.
+in the first protocol version because default-model selection must measure
+those numbers, and building it later means building throwaway tooling first.
 
 A stub runner emitting synthetic audio with no model is a permanent in-repo
 fixture and the basis of the end-to-end test.
@@ -164,8 +164,8 @@ re-synthesizes those still-pending chunks with the new value. This avoids
 pitch-changing PCM resampling and needs no unreliable audio-to-word alignment.
 The setting travels as the typed runner `synthesize.params.speed` field; do not
 create a generic unvalidated engine-options map. Model-specific voice, accent,
-pronunciation, and sampling controls wait until the bake-off identifies real
-shipping capabilities and their typed contracts.
+pronunciation, and sampling controls wait until a shipped engine needs them and
+their typed contracts are defined.
 
 ### Utterance audio stream
 
@@ -490,9 +490,11 @@ decision must define discovery precedence without ambiguous duplicate model IDs.
   Apache-2.0 permits bundling. It is also the first engine implemented, because
   it is small, CPU-only, loads in about a second, and exercises the runner
   protocol without simultaneously debugging a GPU path.
-- **Qwen3-TTS** — the second bundled local model, alongside Kokoro. The
-  English bake-off selects 0.6B versus 1.7B, candidate quantization, the supported
-  runner implementation, and fast/quality defaults. English and Russian are
+- **Qwen3-TTS** — the second bundled local model, alongside Kokoro: 1.7B Base,
+  Q4_K_M/Q8_0 GGUF on llama.cpp b11029 CUDA, chosen without a bake-off per
+  [ADR 0009](../adr/0009-qwen-release-selection-without-bake-off.md). It is
+  selectable but not a profile default until it meets the default-model
+  criteria. English and Russian are
   intended uses; native-language acceptance remains separate. Ship weights,
   voices/tokenizer assets, and runtime dependencies together so neither
   installation nor first synthesis needs networking or a user-installed Python.
@@ -501,14 +503,11 @@ decision must define discovery precedence without ambiguous duplicate model IDs.
 - **MMS Armenian** — offline Armenian fallback, non-commercial licence shown
   clearly before download.
 
-Qwen evaluation starts with an explicitly provisional variant, quantization, and
-runtime selection, followed by end-to-end Host integration using a local model
-package. Run the final English bake-off through the Host, extending candidate
-runner support as needed before comparison. The provisional choice does not
-freeze release defaults; changing runtime after measurement may require rework.
-Catalogue publication follows selection of the final Qwen package.
+The evaluation selection below became the release package
+([ADR 0009](../adr/0009-qwen-release-selection-without-bake-off.md)); the
+bake-off it was meant to precede was not run.
 
-Provisional evaluation selection (approved by the user 2026-10-16):
+Evaluation selection (approved by the user 2026-10-16):
 start with **Qwen3-TTS-12Hz-1.7B-Base**, **Q4_K_M backbone** and **Q8_0
 mmproj**, using a pinned **llama.cpp CUDA** build and a packaged, licensed
 speaker-reference clip. Base uses a reference voice rather than CustomVoice's
@@ -530,25 +529,28 @@ Current upstream evidence:
   The adapter uses the incremental library API instead of wrapping that CLI;
   a whole-WAV subprocess wrapper would not demonstrate first-chunk latency.
 - [Qwen upstream](https://github.com/QwenLM/Qwen3-TTS) supplies PyTorch
-  CustomVoice and Base APIs. Retain PyTorch BF16 as the reference comparison;
-  the final bake-off must identify model family, voice, precision, runtime, and
-  cold/warm measurements explicitly. Neither candidate is a selected release
-  default yet.
+  CustomVoice and Base APIs. PyTorch is not shipped (ADR 0009); any later
+  default-model measurement must identify model family, voice, precision,
+  runtime, and cold/warm conditions explicitly.
 
 The trusted Qwen evaluation runner uses llama.cpp **b11029**, commit
 `5c53396b89b05666c9d57445b7616a35f6198a16`. Its optional CMake target uses
 pinned headers and an application-owned runtime directory configured with
 `TTS_HOST_QWEN_RUNTIME_DIR`; a model cannot select libraries or an executable.
 The Windows preparation tool pins the CUDA 12.4 x64 runtime archives by
-SHA-256. This is a developer evaluation layout, not a release-layout decision.
+SHA-256. This is a developer build layout; the release runner/runtime layout is
+still to be decided (see [Distribution](#distribution)).
 See [evaluation setup](../../README.md#qwen-evaluation).
 
 The adapter keeps weights resident between requests, resets generation state
 per sentence, and emits incremental PCM through the common runner protocol.
 Stop uses the Host's bounded process cancellation and discards incomplete
-sentences; failures use its existing one-restart recovery. Evaluation packages
-expose one declared reference voice and use their primary `en` or `ru` language.
-Synthesis speed is limited to 1.0; other speeds fail explicitly. `stats` reports
+sentences; engine failures use its existing one-restart recovery. An
+unsupported speed, a prompt exceeding the context, or a generation limit without
+end-of-speech is a request rejection (ADR 0002): the reason is reported and the
+model stays resident without a restart. Evaluation packages expose one declared
+reference voice and declare exactly one language, `en` or `ru`, which every
+request uses. Synthesis speed is limited to 1.0. `stats` reports
 RSS, time to first emitted PCM, and sample count, with VRAM measurement marked
 unavailable. These limits must be addressed or accounted for before release
 acceptance; first emitted runner PCM does not bypass the Host's complete-sentence
@@ -783,7 +785,7 @@ two is pending a decision on per-engine runner isolation (raised but not yet
 confirmed) — do not silently pick one shape when next touching this area.
 
 The portable zip remains a release format. The Windows installer must also
-ship both Kokoro and the bake-off-selected Qwen package plus their complete
+ship both Kokoro and the ADR 0009 Qwen package plus their complete
 runtimes; installation and first synthesis are offline. Packaging must fail
 if either required package or dependency is missing rather than silently ship a
 single-model distribution. The exact runner/runtime layout, writable model

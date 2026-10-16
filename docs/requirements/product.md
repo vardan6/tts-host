@@ -221,8 +221,10 @@ connected prose and sentence transitions.
   voices, and all required inference runtimes. With networking disabled,
   installation leaves both models discoverable and selectable, and each can
   synthesize speech on supported hardware without downloading dependencies.
-  The English bake-off selects the Qwen size, quantization, runtime, and
-  fast/quality profile defaults; it does not decide whether Qwen is bundled.
+  The bundled Qwen package is fixed by
+  [ADR 0009](../adr/0009-qwen-release-selection-without-bake-off.md); it becomes
+  a fast/quality profile default only by meeting the
+  [default-model criteria](#acceptance-criteria-for-default-model-selection).
 - Users can add supported model packages from a local folder or the curated
   catalogue. A local package is data-only and must pass manifest, containment,
   and engine-compatibility validation; importing it never executes package code.

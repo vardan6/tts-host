@@ -46,10 +46,14 @@ SynthesizedChunk RecoveringRunner::synthesize(const std::string &text, double sp
     try {
       if (cancelled_ && cancelled_()) throw RunnerCancelled();
       if (!session_) start();
+      const auto response = session_->send_request(
+          make_runner_synthesize_request(request_id_++, text, speed));
+      // Consume the stream first: a rejection (RunnerRequestError) leaves the
+      // session aligned and loaded, without a restart or retry.
+      const auto frames = session_->read_audio_stream_until_end();
       SynthesizedChunk chunk;
-      chunk.format = parse_runner_synthesize_response(session_->send_request(
-          make_runner_synthesize_request(request_id_++, text, speed)));
-      for (const auto &frame : session_->read_audio_stream_until_end())
+      chunk.format = parse_runner_synthesize_response(response);
+      for (const auto &frame : frames)
         chunk.pcm.insert(chunk.pcm.end(), frame.payload.begin(), frame.payload.end());
       return chunk;
     } catch (const RunnerCancelled &) {

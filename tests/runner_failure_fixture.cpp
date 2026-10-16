@@ -48,6 +48,18 @@ int main() {
         }
         if (mode.starts_with("death") && fail) return 9;
         if (mode.starts_with("hang") && fail) hang();
+        if (mode == "reject" && text.starts_with("reject")) {
+          // Partial PCM, end-of-stream, then a rejection reply (ADR 0002).
+          const auto output = tts_host::RunnerAudioOutput::open_inherited();
+          auto frame = tts_host::make_stub_runner_synthesis_frame();
+          frame.flags = 0;
+          output.write_frame(frame);
+          output.write_frame({frame.sequence_number + 1, 0, tts_host::kRunnerAudioFrameFlagEndOfStream, {}});
+          tts_host::write_stdout(tts_host::frame_runner_control_message(
+              tts_host::make_runner_synthesize_error_response(
+                  tts_host::parse_runner_synthesize_request(request), "fixture rejected the request")));
+          continue;
+        }
         response = tts_host::handle_stub_runner_synthesize_message(request);
         if (mode == "audio-first" || mode == "audio-first-partial-once" || mode == "audio-first-hang") {
           const std::filesystem::path marker(std::getenv("TTS_TEST_RUNNER_MARKER"));

@@ -40,6 +40,16 @@ int main(int argc, char **argv) {
                 << " ms to first PCM\n";
     }
     require(restarts == 0, "normal synthesis unexpectedly restarted the runner");
+    // Unsupported speed is a request rejection: no restart or model reload.
+    bool rejected = false;
+    try { runner.synthesize("This speed is not supported yet.", 1.5); }
+    catch (const tts_host::RunnerRequestError &error) {
+      rejected = std::string(error.what()).find("speed 1.0") != std::string::npos;
+    }
+    require(rejected && restarts == 0 && runner.loaded(),
+            "unsupported speed restarted the runner or lost its reason");
+    require(!runner.synthesize("Speech continues at normal speed.", 1.0).pcm.empty(),
+            "Qwen could not synthesize after a rejected request");
     runner.unload();
     require(!runner.loaded(), "unload left the session loaded");
     runner.prepare();

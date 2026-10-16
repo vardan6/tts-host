@@ -183,6 +183,13 @@ int main() {
                 parsed_synthesis_response.sample_format == "pcm_s16le" &&
                 parsed_synthesis_response.total_sample_frames == 4,
             "stub runner returned unexpected synthesis metadata");
+    try {
+      tts_host::parse_runner_synthesize_response(tts_host::make_runner_synthesize_error_response(
+          tts_host::parse_runner_synthesize_request(synthesize), "speed unsupported"));
+      throw std::runtime_error("synthesize rejection was accepted as a result");
+    } catch (const tts_host::RunnerRequestError &error) {
+      require(std::string(error.what()) == "speed unsupported", "rejection lost its reason");
+    }
 
     const auto speed_request = tts_host::make_runner_synthesize_request(7, "At speed.", 1.5);
     const auto parsed_speed_request = tts_host::parse_runner_synthesize_request(speed_request);

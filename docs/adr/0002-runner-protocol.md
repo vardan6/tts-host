@@ -40,6 +40,14 @@ buffers the complete sentence before playback/publication and discards it if
 either channel fails. Response-first runners remain supported. An empty final
 audio frame may carry `endOfStream` after the last PCM frame.
 
+A runner that cannot serve one `synthesize` request but remains loaded (for
+example an unsupported speed or over-long text) closes the audio stream with an
+`endOfStream` frame and then replies with a JSON-RPC `error` object carrying a
+string `message`. The Host discards any partial PCM and surfaces the message
+without restarting or retrying, because the same request cannot succeed. Any
+other runner failure is reported by exiting and uses the Host's one-restart
+recovery. (Review: [Qwen evaluation findings 1–2](../reviews/code-review-2026-10-16-qwen-evaluation.md).)
+
 The first call is `initialize`, which exchanges protocol version and engine
 capabilities. Capabilities include `load`, `unload`, `synthesize`, `cancel`, and
 `stats` — the last reporting peak RSS, VRAM, time-to-first-chunk, and sample
@@ -49,7 +57,7 @@ Stats may include `vramMeasurement: "unavailable"` when no reliable peak GPU
 memory measurement exists; `peakVramBytes` is then a placeholder and must not
 be displayed or evaluated as zero GPU use. Omission means `"peak"`, preserving
 the CPU runners' measured-zero convention. An unavailable measurement cannot
-satisfy the bake-off memory budget.
+satisfy a default-model memory criterion.
 
 `unload` takes **no params**: a runner process hosts exactly one model, so
 there is nothing to disambiguate. It releases the engine's model resources
