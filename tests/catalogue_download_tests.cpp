@@ -1,9 +1,11 @@
 #include "tts_host/catalogue_download.hpp"
+#include "tts_host/model_registry.hpp"
 
 #include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <iterator>
 #include <map>
 #include <stdexcept>
 #include <string>
@@ -60,6 +62,7 @@ tts_host::CatalogueEntry demo_entry() {
               20,  // strlen("fake voice embedding")
           },
       },
+      {},
   };
 }
 
@@ -201,6 +204,61 @@ void an_already_installed_entry_is_rejected_before_fetching(const std::filesyste
   throw std::runtime_error("downloading an already-installed entry was not rejected");
 }
 
+std::string sha256_of(const std::filesystem::path &work_dir, const std::string &contents) {
+  const auto path = work_dir / "sha256-input.bin";
+  {
+    std::ofstream output(path, std::ios::binary | std::ios::trunc);
+    output << contents;
+  }
+  return tts_host::sha256_hex_of_file(path);
+}
+
+// A qwen3-gguf entry installs every asset the registry requires: downloaded
+// GGUF files and reference audio plus the host-written voice provenance, all
+// declared in the generated manifest, so the package validates as Qwen.
+void a_qwen_download_installs_a_valid_qwen_package(const std::filesystem::path &schema_dir,
+                                                   const std::filesystem::path &work_dir) {
+  const auto registry = work_dir / "qwen" / "registry";
+  const auto config = make_config(work_dir / "qwen" / "config.json", schema_dir / "config.schema.json",
+                                  registry);
+  std::filesystem::create_directories(registry);
+
+  const std::map<std::string, std::string> bodies = {
+      {"https://example.invalid/model.gguf", "GGUF fake backbone"},
+      {"https://example.invalid/mmproj.gguf", "GGUF fake projector"},
+      {"https://example.invalid/reference.wav", "RIFF fake reference"},
+  };
+  const auto file = [&](const char *path, const char *key, const char *url) {
+    const auto &body = bodies.at(url);
+    return tts_host::CatalogueFile{path, key, url, sha256_of(work_dir, body), body.size()};
+  };
+  const tts_host::CatalogueEntry entry{
+      "qwen-download",
+      "Qwen Download",
+      "qwen3-gguf",
+      {"en"},
+      tts_host::CatalogueLicense{"Apache-2.0", "https://example.invalid/licence", false},
+      {
+          file("model.gguf", "model", "https://example.invalid/model.gguf"),
+          file("mmproj.gguf", "mmproj", "https://example.invalid/mmproj.gguf"),
+          file("reference.wav", "voice", "https://example.invalid/reference.wav"),
+      },
+      {tts_host::CatalogueGeneratedFile{"reference-license.txt", "voiceLicense", "public domain notice\n"}},
+  };
+
+  const auto installed =
+      tts_host::download_catalogue_entry(entry, registry, config, fake_fetcher(bodies), nullptr);
+  const auto package = tts_host::validate_model_package(installed.package_path);
+  require(package.engine == "qwen3-gguf", "the downloaded Qwen package has the wrong engine");
+  const auto &files = package.manifest.at("files");
+  require(files.at("mmproj") == "mmproj.gguf" && files.at("voice") == "reference.wav" &&
+              files.at("voiceLicense") == "reference-license.txt",
+          "the generated Qwen manifest does not declare its assets");
+  std::ifstream notice(installed.package_path / "reference-license.txt", std::ios::binary);
+  const std::string contents((std::istreambuf_iterator<char>(notice)), std::istreambuf_iterator<char>());
+  require(contents == "public domain notice\n", "the voice provenance notice was not written verbatim");
+}
+
 void sha256_matches_known_test_vectors() {
   const auto temp_dir = std::filesystem::temp_directory_path() / "tts-host-sha256-vector-test";
   std::filesystem::create_directories(temp_dir);
@@ -248,6 +306,7 @@ int main(int argc, char **argv) {
     a_partially_downloaded_file_is_resumed_not_refetched(schemas_directory, work_directory);
     a_checksum_mismatch_is_rejected_and_cleaned_up(schemas_directory, work_directory);
     an_already_installed_entry_is_rejected_before_fetching(schemas_directory, work_directory);
+    a_qwen_download_installs_a_valid_qwen_package(schemas_directory, work_directory);
   } catch (const std::exception &error) {
     std::cerr << error.what() << '\n';
     return 1;

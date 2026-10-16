@@ -456,7 +456,15 @@ client, above) -- Windows-first per product direction, so other platforms throw
 a clear not-implemented error until they get their own fetch client. A
 downloaded entry has no manifest on the remote host, so the host generates
 `model.json` itself from the catalogue entry's own metadata before installing
-through the same path a manual import takes.
+through the same path a manual import takes. An entry may also declare small
+host-written text files, such as a provenance notice the remote host does not
+serve; they follow the same containment and manifest-key rules.
+
+The Qwen entry is the ADR 0009 package with Hugging Face URLs pinned to a
+repository revision. Base clones a reference voice, so the entry downloads the
+public-domain [LJ Speech](https://keithito.com/LJ-Speech-Dataset/) clip
+LJ001-0001 from a revision-pinned mirror, and the host writes its
+`voiceLicense` provenance notice.
 
 ### Model installation and updates
 

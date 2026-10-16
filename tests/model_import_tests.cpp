@@ -2,6 +2,7 @@
 
 #include "tts_host/model_registry.hpp"
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -157,7 +158,36 @@ int main(int argc, char **argv) {
 
     expect_import_error(sources / "does-not-exist", config, "is not a directory");
 
-    require(registry_entry_count(registry) == 1,
+    // Settings import of a Qwen package: the same data-only copy, validated by
+    // the qwen3-gguf asset checks, so it is discovered as selectable.
+    const json qwen_overrides{
+        {"engine", "qwen3-gguf"},
+        {"files",
+         {{"model", "model.gguf"}, {"mmproj", "mmproj.gguf"}, {"voice", "reference.wav"},
+          {"voiceLicense", "reference-license.txt"}}}};
+    const auto qwen_source = make_source_package(sources, model_schema, "qwen-package", qwen_overrides, false);
+    write_file(qwen_source / "model.gguf", "GGUF fake backbone");
+    write_file(qwen_source / "mmproj.gguf", "GGUF fake projector");
+    write_file(qwen_source / "reference.wav", "RIFF fake reference");
+    write_file(qwen_source / "reference-license.txt", "public domain notice");
+    const auto qwen = tts_host::import_model_package(qwen_source, config);
+    const auto qwen_scan = tts_host::scan_model_registry(config);
+    require(std::any_of(qwen_scan.discovered_packages.begin(), qwen_scan.discovered_packages.end(),
+                        [](const tts_host::ModelPackageCandidate &package) {
+                          return package.id == "qwen-package" && package.engine == "qwen3-gguf";
+                        }),
+            "the imported Qwen package was not discovered as qwen3-gguf");
+    require(std::filesystem::is_regular_file(qwen.package_path / "reference-license.txt"),
+            "Qwen import did not copy the voice provenance");
+
+    const auto qwen_incomplete =
+        make_source_package(sources, model_schema, "qwen-incomplete", qwen_overrides, false);
+    write_file(qwen_incomplete / "model.gguf", "GGUF fake backbone");
+    write_file(qwen_incomplete / "reference.wav", "RIFF fake reference");
+    write_file(qwen_incomplete / "reference-license.txt", "public domain notice");
+    expect_import_error(qwen_incomplete, config, "mmproj");
+
+    require(registry_entry_count(registry) == 2,
             "a failed import left something behind in the model directory");
   } catch (const std::exception &error) {
     std::cerr << error.what() << '\n';

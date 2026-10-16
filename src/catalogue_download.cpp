@@ -165,6 +165,9 @@ void write_generated_manifest(const CatalogueEntry &entry, const std::filesystem
   for (const auto &file : entry.files) {
     files[file.manifest_key] = file.relative_path;
   }
+  for (const auto &file : entry.generated_files) {
+    files[file.manifest_key] = file.relative_path;
+  }
 
   const json manifest = {
       {"$schema", schema_reference(staging, config)},
@@ -259,6 +262,15 @@ ImportedModelPackage download_catalogue_entry(const CatalogueEntry &entry,
       std::filesystem::remove(file_path, remove_ec);
       throw std::runtime_error("checksum mismatch for " + file.relative_path + " of '" + entry.id +
                                "': expected " + file.sha256 + ", got " + actual_sha256);
+    }
+  }
+
+  for (const auto &file : entry.generated_files) {
+    const auto file_path = staging / file.relative_path;
+    std::filesystem::create_directories(file_path.parent_path());
+    std::ofstream output(file_path, std::ios::binary | std::ios::trunc);
+    if (!output || !output.write(file.contents.data(), static_cast<std::streamsize>(file.contents.size()))) {
+      throw std::runtime_error("unable to write " + file_path.string());
     }
   }
 

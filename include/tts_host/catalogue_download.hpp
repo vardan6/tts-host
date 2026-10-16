@@ -61,8 +61,9 @@ std::string sha256_hex_of_file(const std::filesystem::path &path);
 
 // Downloads every file of `entry` into `destination_root` (one of
 // modelRegistry.directories, chosen by the caller), verifies each against its
-// pinned SHA-256, writes a generated model.json -- the catalogue carries the
-// metadata, but the remote host serves only weight files -- and installs the
+// pinned SHA-256, writes the entry's generated files and a generated
+// model.json -- the catalogue carries the metadata, but the remote host serves
+// only weight files -- and installs the
 // verified package. A file already fully present on disk from a prior,
 // interrupted attempt is resumed rather than refetched; a file that fails
 // checksum verification is deleted so the next attempt refetches it from

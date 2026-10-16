@@ -26,6 +26,15 @@ struct CatalogueFile {
   std::uint64_t size_bytes = 0;
 };
 
+// A small text file the host writes into the package itself, such as a
+// provenance notice the remote host does not serve. Like CatalogueFile, it
+// occupies a key in the generated model.json's "files" object.
+struct CatalogueGeneratedFile {
+  std::string relative_path;
+  std::string manifest_key;
+  std::string contents;
+};
+
 struct CatalogueLicense {
   std::string name;
   std::string url;
@@ -41,6 +50,7 @@ struct CatalogueEntry {
   std::vector<std::string> languages;
   CatalogueLicense license;
   std::vector<CatalogueFile> files;
+  std::vector<CatalogueGeneratedFile> generated_files;
 };
 
 // The curated catalogue, compiled into the binary rather than fetched at

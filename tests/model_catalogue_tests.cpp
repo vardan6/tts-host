@@ -1,6 +1,8 @@
 #include "tts_host/model_catalogue.hpp"
 
+#include <algorithm>
 #include <iostream>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -19,6 +21,7 @@ tts_host::CatalogueEntry valid_entry() {
               "model.onnx", "model", "https://example.invalid/model.onnx",
               "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", 2048},
       },
+      {},
   };
 }
 
@@ -152,6 +155,50 @@ void manifest_keys_are_required_and_unique() {
                   "an entry with no \"model\" manifest key shipped");
 }
 
+// Host-written files (provenance notices) share the downloaded files'
+// containment and manifest-key rules, and must not be empty.
+void generated_files_follow_the_package_rules() {
+  const auto with_generated = [](std::string path, std::string key, std::string contents) {
+    auto entry = valid_entry();
+    entry.generated_files.push_back(
+        tts_host::CatalogueGeneratedFile{std::move(path), std::move(key), std::move(contents)});
+    return entry;
+  };
+  expect_valid({with_generated("notice.txt", "notice", "provenance")},
+               "an entry with a generated notice was rejected");
+  expect_rejected(with_generated("../notice.txt", "notice", "provenance"), "escapes the package root",
+                  "a generated file escaping the package root shipped");
+  expect_rejected(with_generated("model.onnx", "notice", "provenance"), "appears more than once",
+                  "a generated file overwriting a downloaded file shipped");
+  expect_rejected(with_generated("notice.txt", "model", "provenance"), "appears more than once",
+                  "a generated file reusing a downloaded file's manifest key shipped");
+  expect_rejected(with_generated("notice.txt", "", "provenance"), "declares no manifest key",
+                  "a generated file with no manifest key shipped");
+  expect_rejected(with_generated("notice.txt", "notice", ""), "is empty",
+                  "an empty generated file shipped");
+}
+
+// The bundled Qwen package (ADR 0009) is offered with every asset the
+// qwen3-gguf registry check requires, so a download validates as installed.
+void the_catalogue_offers_the_bundled_qwen_package() {
+  const auto &entries = tts_host::model_catalogue();
+  const auto qwen = std::find_if(entries.begin(), entries.end(), [](const tts_host::CatalogueEntry &entry) {
+    return entry.id == "qwen3-tts-1.7b";
+  });
+  if (qwen == entries.end()) {
+    throw std::runtime_error("the catalogue does not offer the bundled Qwen package");
+  }
+  if (qwen->engine != "qwen3-gguf" || qwen->languages != std::vector<std::string>{"en"}) {
+    throw std::runtime_error("the Qwen entry has the wrong engine or languages");
+  }
+  std::set<std::string> keys;
+  for (const auto &file : qwen->files) keys.insert(file.manifest_key);
+  for (const auto &file : qwen->generated_files) keys.insert(file.manifest_key);
+  if (keys != std::set<std::string>{"model", "mmproj", "voice", "voiceLicense"}) {
+    throw std::runtime_error("the Qwen entry does not declare exactly model, mmproj, voice, and voiceLicense");
+  }
+}
+
 void an_installed_entry_is_recognized_by_id() {
   const auto entry = valid_entry();
 
@@ -232,6 +279,8 @@ int main() {
     an_unpinned_or_malformed_checksum_is_rejected();
     a_file_path_escaping_the_package_is_rejected();
     manifest_keys_are_required_and_unique();
+    generated_files_follow_the_package_rules();
+    the_catalogue_offers_the_bundled_qwen_package();
     an_installed_entry_is_recognized_by_id();
     the_licence_notice_badges_non_commercial_terms();
     the_download_size_is_summed_and_readable();

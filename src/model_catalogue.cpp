@@ -11,6 +11,14 @@ namespace tts_host {
 
 namespace {
 
+constexpr const char *kLjSpeechReferenceNotice =
+    "Qwen reference voice: LJ Speech Dataset clip LJ001-0001, read by Linda Johnson\n"
+    "for LibriVox. The LJ Speech Dataset is in the public domain\n"
+    "(https://keithito.com/LJ-Speech-Dataset/). Fetched from the pinned mirror\n"
+    "https://huggingface.co/datasets/flexthink/ljspeech at revision\n"
+    "7367bcc33648be329bbef057cc97d0b83cadee11, SHA-256\n"
+    "4d2bd83ff0f7fe33491b03193abdf623f1b4cc2d8103972b33638d3607d86dc5.\n";
+
 // Kokoro-82M is also bundled with the application, so this entry is not how a
 // user first gets speech -- it is how the bundled package is restored or
 // installed into a second model directory. Its URLs and checksums are the
@@ -42,6 +50,47 @@ const std::vector<CatalogueEntry> &curated_entries() {
                   "d583ccff3cdca2f7fae535cb998ac07e9fcb90f09737b9a41fa2734ec44a8f0b",
                   522240,
               },
+          },
+          {},
+      },
+      // The bundled Qwen package (docs/adr/0009-qwen-release-selection-without-bake-off.md),
+      // also offered here so it can be installed into another model directory.
+      // Base clones a reference voice; the public-domain clip is fetched from a
+      // revision-pinned mirror, and the host writes its provenance notice.
+      CatalogueEntry{
+          "qwen3-tts-1.7b",
+          "Qwen3-TTS 1.7B Base (English)",
+          "qwen3-gguf",
+          {"en"},
+          CatalogueLicense{"Apache-2.0", "https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-Base", false},
+          {
+              CatalogueFile{
+                  "model.gguf",
+                  "model",
+                  "https://huggingface.co/ggml-org/Qwen3-TTS-12Hz-1.7B-Base-GGUF/resolve/"
+                  "ca27d74bc954b73dadab5b71ca265d87fc861a7c/Qwen3-TTS-12Hz-1.7B-Base-Q4_K_M.gguf",
+                  "8d18c94acb2addd042f97da63c98be144eafa76d0d9495177eab65130cf85129",
+                  1035965280,
+              },
+              CatalogueFile{
+                  "mmproj.gguf",
+                  "mmproj",
+                  "https://huggingface.co/ggml-org/Qwen3-TTS-12Hz-1.7B-Base-GGUF/resolve/"
+                  "ca27d74bc954b73dadab5b71ca265d87fc861a7c/mmproj-Qwen3-TTS-12Hz-1.7B-Base-Q8_0.gguf",
+                  "6fd65188839bcd6ecc91b277ad471e22a0edfada4699a0fe82f1165c18cfcce2",
+                  446422912,
+              },
+              CatalogueFile{
+                  "reference.wav",
+                  "voice",
+                  "https://huggingface.co/datasets/flexthink/ljspeech/resolve/"
+                  "7367bcc33648be329bbef057cc97d0b83cadee11/wavs/LJ001-0001.wav",
+                  "4d2bd83ff0f7fe33491b03193abdf623f1b4cc2d8103972b33638d3607d86dc5",
+                  425830,
+              },
+          },
+          {
+              CatalogueGeneratedFile{"reference-license.txt", "voiceLicense", kLjSpeechReferenceNotice},
           },
       },
   };
@@ -160,6 +209,25 @@ void validate_catalogue(const std::vector<CatalogueEntry> &entries) {
       }
       if (file.size_bytes == 0) {
         reject(entry.id, "file " + file.relative_path + " declares a zero download size");
+      }
+    }
+    for (const auto &file : entry.generated_files) {
+      if (escapes_package_root(file.relative_path)) {
+        reject(entry.id, "generated file path " +
+                             (file.relative_path.empty() ? "<empty>" : file.relative_path) +
+                             " escapes the package root");
+      }
+      if (!seen_paths.insert(file.relative_path).second) {
+        reject(entry.id, "file path " + file.relative_path + " appears more than once");
+      }
+      if (file.manifest_key.empty()) {
+        reject(entry.id, "generated file " + file.relative_path + " declares no manifest key");
+      }
+      if (!seen_manifest_keys.insert(file.manifest_key).second) {
+        reject(entry.id, "manifest key " + file.manifest_key + " appears more than once");
+      }
+      if (file.contents.empty()) {
+        reject(entry.id, "generated file " + file.relative_path + " is empty");
       }
     }
     if (!seen_manifest_keys.count("model")) {

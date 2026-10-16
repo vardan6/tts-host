@@ -37,11 +37,11 @@ Synthetic Copy adapter compatibility remains separate open work below.
   Q4_K_M/Q8_0 on llama.cpp b11029 CUDA ships, selectable but not a default —
   see [ADR 0009](docs/adr/0009-qwen-release-selection-without-bake-off.md).
 - Bundled two-model release, in order:
-  - [ ] **AFK — Qwen catalogue and local import:** add the ADR 0009 Qwen package
-    to the pinned catalogue and verify both Settings import and catalogue
-    installation produce a selectable, speaking model — see
-    [catalogue design](docs/design/architecture.md#download-catalogue) and
-    [distribution requirements](docs/requirements/product.md#distribution-and-usability).
+  - [x] **AFK — Qwen catalogue and local import:** the ADR 0009 package is in
+    the pinned catalogue with a public-domain LJ Speech reference voice — see
+    [catalogue design](docs/design/architecture.md#download-catalogue).
+    Windows Settings download/import of the real package is collected for
+    combined acceptance.
   - [x] **AFK — Qwen speech-speed control:** the `qwen3-gguf` runner applies
     the typed 0.5–2.0 multiplier with a streaming pitch-preserving time
     stretch — see

@@ -196,8 +196,11 @@ To see what the built-in download catalogue offers and what you already have:
 ```
 
 The catalogue is compiled into the binary with each file's HTTPS URL, pinned
-SHA-256, licence, and size, but downloading from it is not implemented yet —
-use the fetch script above.
+SHA-256, licence, and size. It offers Kokoro and the Qwen3-TTS 1.7B Base
+package (Q4_K_M backbone, Q8_0 mmproj, and the public-domain LJ Speech clip
+LJ001-0001 as its reference voice). The settings window downloads entries on
+Windows; other platforms list them only — use the fetch script above for
+Kokoro, and the Qwen evaluation steps below for Qwen.
 
 ## Qwen evaluation
 

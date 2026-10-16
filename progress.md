@@ -1,3 +1,14 @@
+- 2026-10-17: Qwen catalogue and local import — added `qwen3-tts-1.7b` (Q4_K_M
+  backbone, Q8_0 mmproj, revision-pinned Hugging Face URLs, 1414 MB) to the
+  compiled catalogue. Its reference voice is the public-domain LJ Speech clip
+  LJ001-0001 from a revision-pinned mirror; entries can now declare host-written
+  files, used for the `voiceLicense` provenance notice. Unit tests cover
+  generated-file rules, a Qwen-shaped download validating as `qwen3-gguf`, and
+  Settings-path import of a Qwen package. On Linux, a scratch harness installed
+  the real entry through `download_catalogue_entry` (cached GGUFs, live WAV,
+  real checksums); `--list-models` showed it and Host synthesis transcribed
+  correctly with Whisper. 48/48 CTests pass. Not yet exercised through
+  WinHTTP or Windows Settings.
 - 2026-10-17: Qwen speech-speed control — Qwen has no speed input, so the
   `qwen3-gguf` runner streams its PCM through a WSOLA time stretch
   (`time_stretch.cpp`, 30 ms frames, ±10 ms alignment) that keeps pitch and
