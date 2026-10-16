@@ -131,6 +131,22 @@ ModelPackageCandidate load_manifest_candidate(const std::filesystem::path &packa
   const auto schema = load_json_file(schema_path, "model schema");
   validate_against_schema(schema, manifest);
   validate_manifest_file_paths(manifest, package_path);
+  if (manifest.at("engine") == "qwen3-gguf") {
+    for (const auto *key : {"model", "mmproj", "voice", "voiceLicense"}) {
+      const auto &files = manifest.at("files");
+      if (!files.contains(key))
+        throw std::runtime_error(std::string("qwen3-gguf package requires /files/") + key);
+      const auto asset = package_path / path_from_utf8(files.at(key).get<std::string>());
+      if (!std::filesystem::is_regular_file(asset) || std::filesystem::file_size(asset) == 0)
+        throw std::runtime_error(std::string("qwen3-gguf package requires a non-empty file at /files/") + key);
+      if (std::string_view(key) == "model" || std::string_view(key) == "mmproj") {
+        std::ifstream input(asset, std::ios::binary);
+        char magic[4]{};
+        if (!input.read(magic, sizeof(magic)) || std::string_view(magic, 4) != "GGUF")
+          throw std::runtime_error(std::string("qwen3-gguf package requires GGUF at /files/") + key);
+      }
+    }
+  }
 
   return ModelPackageCandidate{
       manifest.at("id").get<std::string>(),

@@ -49,6 +49,23 @@ int main() {
         if (mode.starts_with("death") && fail) return 9;
         if (mode.starts_with("hang") && fail) hang();
         response = tts_host::handle_stub_runner_synthesize_message(request);
+        if (mode == "audio-first" || mode == "audio-first-partial-once" || mode == "audio-first-hang") {
+          const std::filesystem::path marker(std::getenv("TTS_TEST_RUNNER_MARKER"));
+          const bool partial = mode == "audio-first-hang" ||
+              (mode == "audio-first-partial-once" && !std::filesystem::exists(marker));
+          auto frame = tts_host::make_stub_runner_synthesis_frame();
+          frame.payload.assign(256 * 1024, 0x10);
+          frame.sample_count = static_cast<std::uint32_t>(frame.payload.size() / 2);
+          frame.flags = partial ? 0 : tts_host::kRunnerAudioFrameFlagEndOfStream;
+          tts_host::RunnerAudioOutput::open_inherited().write_frame(frame);
+          if (mode == "audio-first-hang") hang();
+          if (partial) { std::ofstream(marker) << "failed"; return 9; }
+          response = tts_host::make_runner_synthesize_response(
+              tts_host::parse_runner_synthesize_request(request), 24000, 1,
+              "pcm_s16le", frame.sample_count);
+          tts_host::write_stdout(tts_host::frame_runner_control_message(response));
+          continue;
+        }
         tts_host::write_stdout(tts_host::frame_runner_control_message(response));
         auto frame = tts_host::make_stub_runner_synthesis_frame();
         if ((mode.starts_with("partial") || mode == "audio-hang") && fail) {

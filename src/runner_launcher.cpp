@@ -9,6 +9,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <cwchar>
+#include <exception>
 #include <stdexcept>
 
 #ifdef _WIN32
@@ -460,6 +461,7 @@ RunnerSession::~RunnerSession() {
 
 void RunnerSession::check_wait() const {
   if (cancelled_ && cancelled_()) throw RunnerCancelled();
+  if (abort_io_) throw RunnerLaunchError("runner synthesis I/O interrupted");
   if (std::chrono::steady_clock::now() >= operation_deadline_)
     throw RunnerLaunchError("runner deadline exceeded; check model resources or try another model");
 }
@@ -473,7 +475,30 @@ nlohmann::json RunnerSession::send_request(const nlohmann::json &request,
               : method == "unload" ? deadlines_.shutdown : deadlines_.control;
   }
   operation_deadline_ = std::chrono::steady_clock::now() + timeout;
+  abort_io_ = false;
+  if (method == "synthesize" && pending_audio_)
+    throw RunnerLaunchError("previous synthesis audio was not consumed");
   write_all(frame_runner_control_message(request));
+  if (method == "synthesize") {
+    // A streaming engine can emit PCM before it knows the final sample count
+    // in its control reply. Drain both pipes to avoid blocking it on audio.
+    // The caller still receives only a complete sentence (ADR 0002).
+    std::exception_ptr audio_error;
+    std::thread reader([&] {
+      try { pending_audio_ = receive_audio_stream(); }
+      catch (...) { audio_error = std::current_exception(); abort_io_ = true; }
+    });
+    nlohmann::json response;
+    std::exception_ptr control_error;
+    try { response = receive_control_message(); }
+    catch (...) { control_error = std::current_exception(); abort_io_ = true; }
+    reader.join();
+    abort_io_ = false;
+    if (control_error || audio_error) pending_audio_.reset();
+    if (control_error) std::rethrow_exception(control_error);
+    if (audio_error) std::rethrow_exception(audio_error);
+    return response;
+  }
   return receive_control_message();
 }
 
@@ -494,6 +519,15 @@ nlohmann::json RunnerSession::receive_control_message() {
 }
 
 std::vector<RunnerAudioFrame> RunnerSession::read_audio_stream_until_end() {
+  if (pending_audio_) {
+    auto frames = std::move(*pending_audio_);
+    pending_audio_.reset();
+    return frames;
+  }
+  return receive_audio_stream();
+}
+
+std::vector<RunnerAudioFrame> RunnerSession::receive_audio_stream() {
   std::vector<RunnerAudioFrame> frames;
   bool saw_end_of_stream = false;
   while (!saw_end_of_stream) {

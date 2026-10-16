@@ -6,7 +6,7 @@ completed slices are recorded in `progress.md` and git history.
 Current state: the Windows desktop prototype and both branch reviews
 ([October 3](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#triage--2026-10-03),
 [October 14](docs/reviews/code-review-2026-10-14-checkpoint.md#triage--2026-10-14))
-are complete and merged into `main` (PR #2). Native acceptance is still open.
+are complete and merged into `main` (PR #2). Windows acceptance is complete on user confirmation (October 16).
 
 Native checks that require the user are collected for combined acceptance and
 do not block independent slices; never mark them passed from a build alone.
@@ -16,44 +16,67 @@ user approval. Platform ports are later work, Linux before macOS per
 
 ## Windows acceptance
 
-- [ ] **HITL — Combined Windows desktop acceptance:** one short native
-  walkthrough — see [design](docs/design/architecture.md#desktop-integration)
-  and [design](docs/design/architecture.md#playback-control-and-position).
-  Explain unsupported cases, collect UI feedback, and freeze default shortcuts.
-  - [ ] Selected/empty text in Windows Terminal/Codex, an editor's embedded
-    terminal, OneNote, and a browser; correct source targeting; any enabled
-    Copy adapters.
-  - [ ] Audible pause/resume, Stop clearing the queue, close-to-hide, seek
-    positions and generated boundaries, Settings-to-Now-Playing skip.
-  - [ ] Now Playing **Read selection** of a real external target; visual
-    acceptance of the taller window with read controls.
-  - [ ] Global shortcut toggle: checked tray menu, suspend/resume, and Settings
-    round trip.
-  - [ ] Live external `config.json` edit picked up by the running tray
-    ([design](docs/design/architecture.md#live-reload)).
-  - [ ] Live catalogue download in Settings, including Activity progress.
-  - [ ] Browser: article reading context-menu action reaches the Host; control
-    page state updates, pause/resume/stop, reconnect, and close-without-stop
-    ([design](docs/design/architecture.md#local-api)).
-  - [ ] First-run question and tab visuals; tray and application icon appearance.
-- [ ] **HITL — Windows start-at-login acceptance:** Settings toggle,
-  system-page round trip, and sign-in in an isolated Windows environment; do
-  not enable login startup on the developer machine — see
-  [design](docs/design/architecture.md#login-startup) and
-  [ADR 0008](docs/adr/0008-os-owned-login-startup.md).
-- [ ] **HITL — Re-measure the boundary gap:** rerun the audible
-  `tts-host-playback-gap-probe` after the per-utterance stream change, with the
-  user's permission — see
-  [design](docs/design/architecture.md#utterance-audio-stream).
+- [x] Combined Windows desktop acceptance — closed on user confirmation;
+  Ctrl+F8 retained and recorded UI findings accepted.
+- [x] Windows start-at-login acceptance — closed on user confirmation; agent
+  did not perform isolated-machine testing.
+- [x] Audible boundary gap — measured with the user; no audible artifacts reported.
+
+Evidence, measurements, and final closure are in the
+[October 16 acceptance report](docs/reviews/windows-acceptance-2026-10-16.md).
+Synthetic Copy adapter compatibility remains separate open work below.
 
 ## Product
 
-- [ ] **HITL — English model bake-off:** on the RTX 3070 Laptop GPU, measure
-  Kokoro, Qwen3-TTS 0.6B/1.7B at candidate quantizations, and the strongest
-  lightweight alternative against the
-  [acceptance criteria](docs/requirements/product.md#english-bake-off-corpus);
-  settle llama.cpp versus upstream PyTorch for the Qwen runner and select the
-  fast and quality defaults. `--stats` and the frozen corpus already exist.
+- [x] **AFK — Qwen end-to-end synthesis (evaluation):** local package discovery,
+  reference voice, resident synthesis, cancellation and recovery verified on
+  Windows and Linux with the provisional configuration — see
+  [engine design](docs/design/architecture.md#engines-and-models) and
+  [package design](docs/design/architecture.md#model-packages-and-discovery).
+- [ ] **HITL — English model bake-off:** after Qwen synthesis integration,
+  measure Kokoro, Qwen3-TTS 0.6B/1.7B at candidate quantizations, and the strongest
+  lightweight alternative through the Host on the RTX 3070 Laptop GPU against
+  the [acceptance criteria](docs/requirements/product.md#english-bake-off-corpus).
+  Extend candidate runner support and obtain reliable peak VRAM measurements
+  (the evaluation runner currently reports unavailable); compare llama.cpp versus
+  upstream PyTorch before selecting the final Qwen variant/runtime and fast/quality
+  defaults. `--stats` and the frozen corpus already exist — see
+  [engine design](docs/design/architecture.md#engines-and-models).
+  - [ ] **AFK — Qwen catalogue and local import:** add the selected Qwen package
+    to the pinned catalogue and verify both Settings import and catalogue
+    installation produce a selectable, speaking model — see
+    [catalogue design](docs/design/architecture.md#download-catalogue) and
+    [distribution requirements](docs/requirements/product.md#distribution-and-usability).
+  - [ ] **AFK — Qwen speech-speed control:** after selecting the release runner,
+    support the typed 0.5–2.0 synthesis multiplier and sentence-boundary speed
+    changes without pitch-changing resampling; the evaluation runner currently
+    accepts only 1.0 — see
+    [playback design](docs/design/architecture.md#playback-control-and-position).
+  - [ ] **HITL — Decide model revision and replacement storage:** capture the
+    content-revision representation, installed/portable storage and discovery
+    precedence, and runner/runtime release layout before replacement or
+    installer work — see
+    [update design](docs/design/architecture.md#model-installation-and-updates)
+    and [distribution design](docs/design/architecture.md#distribution).
+  - [ ] **AFK — Manual catalogue model update:** expose current/update status
+    and user-triggered staged replacement, preserving the working package on
+    failure and recovering interrupted commits; verify resident-model handling
+    and stable profile references — see
+    [update design](docs/design/architecture.md#model-installation-and-updates).
+  - [ ] **AFK — Two-model release package:** after the release-layout decision,
+    package Kokoro, selected Qwen, all voice/tokenizer assets and runtimes;
+    fail packaging if required files are absent and verify both models speak
+    from a clean extracted artifact with networking disabled — see
+    [distribution design](docs/design/architecture.md#distribution).
+  - [ ] **AFK — Offline Windows installer:** after the two-model artifact and
+    storage decision, install both models with no network or developer runtime;
+    preserve model updates and added packages across application upgrades — see
+    [distribution requirements](docs/requirements/product.md#distribution-and-usability)
+    and [distribution design](docs/design/architecture.md#distribution).
+  - [ ] **HITL — Clean Windows two-model acceptance:** verify offline install,
+    both models speaking, model selection, local/catalogue additions, and a
+    manual update on supported hardware — see
+    [distribution requirements](docs/requirements/product.md#distribution-and-usability).
 - [ ] **AFK — Synthetic Copy compatibility verification:** validate
   focused-control identification, modifier handling, and clipboard
   ownership/preservation for each adapter before enabling it. Unknown targets
@@ -98,20 +121,19 @@ and the `runners/`/`runtimes/` layout decided first.
 - [ ] **AFK — Linux and macOS login startup:** XDG Autostart (Background
   portal under Flatpak) and `SMAppService.mainApp`, with the same Settings
   states as Windows — see [design](docs/design/architecture.md#login-startup).
-- [ ] **AFK — Windows installer and release layout.**
+- Windows installer and release-layout work is tracked under the English
+  model bake-off above; do not duplicate its implementation slices.
 
 ## Open decisions
 
-- How to execute the English bake-off before candidate integration: use a
-  consistent external benchmark harness or implement TTS Host runners for the
-  candidates first. Qwen and LuxTTS were evaluated through external pilot paths;
-  neither is integrated in TTS Host.
 - Upstream PyTorch versus llama.cpp for the Qwen quality runner, and the
   quantization level — an output of the bake-off, not an input.
 - Whether a WSL headless distribution is published, or `--headless` merely makes
   it possible.
 - Whether played-text history may retain spoken text.
-- Release layout (`runners/`/`runtimes/`), before the installer and ports.
+- Release layout (`runners/`/`runtimes/`), installed/portable model storage and
+  duplicate-ID precedence, plus package content revisions before model updates
+  and the installer.
 
 ## Deliberately deferred
 

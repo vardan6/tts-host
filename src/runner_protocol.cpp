@@ -355,6 +355,9 @@ RunnerStatsResponse parse_runner_stats_response(const nlohmann::json &message) {
   const auto &peak_vram_bytes = required_member(result, "peakVramBytes");
   const auto &time_to_first_chunk_ms = required_member(result, "timeToFirstChunkMs");
   const auto &sample_count = required_member(result, "sampleCount");
+  const auto measurement = result.value("vramMeasurement", std::string("peak"));
+  if (measurement != "peak" && measurement != "unavailable")
+    throw RunnerProtocolError("runner stats response has invalid VRAM measurement status");
   if (id.is_null() || (!id.is_string() && !id.is_number_integer() && !id.is_number_unsigned()) ||
       !peak_rss_bytes.is_number_unsigned() || !peak_vram_bytes.is_number_unsigned() ||
       !time_to_first_chunk_ms.is_number() || !sample_count.is_number_unsigned()) {
@@ -364,7 +367,8 @@ RunnerStatsResponse parse_runner_stats_response(const nlohmann::json &message) {
           .peak_rss_bytes = peak_rss_bytes.get<std::uint64_t>(),
           .peak_vram_bytes = peak_vram_bytes.get<std::uint64_t>(),
           .time_to_first_chunk_ms = time_to_first_chunk_ms.get<double>(),
-          .sample_count = sample_count.get<std::uint64_t>()};
+          .sample_count = sample_count.get<std::uint64_t>(),
+          .vram_measurement = measurement};
 }
 
 std::vector<std::uint8_t> frame_runner_audio_message(const RunnerAudioFrame &frame) {

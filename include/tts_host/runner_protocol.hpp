@@ -109,6 +109,9 @@ struct RunnerStatsResponse {
   std::uint64_t peak_vram_bytes;
   double time_to_first_chunk_ms;
   std::uint64_t sample_count;
+  // Older CPU runners omit this, meaning a measured peak (including zero).
+  // A GPU runner must distinguish an unavailable measurement from zero use.
+  std::string vram_measurement = "peak";
 };
 
 RunnerStatsRequest parse_runner_stats_request(const nlohmann::json &message);

@@ -199,6 +199,48 @@ The catalogue is compiled into the binary with each file's HTTPS URL, pinned
 SHA-256, licence, and size, but downloading from it is not implemented yet —
 use the fetch script above.
 
+## Qwen evaluation
+
+The optional `qwen3-gguf` runner evaluates Qwen Base GGUF packages with CUDA.
+It is separate from the bundled release/installer work. On Windows, prepare the
+pinned runtime and enable the target (Python is a development tool only):
+
+```powershell
+python tools/fetch_qwen_evaluation_runtime.py --cache cache/qwen-downloads --out cache/qwen-runtime-b11029
+$qwenRuntime = (Resolve-Path cache/qwen-runtime-b11029).Path
+cmake -S . -B build "-DTTS_HOST_QWEN_RUNTIME_DIR=$qwenRuntime"
+cmake --build build --config Debug --parallel
+```
+
+Package local Qwen Base backbone/mmproj files and a reference recording whose
+use is permitted. Include a text file recording that reference's provenance
+and licence; the model's Apache-2.0 licence does not grant rights to an arbitrary
+recording:
+
+```powershell
+python tools/package_qwen_evaluation.py --model path/to/model.gguf --mmproj path/to/mmproj.gguf --voice path/to/reference.wav --voice-license path/to/reference-license.txt --out path/to/models/qwen-evaluation --id qwen-evaluation
+```
+
+Point a separate evaluation config's `modelRegistry.directories` at that
+`models` directory, set `audio.speechSpeed` to `1.0` and
+`startup.launchOnLogin` to `false`, then use `--model qwen-evaluation` with the
+normal `--synthesize`, `--out`, and `--stats` options. The package has one
+reference voice; `--language` on the packaging tool selects its primary `en`
+or `ru` language. Other synthesis speeds currently fail explicitly.
+
+The opt-in real-model check verifies resident reuse, unload/reload, cancellation,
+and subsequent synthesis, writing a WAV without playing it:
+
+```powershell
+./build/Debug/tts-host-qwen-integration-tests.exe ./build/Debug/tts-host-qwen3-gguf-runner.exe path/to/models/qwen-evaluation/model.json qwen-check.wav
+```
+
+Peak VRAM is reported as **unavailable**, not measured zero. Runner first-PCM
+latency and complete-sentence audible latency differ; the final bake-off still
+needs its full latency, throughput, memory, and listening checks. Linux developers
+can point the same CMake option at a matching b11029 shared-library runtime;
+its CUDA libraries must be resolvable by the system loader.
+
 ## Speak something
 
 All CLI usage requires `--headless`. Pick a text source

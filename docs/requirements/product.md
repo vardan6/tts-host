@@ -217,6 +217,20 @@ connected prose and sentence transitions.
   licence explicitly permits bundling.
 - The application can download supported models with progress, resumability,
   checksum verification, licence disclosure, and a destination choice.
+- The Windows installer includes Kokoro and one Qwen3-TTS variant, their
+  voices, and all required inference runtimes. With networking disabled,
+  installation leaves both models discoverable and selectable, and each can
+  synthesize speech on supported hardware without downloading dependencies.
+  The English bake-off selects the Qwen size, quantization, runtime, and
+  fast/quality profile defaults; it does not decide whether Qwen is bundled.
+- Users can add supported model packages from a local folder or the curated
+  catalogue. A local package is data-only and must pass manifest, containment,
+  and engine-compatibility validation; importing it never executes package code.
+- Model updates are explicitly initiated by the user from the curated catalogue.
+  A failed or interrupted update preserves the working package and selected
+  profile. Successful updates preserve the package identity and refresh its
+  available voices and capabilities. Automatic upstream model-version checks
+  and automatic model updates are outside this scope.
 - Portable mode keeps configuration, model packages, logs, and other mutable
   data in user-visible portable locations. Installed mode uses normal per-user
   OS data directories.

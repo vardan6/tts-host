@@ -207,6 +207,18 @@ int main() {
                 parsed_stats_response.sample_count == 4,
             "stats response did not round-trip");
 
+    {
+      auto unavailable = stats_response;
+      unavailable["result"]["vramMeasurement"] = "unavailable";
+      require(tts_host::parse_runner_stats_response(unavailable).vram_measurement == "unavailable",
+              "unknown GPU memory was treated as a measured zero");
+      unavailable["result"]["vramMeasurement"] = "estimated";
+      bool rejected = false;
+      try { tts_host::parse_runner_stats_response(unavailable); }
+      catch (const tts_host::RunnerProtocolError &) { rejected = true; }
+      require(rejected, "invalid GPU memory measurement status accepted");
+    }
+
     const auto stub_audio = tts_host::make_stub_runner_synthesis_frame();
     require(stub_audio.sequence_number == 0 && stub_audio.sample_count == 4 &&
                 stub_audio.flags == tts_host::kRunnerAudioFrameFlagEndOfStream &&

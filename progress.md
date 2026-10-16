@@ -1,3 +1,37 @@
+- 2026-10-16: Qwen end-to-end evaluation integration — optional native
+  `tts-host-qwen3-gguf-runner` uses pinned llama.cpp b11029 CUDA libraries,
+  Q4_K_M backbone, Q8_0 mmproj, and a declared reference voice. Added validated
+  data-only packages, reproducible runtime/package preparation tools, and
+  concurrent control/audio draining while retaining complete-sentence recovery.
+  47/47 CTests pass on Linux and native Windows Debug. Real GPU Host synthesis
+  produced valid two-sentence WAVs on both platforms; opt-in lifecycle checks
+  passed resident reuse, unload/reload, bounded cancellation without retry, and
+  synthesis afterward. Streaming fixture tests cover pre-reply PCM, partial
+  death/retry, timeout, and cancellation. Native lifecycle smoke timings were
+  4.659 s for 2.56 s audio (2.239 s first PCM), then 4.633 s for 2.96 s audio
+  (1.427 s first PCM); these are not the frozen-corpus bake-off and fail its
+  throughput target. Peak VRAM is explicitly unavailable, not measured zero;
+  synthesis speed remains 1.0 only, with release speed support tracked separately.
+  Evaluation config, package, WAVs and logs are under `build/qwen-evaluation/`;
+  normal model registry/config were not changed and the development Host was
+  restored with login startup disabled. Build/setup and opt-in checks:
+  [README](README.md#qwen-evaluation). Existing planning/acceptance changes and
+  this implementation remain uncommitted.
+
+- 2026-10-16: Provisional Qwen evaluation selection — user approved
+  Qwen3-TTS-12Hz-1.7B-Base with Q4_K_M backbone, Q8_0 mmproj, and llama.cpp
+  CUDA for initial Host integration. Final release defaults remain a bake-off
+  output. Streaming, cancellation, resident reuse, and native Windows feasibility
+  must be verified before committing to the adapter; no Qwen implementation or
+  new runtime acceptance is claimed. See [engine design](docs/design/architecture.md#engines-and-models).
+
+- 2026-10-15: Captured two-model distribution plan on `feature/bundled-models`:
+  Kokoro + Qwen, fully offline Windows installer, user-triggered compiled-catalogue
+  model updates, and local/catalogue additions. Requirements/design updated;
+  roadmap split into dependency-ordered slices. Qwen variant/runtime and model
+  revision/storage/release layout remain open; no implementation or acceptance
+  is claimed.
+
 - 2026-10-14: Merged and closed `roadmap-slices` — PR #2 merged into `main`
   as `13d5aa9` with the user's approval; branch deleted locally and on origin.
   `roadmap.md` trimmed to open work only (completed slices live here and in
@@ -368,3 +402,13 @@
 - 2026-10-08: Playback tab tuning — schema adds `audio.bufferMilliseconds`, `sentencePauseMilliseconds`, `lookaheadSentences`; the Playback tab edits them and **Reset to defaults** restores only that tab. The pipeline now appends each synthesized sentence to retained history at once, keeps up to the configured depth of unheard sentences, discards all of them on a speed change at first launch, and inserts the pause as retained source PCM. Pause and lookahead come from the controller (live after Settings publishes); the buffer applies per utterance. Pipeline and Settings regressions; 46/46 CTests on Windows and Linux. Native view of the new controls not yet done.
 
 - 2026-10-13: Unplanned fixes (uncommitted) — GUI-launched Host has no stderr, so runner launch failed with "could not duplicate a handle for runner inheritance (Windows error 6)"; runner stderr now falls back to `NUL`. New process-wide `activity_log` (bounded, in-memory, timestamped) records speech failures, runner restarts, eager-load failures, tray error dialogs, hotkey warnings, selection-capture results, and Settings messages; Settings replays it on open, polls every 500 ms, and its pane is renamed "Activity log". 46/46 CTests on Windows; `tts-host.exe` not re-linked (was running) and not natively verified.
+
+- 2026-10-16: Guided Windows boundary-gap re-measure — shared stream detected no gaps at the 4 ms threshold; separate calls median 73 ms; user heard no gaps, clicks, or interruptions. Five loopback discontinuities retained as a caveat. Partial desktop acceptance and UI findings recorded in [results](docs/reviews/windows-acceptance-2026-10-16.md); remaining Windows checks stay open.
+
+- 2026-10-16: Windows login startup acceptance — closed at the user's explicit request based on their confirmation; agent did not perform isolated-machine testing or change developer-machine startup registration. See [acceptance record](docs/reviews/windows-acceptance-2026-10-16.md#login-startup--user-confirmed-complete).
+
+- 2026-10-16: Partial Windows desktop acceptance — OneNote direct/saved-target selection and empty-selection feedback, external development-config reload, audible playback controls/seek, close-to-hide, and user-confirmed tray shortcut toggle verified; Ctrl+F8 retained. Queue clearing, tray reopening/Settings agreement, terminal/browser/download checks and visual findings remain open in the [acceptance report](docs/reviews/windows-acceptance-2026-10-16.md).
+
+- 2026-10-16: Additional desktop confirmation — user confirmed tray hide/reopen and copy-first reading across Terminal/Codex, embedded terminal, OneNote, and browser. Development `clipboardOnly` requires manual copy; these results do not establish direct capture in every app. Remaining checks updated in the acceptance report.
+
+- 2026-10-16: Windows acceptance completed — user checked all interactive checklist items and explicitly accepted all as done, closing combined desktop acceptance and accepting the recorded UI findings. Login startup and guided gap acceptance are also complete. No additional agent testing or code fixes claimed; synthetic Copy compatibility remains separate. See [final closure](docs/reviews/windows-acceptance-2026-10-16.md#final-closure--all-checks-accepted).

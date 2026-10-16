@@ -425,6 +425,14 @@ also report built-in voices using the same host-facing representation.
 Request-provided speaker prompts or cloning samples are synthesis inputs, not
 installed voices, and are never added to a model package implicitly.
 
+For the `qwen3-gguf` evaluation adapter, `files` must declare non-empty local
+`model` and `mmproj` GGUF files, `voice` reference audio, and `voiceLicense`
+provenance/licence text. Registry validation checks their containment,
+existence, and GGUF magic; the runner checks decoder/model compatibility on
+load. Its protocol `modelPath` names the package's `model.json` descriptor so
+the runner can validate and resolve all assets together; `voicePath`, if
+present, must match the declared reference. Packages remain data-only.
+
 ### Download catalogue
 
 The curated catalogue of downloadable models, with pinned checksums, is compiled
@@ -437,7 +445,8 @@ change faster than releases.
 
 Catalogue entries may carry any licence provided the terms are displayed before
 download and non-commercial ones are badged; the project links to weights rather
-than redistributing them. Manual installation by placing a folder in `models/`
+than redistributing optional packages. The two bundled models must separately
+meet redistribution terms. Manual installation by placing a folder in `models/`
 always works regardless of the catalogue.
 
 The outbound HTTPS fetch is WinHTTP, not Boost.Beast (the loopback API server's
@@ -447,6 +456,33 @@ downloaded entry has no manifest on the remote host, so the host generates
 `model.json` itself from the catalogue entry's own metadata before installing
 through the same path a manual import takes.
 
+### Model installation and updates
+
+Bundled, locally imported, and catalogue-downloaded models use the same
+validated data-only package and registry contracts. Local import and catalogue
+addition already have Settings paths; extend those paths for Qwen rather than
+introducing a second registry or downloader. Unsupported engine packages remain
+visible with an actionable reason and never install executable runner code.
+
+Model updates are user-triggered replacements using the build's compiled,
+checksum-pinned catalogue. Catalogue freshness remains tied to application
+releases; no new upstream polling or signed remote catalogue is introduced.
+Identify package content revisions separately from stable model IDs so Settings
+can distinguish installed/current/update-available packages. Choose the concrete
+revision representation before implementing replacement.
+
+Download and validate replacement content in staging before committing it.
+Serialize replacement with model loading, and release any resident runner's
+handles before switching the package. An active utterance must finish or be
+explicitly stopped before replacement; never switch weights underneath it.
+Preserve the working package on validation, download, or commit failure and
+recover an interrupted replacement on the next start. Keep configuration
+references stable, rescan after success, and report unavailable selected voices
+rather than silently choosing a different voice. Replacement applies equally to
+bundled packages; installed-mode updates belong in writable per-user storage,
+not the application's protected installation directory. The release-layout
+decision must define discovery precedence without ambiguous duplicate model IDs.
+
 ## Engines and models
 
 - **Kokoro-82M** — bundled with the application at full precision (ONNX, roughly
@@ -454,14 +490,69 @@ through the same path a manual import takes.
   Apache-2.0 permits bundling. It is also the first engine implemented, because
   it is small, CPU-only, loads in about a second, and exercises the runner
   protocol without simultaneously debugging a GPU path.
-- **Qwen3-TTS** — the quality default from the bake-off onward, for English and
-  Russian, downloaded in-app. Whether it runs via llama.cpp GGUF or upstream
-  PyTorch, and at what quantization, is decided by measurement in roadmap
-  slice 2, not in advance; GGUF is quantized by definition, which is precisely
-  what the comparison has to weigh.
+- **Qwen3-TTS** — the second bundled local model, alongside Kokoro. The
+  English bake-off selects 0.6B versus 1.7B, candidate quantization, the supported
+  runner implementation, and fast/quality defaults. English and Russian are
+  intended uses; native-language acceptance remains separate. Ship weights,
+  voices/tokenizer assets, and runtime dependencies together so neither
+  installation nor first synthesis needs networking or a user-installed Python.
+  Additional Qwen variants may be offered through the catalogue once supported.
 - **LuxTTS** — optional lightweight voice-cloning comparison.
 - **MMS Armenian** — offline Armenian fallback, non-commercial licence shown
   clearly before download.
+
+Qwen evaluation starts with an explicitly provisional variant, quantization, and
+runtime selection, followed by end-to-end Host integration using a local model
+package. Run the final English bake-off through the Host, extending candidate
+runner support as needed before comparison. The provisional choice does not
+freeze release defaults; changing runtime after measurement may require rework.
+Catalogue publication follows selection of the final Qwen package.
+
+Provisional evaluation selection (approved by the user 2026-10-16):
+start with **Qwen3-TTS-12Hz-1.7B-Base**, **Q4_K_M backbone** and **Q8_0
+mmproj**, using a pinned **llama.cpp CUDA** build and a packaged, licensed
+speaker-reference clip. Base uses a reference voice rather than CustomVoice's
+named built-in speakers. This matches the closest-to-real-time local pilot:
+1.22 RTF versus PyTorch BF16 CustomVoice at 3.28 (0.6B) and 3.66 (1.7B), as
+recorded in `progress.md` (September 18). Those WSL pilots differ in model
+family and execution path, so they motivate integration order rather than
+establish runtime superiority or satisfy native Windows acceptance. All missed
+the RTF limit; integration alone is not expected to fix throughput.
+
+Current upstream evidence:
+- [llama.cpp TTS usage](https://github.com/ggml-org/llama.cpp/blob/master/tools/tts/README.md)
+  documents Qwen Base synthesis and speaker-reference input.
+- [Published GGUF files](https://huggingface.co/ggml-org/Qwen3-TTS-12Hz-1.7B-Base-GGUF/tree/main)
+  list the Q4_K_M backbone (1.04 GB) and Q8_0 mmproj (446 MB); file sizes are
+  not peak VRAM measurements.
+- [Upstream demo source](https://github.com/ggml-org/llama.cpp/blob/master/tools/tts/tts.cpp)
+  describes itself as experimental and retrieves output after generation.
+  The adapter uses the incremental library API instead of wrapping that CLI;
+  a whole-WAV subprocess wrapper would not demonstrate first-chunk latency.
+- [Qwen upstream](https://github.com/QwenLM/Qwen3-TTS) supplies PyTorch
+  CustomVoice and Base APIs. Retain PyTorch BF16 as the reference comparison;
+  the final bake-off must identify model family, voice, precision, runtime, and
+  cold/warm measurements explicitly. Neither candidate is a selected release
+  default yet.
+
+The trusted Qwen evaluation runner uses llama.cpp **b11029**, commit
+`5c53396b89b05666c9d57445b7616a35f6198a16`. Its optional CMake target uses
+pinned headers and an application-owned runtime directory configured with
+`TTS_HOST_QWEN_RUNTIME_DIR`; a model cannot select libraries or an executable.
+The Windows preparation tool pins the CUDA 12.4 x64 runtime archives by
+SHA-256. This is a developer evaluation layout, not a release-layout decision.
+See [evaluation setup](../../README.md#qwen-evaluation).
+
+The adapter keeps weights resident between requests, resets generation state
+per sentence, and emits incremental PCM through the common runner protocol.
+Stop uses the Host's bounded process cancellation and discards incomplete
+sentences; failures use its existing one-restart recovery. Evaluation packages
+expose one declared reference voice and use their primary `en` or `ru` language.
+Synthesis speed is limited to 1.0; other speeds fail explicitly. `stats` reports
+RSS, time to first emitted PCM, and sample count, with VRAM measurement marked
+unavailable. These limits must be addressed or accounted for before release
+acceptance; first emitted runner PCM does not bypass the Host's complete-sentence
+playback buffer or prove its audible latency target.
 
 Note that ONNX is a format and runtime, not a quality tier: the same weights in
 ONNX and PyTorch produce the same audio. Quantization, not format, is where
@@ -691,14 +782,19 @@ not yet the separate `runtimes/`/`runners/` split shown here. Reconciling the
 two is pending a decision on per-engine runner isolation (raised but not yet
 confirmed) — do not silently pick one shape when next touching this area.
 
-The first release ships the zip only. An installer — shortcuts, start-at-login,
-uninstall entry — comes with the cross-platform release work. Its startup choice
+The portable zip remains a release format. The Windows installer must also
+ship both Kokoro and the bake-off-selected Qwen package plus their complete
+runtimes; installation and first synthesis are offline. Packaging must fail
+if either required package or dependency is missing rather than silently ship a
+single-model distribution. The exact runner/runtime layout, writable model
+storage, and redistribution notices are decided before installer implementation.
+Its startup choice
 follows [Login startup](#login-startup): pre-ticked from
 `startup.launchOnLogin`, written to the OS registration, removed on uninstall. Unzip-and-run
 needs no code signing, whereas an unsigned installer triggers SmartScreen, which
 is worse for a non-developer than a folder they double-click.
 
-Updates are manual replacement. The host checks for a newer release and links to
+Application updates are manual replacement. The host checks for a newer release and links to
 it; it does not swap its own files while holding loaded models and a live
 service.
 

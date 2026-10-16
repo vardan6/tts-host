@@ -43,6 +43,9 @@ ModelRunnerSelection resolve_model_runner_selection(
   selection.engine = package->engine;
   selection.runner_path = std::move(runner_path);
   selection.model_path = package->package_path / path_from_utf8(files.at("model").get<std::string>());
+  // Qwen needs the backbone, mmproj, and reference voice. Pass its validated
+  // manifest as the engine's load descriptor without executing package code.
+  if (package->engine == "qwen3-gguf") selection.model_path = package->manifest_path;
   if (files.contains("voice")) {
     selection.voice_path = package->package_path / path_from_utf8(files.at("voice").get<std::string>());
   }

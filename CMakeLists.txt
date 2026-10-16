@@ -209,6 +209,44 @@ add_executable(
   src/stub_runner_main.cpp
 )
 
+# Optional evaluation integration. The runtime is an application-owned b11029
+# directory, never supplied by a model manifest. Release packaging is separate.
+set(TTS_HOST_QWEN_RUNTIME_DIR "" CACHE PATH "Pinned llama.cpp b11029 runtime for Qwen evaluation")
+if(TTS_HOST_QWEN_RUNTIME_DIR)
+  FetchContent_Declare(qwen_llama_headers
+    URL https://codeload.github.com/ggml-org/llama.cpp/tar.gz/5c53396b89b05666c9d57445b7616a35f6198a16
+    URL_HASH SHA256=93863c965446d6901147d9c316159cba91c3a18669db8d5aebed4536ee5ccf0b
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+  FetchContent_Populate(qwen_llama_headers)
+  add_executable(tts-host-qwen3-gguf-runner
+    src/qwen_runner_main.cpp src/model_registry.cpp src/process_stats.cpp
+    src/runner_audio_output.cpp src/runner_control_io.cpp src/runner_protocol.cpp)
+  target_include_directories(tts-host-qwen3-gguf-runner PRIVATE include
+    ${qwen_llama_headers_SOURCE_DIR}/include ${qwen_llama_headers_SOURCE_DIR}/ggml/include
+    ${qwen_llama_headers_SOURCE_DIR}/tools/mtmd)
+  file(TO_CMAKE_PATH "${TTS_HOST_QWEN_RUNTIME_DIR}" QWEN_RUNTIME_PATH)
+  target_compile_definitions(tts-host-qwen3-gguf-runner PRIVATE
+    TTS_QWEN_RUNTIME_DIR="${QWEN_RUNTIME_PATH}")
+  target_link_libraries(tts-host-qwen3-gguf-runner PRIVATE
+    nlohmann_json::nlohmann_json ${JSON_SCHEMA_VALIDATOR_TARGET} ${CMAKE_DL_LIBS})
+  if(WIN32)
+    target_link_libraries(tts-host-qwen3-gguf-runner PRIVATE psapi)
+  endif()
+  if(MSVC)
+    target_compile_options(tts-host-qwen3-gguf-runner PRIVATE /W4 /permissive-)
+  else()
+    target_compile_options(tts-host-qwen3-gguf-runner PRIVATE -Wall -Wextra -Wpedantic)
+  endif()
+  if(BUILD_TESTING)
+    add_executable(tts-host-qwen-integration-tests tests/qwen_integration_tests.cpp
+      src/recovering_runner.cpp src/runner_launcher.cpp src/runner_protocol.cpp
+      src/activity_log.cpp src/wav_writer.cpp)
+    target_include_directories(tts-host-qwen-integration-tests PRIVATE include)
+    target_link_libraries(tts-host-qwen-integration-tests PRIVATE nlohmann_json::nlohmann_json)
+    add_dependencies(tts-host-qwen-integration-tests tts-host-qwen3-gguf-runner)
+  endif()
+endif()
+
 target_include_directories(tts-host-stub-runner PRIVATE include)
 target_link_libraries(tts-host-stub-runner PRIVATE nlohmann_json::nlohmann_json)
 if(WIN32)
