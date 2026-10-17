@@ -47,30 +47,38 @@ Synthetic Copy adapter compatibility remains separate open work below.
     stretch — see
     [playback design](docs/design/architecture.md#playback-control-and-position).
     Listening check on Windows is collected for combined acceptance.
-  - [ ] **HITL — Decide model revision and replacement storage:** capture the
-    content-revision representation, installed/portable storage and discovery
-    precedence, and runner/runtime release layout before replacement or
-    installer work — see
+  - [x] **HITL — Decide model revision and replacement storage:** file
+    fingerprint revisions, read-only bundled plus per-user storage,
+    catalogue-match precedence, one previous version kept, per-runner folders,
+    CUDA only — see
+    [ADR 0010](docs/adr/0010-model-revisions-storage-and-release-layout.md).
+  - [ ] **AFK — Model revisions and two-tier discovery:** record the revision
+    on catalogue install, scan bundled and per-user tiers with ADR 0010
+    precedence, and show local/current/update-available/superseded in Settings
+    — see
     [update design](docs/design/architecture.md#model-installation-and-updates)
-    and [distribution design](docs/design/architecture.md#distribution).
-    The layout must replace the Qwen runner's compiled-in absolute runtime path
-    and process-wide DLL search setup — see
-    [Qwen review finding 7](docs/reviews/code-review-2026-10-16-qwen-evaluation.md#triage--2026-10-16).
-  - [ ] **AFK — Manual catalogue model update:** expose current/update status
-    and user-triggered staged replacement, preserving the working package on
-    failure and recovering interrupted commits; verify resident-model handling
-    and stable profile references — see
-    [update design](docs/design/architecture.md#model-installation-and-updates).
-  - [ ] **AFK — Two-model release package:** after the release-layout decision,
-    package Kokoro, selected Qwen, all voice/tokenizer assets and runtimes;
-    fail packaging if required files are absent and verify both models speak
-    from a clean extracted artifact with networking disabled — see
-    [distribution design](docs/design/architecture.md#distribution).
-  - [ ] **AFK — Offline Windows installer:** after the two-model artifact and
-    storage decision, install both models with no network or developer runtime;
+    and [ADR 0010](docs/adr/0010-model-revisions-storage-and-release-layout.md).
+  - [ ] **AFK — Manual catalogue model update:** user-triggered staged
+    replacement keeping one previous version with Revert/Delete, preserving the
+    working package on failure and recovering interrupted commits; verify
+    resident-model handling and stable profile references — see
+    [update design](docs/design/architecture.md#model-installation-and-updates)
+    and [ADR 0010](docs/adr/0010-model-revisions-storage-and-release-layout.md).
+  - [ ] **AFK — Two-model release package:** move runners into
+    `runners/<engine>/` with their libraries beside them, removing the Qwen
+    compiled-in runtime path and DLL search setup; package Kokoro, selected
+    Qwen, all voice/tokenizer assets, runtimes, and licences; fail packaging if
+    required files are absent and verify both models speak from a clean
+    extracted artifact with networking disabled — see
+    [distribution design](docs/design/architecture.md#distribution) and
+    [ADR 0010](docs/adr/0010-model-revisions-storage-and-release-layout.md).
+  - [ ] **AFK — Offline Windows installer:** per-user, after the two-model
+    artifact, install both models with no network or developer runtime;
     preserve model updates and added packages across application upgrades — see
     [distribution requirements](docs/requirements/product.md#distribution-and-usability)
     and [distribution design](docs/design/architecture.md#distribution).
+    Bundled models stay read-only; additions live in per-user storage — see
+    [ADR 0010](docs/adr/0010-model-revisions-storage-and-release-layout.md).
   - [ ] **HITL — Clean Windows two-model acceptance:** verify offline install,
     both models speaking, model selection, local/catalogue additions, and a
     manual update on supported hardware — see
@@ -96,8 +104,9 @@ Native Linux and Apple Silicon macOS artifacts plus a Windows installer, using
 the same configuration, manifests, API, and conformance tests. Findings and a
 proposed sequence are in the
 [release packaging audit](docs/reviews/2026-08-31-release-packaging-audit.md);
-its release-root architecture is a recommendation, so adopting it needs an ADR
-and the `runners/`/`runtimes/` layout decided first.
+the runner layout is decided by
+[ADR 0010](docs/adr/0010-model-revisions-storage-and-release-layout.md)
+(per-runner folders, not a shared `runtimes/`).
 
 - [ ] **AFK — Native Linux selection adapter:** KDE Plasma Wayland direct
   accessibility capture and actionable unavailable-capability reporting; use
@@ -132,9 +141,6 @@ and the `runners/`/`runtimes/` layout decided first.
 - Whether a WSL headless distribution is published, or `--headless` merely makes
   it possible.
 - Whether played-text history may retain spoken text.
-- Release layout (`runners/`/`runtimes/`), installed/portable model storage and
-  duplicate-ID precedence, plus package content revisions before model updates
-  and the installer.
 
 ## Deliberately deferred
 

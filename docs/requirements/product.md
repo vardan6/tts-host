@@ -231,7 +231,9 @@ connected prose and sentence transitions.
 - Model updates are explicitly initiated by the user from the curated catalogue.
   A failed or interrupted update preserves the working package and selected
   profile. Successful updates preserve the package identity and refresh its
-  available voices and capabilities. Automatic upstream model-version checks
+  available voices and capabilities. The user can revert an updated package to
+its previous version. Locally imported packages are never offered updates.
+Automatic upstream model-version checks
   and automatic model updates are outside this scope.
 - Portable mode keeps configuration, model packages, logs, and other mutable
   data in user-visible portable locations. Installed mode uses normal per-user

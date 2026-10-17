@@ -477,9 +477,14 @@ visible with an actionable reason and never install executable runner code.
 Model updates are user-triggered replacements using the build's compiled,
 checksum-pinned catalogue. Catalogue freshness remains tied to application
 releases; no new upstream polling or signed remote catalogue is introduced.
-Identify package content revisions separately from stable model IDs so Settings
-can distinguish installed/current/update-available packages. Choose the concrete
-revision representation before implementing replacement.
+Package content revisions are separate from stable model IDs so Settings can
+show installed/current/update-available. The representation, storage tiers,
+duplicate-ID precedence, and previous-version retention are fixed by
+[ADR 0010](../adr/0010-model-revisions-storage-and-release-layout.md): a
+host-computed file fingerprint in `model.json`, read-only bundled models plus a
+writable per-user tier in installed mode, catalogue-match-wins precedence, and
+one previous version kept for Revert. Local imports carry no revision and are
+never offered updates.
 
 Download and validate replacement content in staging before committing it.
 Serialize replacement with model loading, and release any resident runner's
@@ -489,9 +494,8 @@ Preserve the working package on validation, download, or commit failure and
 recover an interrupted replacement on the next start. Keep configuration
 references stable, rescan after success, and report unavailable selected voices
 rather than silently choosing a different voice. Replacement applies equally to
-bundled packages; installed-mode updates belong in writable per-user storage,
-not the application's protected installation directory. The release-layout
-decision must define discovery precedence without ambiguous duplicate model IDs.
+bundled packages; installed-mode updates go to the per-user tier and never write
+the application's `models/`.
 
 ## Engines and models
 
@@ -779,31 +783,39 @@ it slower to start and harder to inspect, update, and repair.
 ```text
 tts-host/
   tts-host.exe
-  runtimes/
   runners/
+    kokoro/        runner + ONNX Runtime
+    qwen3-gguf/    runner + llama.cpp, ggml, CUDA libraries
   schemas/
   models/
     kokoro-en-v1/
+    qwen3-tts-1.7b/
+  licenses/
   config.json
-  portable.marker
+  portable.marker  (portable archive only)
 ```
+
+Each runner finds its private libraries beside itself (Windows
+executable-directory DLL search, Linux rpath `$ORIGIN`); no runner carries a
+compiled-in runtime path or changes the process DLL search. Only the CUDA
+llama.cpp build ships; without a usable NVIDIA GPU, Qwen is listed unavailable
+with a reason. See
+[ADR 0010](../adr/0010-model-revisions-storage-and-release-layout.md).
 
 Producing the zip is implemented today via CMake's `package` target (CPack,
 `ZIP` generator; see `CMakeLists.txt`) — run it after a normal build. Its
-current output is flatter than the tree above: the runner and its private
-runtime library sit directly beside `tts-host`, matching the flat
-`tts-host-<engine>-runner` naming convention `src/main.cpp` resolves against,
-not yet the separate `runtimes/`/`runners/` split shown here. Reconciling the
-two is pending a decision on per-engine runner isolation (raised but not yet
-confirmed) — do not silently pick one shape when next touching this area.
+current output is still flat: the runner and its private runtime library sit
+directly beside `tts-host`, matching the `tts-host-<engine>-runner` naming
+`src/main.cpp` resolves against. The two-model release package moves it to the
+tree above.
 
 The portable zip remains a release format. The Windows installer must also
 ship both Kokoro and the ADR 0009 Qwen package plus their complete
 runtimes; installation and first synthesis are offline. Packaging must fail
 if either required package or dependency is missing rather than silently ship a
-single-model distribution. The exact runner/runtime layout, writable model
-storage, and redistribution notices are decided before installer implementation.
-Its startup choice
+single-model distribution. The installer is per-user, into
+`%LOCALAPPDATA%\Programs\TTS Host` without elevation, and installs the same
+tree minus `portable.marker`. Its startup choice
 follows [Login startup](#login-startup): pre-ticked from
 `startup.launchOnLogin`, written to the OS registration, removed on uninstall. Unzip-and-run
 needs no code signing, whereas an unsigned installer triggers SmartScreen, which
