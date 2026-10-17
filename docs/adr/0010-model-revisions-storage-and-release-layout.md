@@ -24,7 +24,8 @@ there.
 **Precedence.** When one ID exists in both tiers, the copy whose revision
 matches the compiled catalogue wins. If neither matches, the per-user copy wins.
 The losing copy is reported as superseded and Settings offers to remove it. The
-same ID twice within one tier is an error, as today.
+same ID twice within one tier is an error; the copy found later is reported
+unsupported.
 
 **Previous version.** A committed update moves the old package folder, not a
 copy, to `models/.previous/<id>@<revision>/` in the writable tier. One previous

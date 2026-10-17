@@ -417,7 +417,11 @@ void validate_config(const ConfigDocument &document) {
 }
 
 ConfigDocument load_config(const CliOptions &options, const std::filesystem::path &argv0) {
-  return reload_config({resolve_config_path(options, argv0), {}, resolve_data_dir(options, argv0)});
+  const auto data_dir = resolve_data_dir(options, argv0);
+  const auto exe_dir = executable_dir(argv0);
+  const auto bundled_models_dir =
+      data_dir == exe_dir ? std::filesystem::path() : (exe_dir / "models").lexically_normal();
+  return reload_config({resolve_config_path(options, argv0), {}, data_dir, bundled_models_dir});
 }
 
 ConfigDocument reload_config(const ResolvedPaths &paths) {
@@ -428,7 +432,7 @@ ConfigDocument reload_config(const ResolvedPaths &paths) {
   const auto schema = load_json_file(schema_path, "schema");
   validate_against_schema(schema, config);
 
-  return ConfigDocument{config, ResolvedPaths{paths.config_path, schema_path, paths.data_dir}};
+  return ConfigDocument{config, ResolvedPaths{paths.config_path, schema_path, paths.data_dir, paths.bundled_models_dir}};
 }
 
 }  // namespace tts_host

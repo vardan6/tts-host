@@ -37,14 +37,13 @@ std::filesystem::path installed_model_schema_path(const ConfigDocument &config) 
 // validating in its new location (see resolve_schema_path in
 // src/model_registry.cpp). Repoint the copy at this installation's own model
 // schema instead, relatively where possible so the model directory stays
-// relocatable.
-void repoint_manifest_schema(const std::filesystem::path &package_path,
-                             const ConfigDocument &config) {
+// relocatable. A local import has no catalogue revision (ADR 0010), so any
+// the source carried is dropped rather than trusted.
+void rewrite_imported_manifest(const std::filesystem::path &package_path,
+                               const ConfigDocument &config) {
   const auto schema_path = installed_model_schema_path(config);
   std::error_code ec;
-  if (!std::filesystem::is_regular_file(schema_path, ec) || ec) {
-    return;  // No installed schema to point at; keep whatever the package declared.
-  }
+  const bool has_installed_schema = std::filesystem::is_regular_file(schema_path, ec) && !ec;
 
   const auto manifest_path = package_path / "model.json";
   json manifest;
@@ -56,8 +55,11 @@ void repoint_manifest_schema(const std::filesystem::path &package_path,
     manifest = json::parse(input);
   }
 
-  const auto relative = schema_path.lexically_relative(package_path);
-  manifest["$schema"] = relative.empty() ? schema_path.generic_string() : relative.generic_string();
+  manifest.erase("revision");
+  if (has_installed_schema) {
+    const auto relative = schema_path.lexically_relative(package_path);
+    manifest["$schema"] = relative.empty() ? schema_path.generic_string() : relative.generic_string();
+  }
 
   std::ofstream output(manifest_path);
   if (!output) {
@@ -124,7 +126,7 @@ ImportedModelPackage import_model_package(const std::filesystem::path &source_pa
   }
 
   try {
-    repoint_manifest_schema(staging, config);
+    rewrite_imported_manifest(staging, config);
     validate_model_package(staging);
   } catch (const std::exception &error) {
     std::error_code cleanup_ec;

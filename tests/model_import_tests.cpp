@@ -116,7 +116,10 @@ int main(int argc, char **argv) {
 
     // The registry directory does not exist yet: importing into a configured
     // but not-yet-created model directory is the first-import case.
-    const auto source = make_source_package(sources, model_schema, "imported-package", json::object(), true);
+    // The source claims a catalogue revision; a local import must not keep it
+    // (ADR 0010), so it is never offered a catalogue update.
+    const auto source = make_source_package(sources, model_schema, "imported-package",
+                                            json{{"revision", std::string(64, 'a')}}, true);
     const auto imported = tts_host::import_model_package(source, config);
 
     require(imported.id == "imported-package" && imported.display_name == "Imported imported-package",
@@ -133,6 +136,8 @@ int main(int argc, char **argv) {
     require(scan.discovered_packages.size() == 1 &&
                 scan.discovered_packages.front().id == "imported-package",
             "the imported package was not discovered by a registry scan");
+    require(!scan.discovered_packages.front().revision.has_value(),
+            "the imported package kept the source's catalogue revision");
     require(scan.unsupported_entries.empty(),
             "the imported package left an unsupported registry entry: " +
                 (scan.unsupported_entries.empty() ? std::string() : scan.unsupported_entries.front().reason));

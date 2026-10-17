@@ -125,6 +125,8 @@ void a_fresh_download_installs_the_verified_package(const std::filesystem::path 
   require(manifest.at("id") == entry.id, "generated manifest has the wrong id");
   require(manifest.at("files").at("model") == "model.onnx", "generated manifest's model file is wrong");
   require(manifest.at("files").at("voice") == "voices/demo.bin", "generated manifest's voice file is wrong");
+  require(manifest.at("revision") == tts_host::catalogue_entry_revision(entry),
+          "generated manifest does not record the entry's revision");
 
   // No leftover staging directory.
   require(!std::filesystem::exists(registry / (".demo-download.downloading")),

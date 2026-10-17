@@ -2,10 +2,14 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <map>
 #include <set>
+#include <utility>
 #include <stdexcept>
 #include <string>
 #include <vector>
+
+#include "tts_host/sha256.hpp"
 
 namespace tts_host {
 
@@ -237,10 +241,68 @@ void validate_catalogue(const std::vector<CatalogueEntry> &entries) {
 }
 
 bool catalogue_entry_installed(const CatalogueEntry &entry, const ModelRegistryScan &scan) {
-  return std::any_of(scan.discovered_packages.begin(), scan.discovered_packages.end(),
-                     [&entry](const ModelPackageCandidate &package) {
-                       return package.id == entry.id;
-                     });
+  return catalogue_entry_package(entry, scan) != nullptr;
+}
+
+const ModelPackageCandidate *catalogue_entry_package(const CatalogueEntry &entry,
+                                                     const ModelRegistryScan &scan) {
+  const auto found = std::find_if(scan.discovered_packages.begin(), scan.discovered_packages.end(),
+                                  [&entry](const ModelPackageCandidate &package) {
+                                    return package.id == entry.id;
+                                  });
+  return found == scan.discovered_packages.end() ? nullptr : &*found;
+}
+
+std::string catalogue_entry_revision(const CatalogueEntry &entry) {
+  std::vector<std::pair<std::string, std::string>> rows;
+  for (const auto &file : entry.files) {
+    rows.emplace_back(file.relative_path, file.sha256);
+  }
+  for (const auto &file : entry.generated_files) {
+    rows.emplace_back(file.relative_path, sha256_hex(file.contents));
+  }
+  std::sort(rows.begin(), rows.end());
+
+  std::string listing;
+  for (const auto &[path, sha256] : rows) {
+    listing += sha256 + "  " + path + "\n";
+  }
+  return sha256_hex(listing);
+}
+
+std::optional<std::string> catalogue_revision_for(const std::string &id) {
+  static const std::map<std::string, std::string> revisions = [] {
+    std::map<std::string, std::string> result;
+    for (const auto &entry : model_catalogue()) {
+      result.emplace(entry.id, catalogue_entry_revision(entry));
+    }
+    return result;
+  }();
+  const auto found = revisions.find(id);
+  if (found == revisions.end()) {
+    return std::nullopt;
+  }
+  return found->second;
+}
+
+PackageStatus package_status(const ModelPackageCandidate &package) {
+  const auto expected = catalogue_revision_for(package.id);
+  if (!package.revision || !expected) {
+    return PackageStatus::local;
+  }
+  return *package.revision == *expected ? PackageStatus::current : PackageStatus::update_available;
+}
+
+std::string describe_package_status(PackageStatus status) {
+  switch (status) {
+    case PackageStatus::current:
+      return "current";
+    case PackageStatus::update_available:
+      return "update available";
+    case PackageStatus::local:
+      break;
+  }
+  return "local";
 }
 
 std::string describe_catalogue_license(const CatalogueEntry &entry) {

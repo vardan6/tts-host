@@ -9,6 +9,7 @@
 #include "tts_host/config_loader.hpp"
 #include "tts_host/model_catalogue.hpp"
 #include "tts_host/model_import.hpp"
+#include "tts_host/sha256.hpp"
 
 namespace tts_host {
 
@@ -54,10 +55,6 @@ using HttpFetchFunction = std::function<void(
 void fetch_url_to_file(const std::string &url, std::uint64_t resume_from_bytes,
                        const std::filesystem::path &destination, std::uint64_t total_bytes,
                        const DownloadProgressCallback &progress);
-
-// Lowercase hex SHA-256 of a file's bytes, used to verify a fetched file
-// against the catalogue's pinned checksum before it is trusted.
-std::string sha256_hex_of_file(const std::filesystem::path &path);
 
 // Downloads every file of `entry` into `destination_root` (one of
 // modelRegistry.directories, chosen by the caller), verifies each against its

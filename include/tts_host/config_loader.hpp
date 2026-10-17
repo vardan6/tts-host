@@ -35,6 +35,9 @@ struct ResolvedPaths {
   // Mutable Host state such as the startup-choice marker
   // (docs/design/architecture.md#data-locations).
   std::filesystem::path data_dir;
+  // The application's own read-only models/ (ADR 0010 bundled tier); empty
+  // when there is none, as in portable mode where models/ is the data dir's.
+  std::filesystem::path bundled_models_dir;
 };
 
 struct ConfigDocument {

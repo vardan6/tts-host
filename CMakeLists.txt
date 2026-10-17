@@ -191,6 +191,7 @@ add_executable(
   src/synthesis_pipeline.cpp
   src/selection_capture.cpp
   src/settings_window.cpp
+  src/sha256.cpp
   src/startup_choice.cpp
   src/text_normalizer.cpp
   src/text_splitter.cpp
@@ -219,7 +220,8 @@ if(TTS_HOST_QWEN_RUNTIME_DIR)
     DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
   FetchContent_Populate(qwen_llama_headers)
   add_executable(tts-host-qwen3-gguf-runner
-    src/qwen_runner_main.cpp src/model_registry.cpp src/process_stats.cpp
+    src/qwen_runner_main.cpp src/model_registry.cpp src/model_catalogue.cpp src/sha256.cpp
+    src/process_stats.cpp
     src/runner_audio_output.cpp src/runner_control_io.cpp src/runner_protocol.cpp
     src/time_stretch.cpp)
   target_include_directories(tts-host-qwen3-gguf-runner PRIVATE include
@@ -599,7 +601,8 @@ if(BUILD_TESTING)
   set_tests_properties(tts_host_runner_recovery PROPERTIES TIMEOUT 15)
 
   add_executable(tts-host-resident-synthesis-tests tests/resident_synthesis_tests.cpp
-    src/model_session.cpp src/model_registry.cpp src/recovering_runner.cpp src/activity_log.cpp
+    src/model_session.cpp src/model_registry.cpp src/model_catalogue.cpp src/sha256.cpp
+    src/recovering_runner.cpp src/activity_log.cpp
     src/synthesis_pipeline.cpp src/runner_launcher.cpp src/runner_protocol.cpp
     src/playback_controller.cpp src/playback_sink.cpp src/audio_conversion.cpp
     src/audio_history.cpp src/text_splitter.cpp src/wav_writer.cpp)
@@ -623,6 +626,8 @@ if(BUILD_TESTING)
   add_executable(
     tts-host-model-session-tests
     src/model_registry.cpp
+    src/model_catalogue.cpp
+    src/sha256.cpp
     src/model_session.cpp
     src/recovering_runner.cpp
     src/activity_log.cpp
@@ -661,6 +666,8 @@ if(BUILD_TESTING)
     tts-host-model-import-tests
     src/model_import.cpp
     src/model_registry.cpp
+    src/model_catalogue.cpp
+    src/sha256.cpp
     tests/model_import_tests.cpp
   )
   target_include_directories(tts-host-model-import-tests PRIVATE include)
@@ -700,6 +707,7 @@ if(BUILD_TESTING)
   add_executable(
     tts-host-model-catalogue-tests
     src/model_catalogue.cpp
+    src/sha256.cpp
     tests/model_catalogue_tests.cpp
   )
   target_include_directories(tts-host-model-catalogue-tests PRIVATE include)
@@ -733,6 +741,7 @@ if(BUILD_TESTING)
     src/catalogue_download.cpp
     src/model_catalogue.cpp
     src/model_registry.cpp
+    src/sha256.cpp
     tests/catalogue_download_tests.cpp
   )
   target_include_directories(tts-host-catalogue-download-tests PRIVATE include)
@@ -764,6 +773,8 @@ if(BUILD_TESTING)
   add_executable(
     tts-host-model-registry-scan-diff-tests
     src/model_registry.cpp
+    src/model_catalogue.cpp
+    src/sha256.cpp
     tests/model_registry_scan_diff_tests.cpp
   )
   target_include_directories(tts-host-model-registry-scan-diff-tests PRIVATE include)
@@ -783,6 +794,35 @@ if(BUILD_TESTING)
     COMMAND
       tts-host-model-registry-scan-diff-tests
       ${CMAKE_SOURCE_DIR}/schemas
+  )
+
+  # ADR 0010 two-tier discovery (src/model_registry.cpp): duplicate ids within
+  # a tier and catalogue-match precedence across the bundled and writable tiers.
+  add_executable(
+    tts-host-model-registry-tier-tests
+    src/model_registry.cpp
+    src/model_catalogue.cpp
+    src/sha256.cpp
+    tests/model_registry_tier_tests.cpp
+  )
+  target_include_directories(tts-host-model-registry-tier-tests PRIVATE include)
+  target_link_libraries(
+    tts-host-model-registry-tier-tests
+    PRIVATE
+      nlohmann_json::nlohmann_json
+      ${JSON_SCHEMA_VALIDATOR_TARGET}
+  )
+  if(MSVC)
+    target_compile_options(tts-host-model-registry-tier-tests PRIVATE /W4 /permissive-)
+  else()
+    target_compile_options(tts-host-model-registry-tier-tests PRIVATE -Wall -Wextra -Wpedantic)
+  endif()
+  add_test(
+    NAME tts_host_model_registry_tiers
+    COMMAND
+      tts-host-model-registry-tier-tests
+      ${CMAKE_SOURCE_DIR}/schemas
+      ${CMAKE_CURRENT_BINARY_DIR}/model-registry-tier-tests
   )
 
   add_executable(

@@ -52,7 +52,7 @@ Synthetic Copy adapter compatibility remains separate open work below.
     catalogue-match precedence, one previous version kept, per-runner folders,
     CUDA only — see
     [ADR 0010](docs/adr/0010-model-revisions-storage-and-release-layout.md).
-  - [ ] **AFK — Model revisions and two-tier discovery:** record the revision
+  - [x] **AFK — Model revisions and two-tier discovery:** record the revision
     on catalogue install, scan bundled and per-user tiers with ADR 0010
     precedence, and show local/current/update-available/superseded in Settings
     — see

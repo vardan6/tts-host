@@ -210,7 +210,7 @@ void an_installed_entry_is_recognized_by_id() {
   tts_host::ModelRegistryScan other_package;
   other_package.discovered_packages.push_back(tts_host::ModelPackageCandidate{
       "some-other-model", "Other", "kokoro-onnx", {"en"}, "/models/other", "/models/other/model.json",
-      {}});
+      {}, std::nullopt, false});
   if (tts_host::catalogue_entry_installed(entry, other_package)) {
     throw std::runtime_error("an unrelated installed package counted as this entry");
   }
@@ -218,7 +218,7 @@ void an_installed_entry_is_recognized_by_id() {
   auto installed = other_package;
   installed.discovered_packages.push_back(tts_host::ModelPackageCandidate{
       entry.id, entry.display_name, entry.engine, {"en"}, "/models/demo", "/models/demo/model.json",
-      {}});
+      {}, std::nullopt, false});
   if (!tts_host::catalogue_entry_installed(entry, installed)) {
     throw std::runtime_error("a package already in the registry was still offered as missing");
   }
@@ -268,6 +268,55 @@ void the_download_size_is_summed_and_readable() {
 
 }  // namespace
 
+// Pins the ADR 0010 format: sha256sum-style `<sha256>  <path>\n` lines sorted
+// by path, hashed again. The expected values come from Python's hashlib, not
+// this code.
+void the_revision_fingerprints_the_package_files() {
+  auto entry = valid_entry();
+  const auto weights_only = tts_host::catalogue_entry_revision(entry);
+  if (weights_only != "4bd31332fe20552378ca1a44667dae9d2579579bb03d79eabc4f561436fc666c") {
+    throw std::runtime_error("unexpected revision for a single-file entry: " + weights_only);
+  }
+
+  entry.generated_files.push_back(tts_host::CatalogueGeneratedFile{"voices/NOTICE.txt", "notice", "notice\n"});
+  const auto with_notice = tts_host::catalogue_entry_revision(entry);
+  if (with_notice != "5deba8a2dc0ba44a9f361c62f9f5abe987f3e11f672c2fa793165bc7213ac002") {
+    throw std::runtime_error("unexpected revision with a host-written file: " + with_notice);
+  }
+
+  entry.generated_files.front().contents = "changed notice\n";
+  if (tts_host::catalogue_entry_revision(entry) == with_notice) {
+    throw std::runtime_error("changing a host-written file did not change the revision");
+  }
+}
+
+void package_status_compares_against_the_compiled_catalogue() {
+  const auto kokoro_revision = tts_host::catalogue_revision_for("kokoro-en-v1");
+  if (!kokoro_revision || kokoro_revision->size() != 64) {
+    throw std::runtime_error("the compiled catalogue has no revision for kokoro-en-v1");
+  }
+  if (tts_host::catalogue_revision_for("not-in-catalogue")) {
+    throw std::runtime_error("an id outside the catalogue reported a revision");
+  }
+
+  tts_host::ModelPackageCandidate package{
+      "kokoro-en-v1", "Kokoro", "kokoro-onnx", {"en"}, "/models/kokoro-en-v1",
+      "/models/kokoro-en-v1/model.json", {}, std::nullopt, false};
+  const auto expect = [&](tts_host::PackageStatus expected, const std::string &message) {
+    if (tts_host::package_status(package) != expected) {
+      throw std::runtime_error(message + ", got " +
+                               tts_host::describe_package_status(tts_host::package_status(package)));
+    }
+  };
+  expect(tts_host::PackageStatus::local, "a package without a revision is not local");
+  package.revision = *kokoro_revision;
+  expect(tts_host::PackageStatus::current, "a package matching the catalogue is not current");
+  package.revision = std::string(64, 'a');
+  expect(tts_host::PackageStatus::update_available, "an older revision is not offered an update");
+  package.id = "not-in-catalogue";
+  expect(tts_host::PackageStatus::local, "an id outside the catalogue is not local");
+}
+
 int main() {
   try {
     the_compiled_in_catalogue_is_well_formed();
@@ -284,6 +333,8 @@ int main() {
     an_installed_entry_is_recognized_by_id();
     the_licence_notice_badges_non_commercial_terms();
     the_download_size_is_summed_and_readable();
+    the_revision_fingerprints_the_package_files();
+    package_status_compares_against_the_compiled_catalogue();
   } catch (const std::exception &error) {
     std::cerr << error.what() << '\n';
     return EXIT_FAILURE;

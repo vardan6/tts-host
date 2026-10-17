@@ -509,8 +509,16 @@ int run_main(int argc, char **argv) {
       std::cout << "Discovered model packages: " << scan.discovered_packages.size() << '\n';
       for (const auto &package : scan.discovered_packages) {
         std::cout << "  OK  " << package.id << " (" << package.engine << ", "
-                  << join_languages(package.languages) << ") -> " << tts_host::path_to_utf8(package.manifest_path)
-                  << '\n';
+                  << join_languages(package.languages) << ") ["
+                  << tts_host::describe_package_status(tts_host::package_status(package))
+                  << (package.bundled ? ", bundled" : "") << "] -> "
+                  << tts_host::path_to_utf8(package.manifest_path) << '\n';
+      }
+
+      std::cout << "Superseded model packages: " << scan.superseded_packages.size() << '\n';
+      for (const auto &package : scan.superseded_packages) {
+        std::cout << "  OLD " << package.id << " [" << (package.bundled ? "bundled" : "per-user")
+                  << "] -> " << tts_host::path_to_utf8(package.manifest_path) << '\n';
       }
 
       std::cout << "Unsupported registry entries: " << scan.unsupported_entries.size() << '\n';
@@ -531,11 +539,14 @@ int run_main(int argc, char **argv) {
 
       std::cout << "Downloadable model packages: " << entries.size() << '\n';
       for (const auto &entry : entries) {
-        const bool installed = tts_host::catalogue_entry_installed(entry, scan);
+        const auto installed = tts_host::catalogue_entry_package(entry, scan);
         std::cout << "  " << (installed ? "HAVE" : "GET ") << ' ' << entry.id << " ("
                   << entry.engine << ", " << join_languages(entry.languages) << ", "
-                  << tts_host::describe_download_size(tts_host::catalogue_entry_size_bytes(entry))
-                  << ")\n";
+                  << tts_host::describe_download_size(tts_host::catalogue_entry_size_bytes(entry)) << ")";
+        if (installed) {
+          std::cout << " [" << tts_host::describe_package_status(tts_host::package_status(*installed)) << ']';
+        }
+        std::cout << '\n';
         std::cout << "       " << entry.display_name << " :: "
                   << tts_host::describe_catalogue_license(entry) << '\n';
       }

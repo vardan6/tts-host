@@ -627,7 +627,8 @@ void on_open_startup_settings_clicked(SettingsState &state) {
 // first package so the Load button is meaningful without a pick first.
 void populate_model_combo(HWND combo, SettingsState &state, const ModelRegistryScan &scan) {
   for (const auto &package : scan.discovered_packages) {
-    const auto label = package.display_name + " (" + package.id + ")";
+    const auto label = package.display_name + " (" + package.id + ") [" +
+                       describe_package_status(package_status(package)) + "]";
     SendMessageW(combo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(utf8_to_wide(label).c_str()));
     state.model_ids.push_back(package.id);
   }
@@ -669,14 +670,18 @@ void on_load_model_clicked(SettingsState &state, HWND combo) {
 
 // Fills the combo box with every compiled-in catalogue entry
 // (docs/design/architecture.md#download-catalogue), labelled the same way
-// `--list-catalogue` prints them: GET/HAVE, size, and licence, so the choice
+// `--list-catalogue` prints them: GET/HAVE, size, licence, and for an
+// installed entry its local/current/update-available status, so the choice
 // before downloading is visible without a separate details view.
 void populate_catalogue_combo(HWND combo, SettingsState &state, const ModelRegistryScan &scan) {
   for (const auto &entry : model_catalogue()) {
-    const bool installed = catalogue_entry_installed(entry, scan);
-    const auto label = std::string(installed ? "HAVE " : "GET  ") + entry.display_name + " (" +
-                        describe_download_size(catalogue_entry_size_bytes(entry)) + ", " +
-                        describe_catalogue_license(entry) + ")";
+    const auto *installed = catalogue_entry_package(entry, scan);
+    auto label = std::string(installed ? "HAVE " : "GET  ") + entry.display_name + " (" +
+                 describe_download_size(catalogue_entry_size_bytes(entry)) + ", " +
+                 describe_catalogue_license(entry) + ")";
+    if (installed) {
+      label += " [" + describe_package_status(package_status(*installed)) + "]";
+    }
     SendMessageW(combo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(utf8_to_wide(label).c_str()));
     state.catalogue_ids.push_back(entry.id);
   }
@@ -773,10 +778,22 @@ std::wstring format_installed_models(const ModelRegistryScan &scan) {
     }
     const auto &license = package.manifest.at("license");
     text += utf8_to_wide(package.display_name);
-    text += L" (" + utf8_to_wide(package.id) + L")\r\nLicence: ";
+    text += L" (" + utf8_to_wide(package.id) + L")\r\nStatus: ";
+    text += utf8_to_wide(describe_package_status(package_status(package)));
+    text += package.bundled ? L", bundled" : L"";
+    text += L"\r\nLicence: ";
     text += utf8_to_wide(license.at("name").get<std::string>());
     text += L"\r\n";
     text += utf8_to_wide(license.at("url").get<std::string>());
+  }
+
+  if (!scan.superseded_packages.empty()) {
+    text += L"\r\n\r\nSuperseded copies (not loaded):";
+    for (const auto &package : scan.superseded_packages) {
+      text += L"\r\n";
+      text += utf8_to_wide(package.id) + (package.bundled ? L" [bundled] " : L" [per-user] ");
+      text += package.package_path.wstring();
+    }
   }
 
   if (!scan.unsupported_entries.empty()) {

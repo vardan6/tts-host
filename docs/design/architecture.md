@@ -486,6 +486,18 @@ writable per-user tier in installed mode, catalogue-match-wins precedence, and
 one previous version kept for Revert. Local imports carry no revision and are
 never offered updates.
 
+The revision is the SHA-256 of `<file sha256>  <relative path>\n` lines
+(`sha256sum` format) sorted by path, over every downloaded and host-written
+file, `model.json` excluded. Catalogue install writes it as the manifest's
+`revision`; import drops any revision the source carried. The bundled tier is
+the executable's `models/`. It is absent in portable mode and is never scanned
+twice when a configured directory names it, and a missing bundled tier is not
+an error. Configured `modelRegistry.directories` form the writable tier.
+Within a tier the first copy of an id by path wins and later copies are
+reported unsupported. Across tiers the losing copy is listed as superseded
+and never loaded. Settings and `--list-models`/`--list-catalogue` label each
+package local, current, or update available.
+
 Download and validate replacement content in staging before committing it.
 Serialize replacement with model loading, and release any resident runner's
 handles before switching the package. An active utterance must finish or be

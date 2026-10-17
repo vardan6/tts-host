@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -71,6 +72,31 @@ void validate_catalogue(const std::vector<CatalogueEntry> &entries);
 // True when a scan already discovered a package carrying this entry's id, which
 // is what distinguishes an installed model from an offered one.
 bool catalogue_entry_installed(const CatalogueEntry &entry, const ModelRegistryScan &scan);
+
+// The discovered package carrying this entry's id, or null when it is offered.
+const ModelPackageCandidate *catalogue_entry_package(const CatalogueEntry &entry,
+                                                     const ModelRegistryScan &scan);
+
+// The ADR 0010 content revision of the package this entry installs: SHA-256
+// of `<file sha256>  <relative path>\n` lines (sha256sum format) sorted by
+// path, over downloaded and host-written files alike, model.json excluded.
+// Computed from the pinned checksums, so it cannot drift from the files.
+std::string catalogue_entry_revision(const CatalogueEntry &entry);
+
+// The compiled catalogue's revision for a model id, or nothing when the id is
+// not in the catalogue. Registry precedence and update status compare against it.
+std::optional<std::string> catalogue_revision_for(const std::string &id);
+
+// How an installed package relates to the compiled catalogue
+// (docs/design/architecture.md#model-installation-and-updates). A package with
+// no revision -- a local import, or an id the catalogue does not carry -- is
+// local and never offered an update.
+enum class PackageStatus { local, current, update_available };
+
+PackageStatus package_status(const ModelPackageCandidate &package);
+
+// "local", "current", or "update available".
+std::string describe_package_status(PackageStatus status);
 
 // The licence line shown before download, with the non-commercial badge when
 // the terms carry one.
