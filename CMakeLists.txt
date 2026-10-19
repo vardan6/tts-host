@@ -592,6 +592,13 @@ if(BUILD_TESTING)
     src/runner_audio_output.cpp src/runner_control_io.cpp src/runner_protocol.cpp src/stub_runner.cpp)
   target_include_directories(tts-host-runner-failure-fixture PRIVATE include)
   target_link_libraries(tts-host-runner-failure-fixture PRIVATE nlohmann_json::nlohmann_json)
+  add_test(NAME tts_host_failure_fixture_exit COMMAND ${CMAKE_COMMAND} -E env
+    TTS_TEST_RUNNER_MODE=normal
+    ${CMAKE_COMMAND}
+    -Drunner=$<TARGET_FILE:tts-host-runner-failure-fixture>
+    -Dscratch=${CMAKE_CURRENT_BINARY_DIR}
+    -P ${CMAKE_SOURCE_DIR}/tests/assert_failure_fixture_exit.cmake)
+  set_tests_properties(tts_host_failure_fixture_exit PROPERTIES TIMEOUT 10)
   add_executable(tts-host-runner-recovery-tests tests/runner_recovery_tests.cpp
     src/runner_launcher.cpp src/recovering_runner.cpp src/activity_log.cpp src/runner_protocol.cpp
     src/stub_runner.cpp)

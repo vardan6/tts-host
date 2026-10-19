@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <iostream>
 #include <thread>
 
 void lifecycle(const std::string &event) {
@@ -12,7 +13,7 @@ void lifecycle(const std::string &event) {
     std::ofstream(path, std::ios::app) << event << '\n';
 }
 void hang() { for (;;) std::this_thread::sleep_for(std::chrono::seconds(1)); }
-int main() {
+int main() try {
   lifecycle("start");
   const std::string mode = std::getenv("TTS_TEST_RUNNER_MODE");
   if (mode == "close-input") return 9;
@@ -98,4 +99,10 @@ int main() {
       } else tts_host::write_stdout(framed);
     }
   }
+} catch (const std::exception &error) {
+  // Cancellation can close the parent's pipes while this fixture is writing.
+  // Report the failure without an uncaught exception invoking the Debug CRT's
+  // interactive abort dialog; the parent still observes an unsuccessful exit.
+  std::cerr << error.what() << '\n';
+  return EXIT_FAILURE;
 }

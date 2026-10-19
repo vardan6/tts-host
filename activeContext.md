@@ -1,11 +1,13 @@
 # Active Context
 
-- Mode: session closed; manual catalogue model update slice done.
+- Mode: session closed; test-fixture abort-dialog fix done.
 - Branch: `feature/bundled-models`; the update slice (code, tests, design
   and README) is uncommitted, not pushed. Revisions/two-tier is in `b7b6039`.
 - State: Update/Revert/Delete previous/Remove superseded work in Settings and
   CLI, with journaled commit and startup recovery. Linux 50/50 CTests; Windows
   model tests pass and `tts-host` builds.
+- Latest maintenance: failure fixture now reports exceptions and exits unsuccessfully;
+  Windows Debug regression and recovery checks pass (4/4). See `progress.md`.
 - Next: AFK **Two-model release package** (`roadmap.md`) via `/next-slice`
   in a fresh session. Then the offline installer.
 - Pending user checks (combined acceptance): Windows Settings model status
