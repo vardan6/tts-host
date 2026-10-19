@@ -1,19 +1,19 @@
 # Active Context
 
-- Mode: session closed; unplanned Settings freeze fix committed, compiled only — not linked or verified.
-- Branch: `feature/bundled-models`; release slices committed and pushed (`3402563`).
-  Then: Settings model-task worker fix (`src/settings_window.cpp`) —
-  Download/Update/Import froze the window ("Not Responding") on the UI thread.
-- State: `scripts/release-win.ps1` builds the zip and the Inno Setup
-  installer into `build-release/dist/`; both models speak from a clean
-  extracted zip and from a silent temp install. Models staged once in
-  `cache/release-models`.
-- Latest maintenance: failure fixture now reports exceptions and exits unsuccessfully;
-  Windows Debug regression and recovery checks pass (4/4). See `progress.md`.
-- Next: quit the running Debug Host, link and test the Settings worker fix,
-  user checks Download responsiveness/Cancel/resume; then HITL **Clean Windows two-model acceptance** (`roadmap.md`) on a clean
-  machine with networking off, including an upgrade install over an existing
-  one and the interactive startup tick.
+- Mode: session closed; console-window fix implemented, Host link pending.
+- Branch: `feature/bundled-models`; release checkpoint pushed (`3402563`),
+  Settings worker fix committed (`c3a85aa`). Release/build history: `progress.md`.
+- State: `src/runner_launcher.cpp` adds `CREATE_NO_WINDOW` for speech runners.
+  Windows runner inheritance/protocol/audio CTest passes (1/1). The Host source
+  compiles, but replacing `build/Debug/tts-host.exe` failed with LNK1168 while
+  the existing Host was running. Desktop visibility remains unverified.
+- Next: user quits TTS Host from tray; run
+  `cmake --build build --config Debug --target tts-host`, then launch
+  `.\build\Debug\tts-host.exe --config config.development.json` and verify
+  startup/model loading creates no terminal. Run pending Settings worker checks
+  and retry loading the downloaded Qwen 1.7B model (Debug runner now built).
+- After that: clean Windows two-model acceptance from `roadmap.md`, including
+  offline install, upgrade install, and interactive startup selection.
 - Pending user checks (combined acceptance): Windows Settings model status
   labels and Update/Revert/Delete previous/Remove superseded buttons; listen
   to Qwen at 0.5/1.5/2.0 in Now Playing; Settings download (WinHTTP) and
@@ -24,11 +24,14 @@
   VRAM unmeasured) — `roadmap.md` open decisions. Linux Qwen with the new
   runner-folder loading is unbuilt and unverified (only Windows has the
   runtime configured).
-- Blockers: the running Debug Host (`build\Debug\tts-host.exe`) locks the exe; the
-  worker fix compiled with no warnings but link (LNK1168) and tests wait for the user to quit it. No agents/external agent CLIs without approval. This
-  machine has a pre-existing `HKCU\…\Run\TTS Host` entry pointing at
-  `build\Debug\tts-host.exe` (against `PROJECT.md`); left for the user.
-- Environment: Linux Qwen runs need
+- Blockers: running Debug Host locks its executable; user must quit before
+  rebuilding. Do not terminate it without asking. Existing developer Run entry
+  points at Debug Host; left for the user per `PROJECT.md`.
+- Environment: Debug `build/` is configured with
+  `TTS_HOST_QWEN_RUNTIME_DIR=…/cache/qwen-evaluation/b11029/runtime` (same as
+  `build-release`); a new build folder needs it set or the Qwen runner is not built. At 22:51
+  `build/` was wiped and re-configured from outside the repo without it; re-set.
+  Linux Qwen runs need
   `LD_LIBRARY_PATH=~/.cache/tts-bakeoff/llama/b11029/cudart-llama-b11029-bin-ubuntu-cuda-13.3-x64:/usr/lib/wsl/lib`.
   A catalogue Qwen package (Windows) persists in
   `cache/release-models/models/qwen3-tts-1.7b`; on Linux build one with
@@ -44,15 +47,8 @@
   WSL: `/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe
   -NoProfile -Command "Set-Location '<repo>'; cmake --build build --config
   Debug --target <targets>; ctest --test-dir build -C Debug -R <regex>"`.
-- Discarded as noise: the first release run "packaged" before the downloads
-  finished only because PowerShell did not wait for GUI-subsystem
-  `tts-host.exe` (fixed by piping), not a download fault. Windows ctest "Unable to find executable … Not Run"
-  only means that test target was never built in `build/`; build it by name.
-  Running `tts-host-model-registry-tier-tests` with
-  relative paths fails ("missing bundled models/ … unsupported") because
-  configured directories resolve against the config folder; use absolute paths
-  as CTest does. Older noise: Linux Qwen test "requires a working CUDA runtime" failure
-  was only the missing `LD_LIBRARY_PATH`, not a code fault. Qwen output length
-  varies 5–20% between runs at a fixed seed, so real-model speed checks assert
-  scale, not exact 1/speed. `decode: failed to find a memory slot` in the
-  integration test is the deliberate over-context rejection.
+- Discarded as noise: Host already uses the GUI subsystem; the speech runner
+  lacked `CREATE_NO_WINDOW`. LNK1168 is a running-executable lock, not a compiler
+  failure. Missing Qwen runner was a Debug CMake configuration issue; see progress.
+  Build test targets before CTest; GUI Host output must be piped for PowerShell
+  to wait and set `$LASTEXITCODE`.

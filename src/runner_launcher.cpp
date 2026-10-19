@@ -161,8 +161,10 @@ RunnerSession::RunnerSession(const std::filesystem::path &runner_executable,
 
   PROCESS_INFORMATION process_info{};
   const std::wstring application_name = runner_executable.wstring();
+  // Console-subsystem runners communicate over pipes and must not create a
+  // console window when launched by the GUI Host.
   if (!CreateProcessW(application_name.c_str(), nullptr, nullptr, nullptr, TRUE,
-                       EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT,
+                       EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT | CREATE_NO_WINDOW,
                        const_cast<wchar_t *>(environment_block.data()), nullptr,
                        &startup_info.StartupInfo, &process_info)) {
     throw_windows_error("could not start the runner process (" + path_to_utf8(runner_executable) + ")");
