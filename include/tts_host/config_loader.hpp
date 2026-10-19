@@ -16,6 +16,11 @@ struct CliOptions {
   std::optional<std::filesystem::path> import_model_path;
   std::optional<std::string> download_model_id;
   std::optional<std::filesystem::path> download_destination_dir;
+  // Manual model maintenance (docs/design/architecture.md#model-installation-and-updates).
+  std::optional<std::string> update_model_id;
+  std::optional<std::string> revert_model_id;
+  std::optional<std::string> delete_previous_model_id;
+  std::optional<std::string> remove_superseded_model_id;
   std::optional<std::filesystem::path> config_path_override;
   std::optional<std::filesystem::path> data_dir_override;
   std::optional<std::string> synthesize_text;

@@ -12,6 +12,7 @@
 #include "tts_host/model_import.hpp"
 #include "tts_host/model_registry.hpp"
 #include "tts_host/model_session.hpp"
+#include "tts_host/model_update.hpp"
 #include "tts_host/playback_controller.hpp"
 #include "tts_host/playback_sink.hpp"
 #include "tts_host/runner_launcher.hpp"
@@ -425,6 +426,12 @@ int run_main(int argc, char **argv) {
   try {
     tts_host::AudioHistory::clean_abandoned_spools();
     auto document = tts_host::load_config(*options, tts_host::path_from_utf8(argv[0]));
+    // Before anything scans the registry, finish or roll back a model update
+    // or revert cut short by a crash or power loss.
+    for (const auto &message : tts_host::recover_interrupted_model_updates(document)) {
+      tts_host::record_activity(message);
+      if (options->headless) std::cout << message << '\n';
+    }
 
     // Launches never create, repoint, or remove the login startup entry; only
     // the Settings switch and the first-run answer do
@@ -521,6 +528,11 @@ int run_main(int argc, char **argv) {
                   << "] -> " << tts_host::path_to_utf8(package.manifest_path) << '\n';
       }
 
+      std::cout << "Previous model versions: " << scan.previous_packages.size() << '\n';
+      for (const auto &package : scan.previous_packages) {
+        std::cout << "  PREV " << package.id << " -> " << tts_host::path_to_utf8(package.package_path) << '\n';
+      }
+
       std::cout << "Unsupported registry entries: " << scan.unsupported_entries.size() << '\n';
       for (const auto &entry : scan.unsupported_entries) {
         std::cout << "  BAD " << tts_host::path_to_utf8(entry.path) << " :: " << entry.reason << '\n';
@@ -604,6 +616,43 @@ int run_main(int argc, char **argv) {
           });
       std::cout << "Installed " << installed.display_name << " (" << installed.id << ") into "
                 << tts_host::path_to_utf8(installed.package_path) << '\n';
+    }
+
+    // Manual model maintenance (docs/design/architecture.md#model-installation-and-updates).
+    // A headless run holds no resident runner, so the package switch needs no guard.
+    if (options->update_model_id.has_value()) {
+      const auto scan = tts_host::scan_model_registry(document);
+      const auto &entries = tts_host::model_catalogue();
+      const auto found = std::find_if(entries.begin(), entries.end(),
+                                      [&](const auto &entry) { return entry.id == *options->update_model_id; });
+      if (found == entries.end()) {
+        throw std::runtime_error("unknown catalogue entry id: " + *options->update_model_id);
+      }
+      std::cout << "Updating " << found->display_name << " (" << found->id << ", "
+                << tts_host::describe_download_size(tts_host::catalogue_entry_size_bytes(*found)) << ")\n";
+      const auto updated = tts_host::update_catalogue_package(
+          *found, scan, document, tts_host::fetch_url_to_file,
+          [](const tts_host::DownloadProgress &download_progress) {
+            std::cout << "  " << download_progress.relative_path << ": " << download_progress.bytes_downloaded
+                      << " / " << download_progress.bytes_total << " bytes\n";
+          },
+          nullptr);
+      std::cout << "Updated " << updated.id << " in " << tts_host::path_to_utf8(updated.package_path) << '\n';
+    }
+    if (options->revert_model_id.has_value()) {
+      tts_host::revert_model_package(*options->revert_model_id, tts_host::scan_model_registry(document), nullptr);
+      std::cout << "Reverted " << *options->revert_model_id << '\n';
+    }
+    if (options->delete_previous_model_id.has_value()) {
+      const auto removed = tts_host::delete_previous_model_versions(*options->delete_previous_model_id,
+                                                                     tts_host::scan_model_registry(document));
+      std::cout << "Deleted " << removed << " previous version(s) of " << *options->delete_previous_model_id << '\n';
+    }
+    if (options->remove_superseded_model_id.has_value()) {
+      const auto removed = tts_host::remove_superseded_model_copies(*options->remove_superseded_model_id,
+                                                                     tts_host::scan_model_registry(document));
+      std::cout << "Removed " << removed << " superseded copy(ies) of " << *options->remove_superseded_model_id
+                << '\n';
     }
 
     if (options->synthesize_text.has_value() || options->use_stdin_text || options->use_clipboard_text) {

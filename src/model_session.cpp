@@ -148,6 +148,14 @@ void ModelSessionManager::unload() {
   unload_locked();
 }
 
+void ModelSessionManager::replace_package(const std::string &model_id,
+                                          const std::function<void()> &switch_package) {
+  std::unique_lock lock(operation_mutex_, std::try_to_lock);
+  if (!lock) throw std::runtime_error("Model is in use; stop speech before replacing " + model_id);
+  if (selection_ && selection_->model_id == model_id) unload_locked();
+  switch_package();
+}
+
 ModelSessionManager::Lease::Lease(ModelSessionManager &owner, std::unique_lock<std::mutex> lock)
     : owner_(&owner), lock_(std::move(lock)) {}
 ModelSessionManager::Lease::Lease(Lease &&other) noexcept

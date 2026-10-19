@@ -1,19 +1,17 @@
 # Active Context
 
-- Mode: session closed; ADR 0010 revisions/two-tier slice done.
-- Branch: `feature/bundled-models`; ADR 0010 capture and the revisions/two-tier
-  slice uncommitted, not pushed.
-- State: catalogue installs record a revision; the registry scans the bundled
-  (`<exe>/models`) and per-user tiers with ADR 0010 precedence, and lists
-  superseded copies. CLI and Settings show local/current/update available.
-  Linux 49/49 CTests; Windows `tts-host` compiles, not run.
-- Next: AFK **Manual catalogue model update** (`roadmap.md`) via
-  `/next-slice`, including removal of superseded per-user copies; also skip
-  dot-prefixed staging/`.previous` folders in the registry scan. Then
-  release package (runner folders), installer.
-- Pending user checks (combined acceptance): Windows rebuild; Settings
-  model status labels; listen to Qwen at
-  0.5/1.5/2.0 in Now Playing; Settings download (WinHTTP) and import of Qwen.
+- Mode: session closed; manual catalogue model update slice done.
+- Branch: `feature/bundled-models`; the update slice (code, tests, design
+  and README) is uncommitted, not pushed. Revisions/two-tier is in `b7b6039`.
+- State: Update/Revert/Delete previous/Remove superseded work in Settings and
+  CLI, with journaled commit and startup recovery. Linux 50/50 CTests; Windows
+  model tests pass and `tts-host` builds.
+- Next: AFK **Two-model release package** (`roadmap.md`) via `/next-slice`
+  in a fresh session. Then the offline installer.
+- Pending user checks (combined acceptance): Windows Settings model status
+  labels and Update/Revert/Delete previous/Remove superseded buttons; listen
+  to Qwen at 0.5/1.5/2.0 in Now Playing; Settings download (WinHTTP) and
+  import of Qwen.
 - Open questions: whether/when Qwen becomes quality default (RTF ≈1.5 warm,
   VRAM unmeasured) — `roadmap.md` open decisions.
 - Blockers: none. No agents/external agent CLIs without approval.
@@ -25,8 +23,13 @@
   intelligibility checks: `HF_HOME=~/.cache/tts-bakeoff/hf
   ~/.cache/tts-bakeoff/venv/bin/python` with `openai/whisper-base`. Never
   change developer login startup; quit Host before replacing its binary.
-  `clipboardOnly` needs manual copy before Ctrl+F8.
-- Discarded as noise: running `tts-host-model-registry-tier-tests` with
+  `clipboardOnly` needs manual copy before Ctrl+F8. Windows build/tests from
+  WSL: `/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe
+  -NoProfile -Command "Set-Location '<repo>'; cmake --build build --config
+  Debug --target <targets>; ctest --test-dir build -C Debug -R <regex>"`.
+- Discarded as noise: Windows ctest "Unable to find executable … Not Run"
+  only means that test target was never built in `build/`; build it by name.
+  Running `tts-host-model-registry-tier-tests` with
   relative paths fails ("missing bundled models/ … unsupported") because
   configured directories resolve against the config folder; use absolute paths
   as CTest does. Older noise: Linux Qwen test "requires a working CUDA runtime" failure

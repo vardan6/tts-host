@@ -38,6 +38,10 @@ struct ModelRegistryScan {
   // Valid packages that lost ADR 0010 tier precedence to a discovered package
   // with the same id; never loaded.
   std::vector<ModelPackageCandidate> superseded_packages;
+  // Versions an update replaced, kept for Revert in a writable directory's
+  // .previous/ (ADR 0010); never loaded. Only identity fields and manifest
+  // are filled in.
+  std::vector<ModelPackageCandidate> previous_packages;
 };
 
 // Scans the configured directories (the writable tier) and, when it is a
@@ -45,7 +49,8 @@ struct ModelRegistryScan {
 // One id twice within a tier is reported as unsupported. One id in both tiers
 // resolves by ADR 0010 precedence: the copy whose revision matches the
 // compiled catalogue wins, otherwise the writable copy; the loser is
-// superseded.
+// superseded. Dot-prefixed folders (staging, journals, .previous/) are not
+// packages.
 ModelRegistryScan scan_model_registry(const ConfigDocument &config);
 
 // Resolves one modelRegistry.directories entry the way scan_model_registry
@@ -62,7 +67,7 @@ std::filesystem::path resolve_registry_directory(const std::filesystem::path &co
 ModelPackageCandidate validate_model_package(const std::filesystem::path &package_path);
 
 // True if two scans differ in what they found: discovered package ids/paths/revisions,
-// superseded paths, or unsupported-entry paths/reasons. Used by directory watching to decide whether
+// superseded and previous-version paths, or unsupported-entry paths/reasons. Used by directory watching to decide whether
 // a poll needs to refresh UI (and reset selection) or can be a no-op, since
 // scan_model_registry re-validates every manifest on every call and always
 // returns a fresh (if identical) result.

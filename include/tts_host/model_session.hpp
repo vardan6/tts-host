@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -71,6 +72,11 @@ class ModelSessionManager {
             std::optional<std::chrono::seconds> idle_override = {});
   void load_eager(const ConfigDocument &config, std::function<bool()> cancelled = {});
   void unload();
+  // Runs `switch_package` while no speech holds the runner, after releasing
+  // a resident runner of `model_id` so its files are closed and the next use
+  // reloads from the new folder. Throws without calling it while speech is
+  // active: an utterance must finish or be stopped before replacement.
+  void replace_package(const std::string &model_id, const std::function<void()> &switch_package);
   Lease acquire(const ModelRunnerSelection &selection, std::function<bool()> cancelled = {},
                 std::optional<std::chrono::seconds> idle_override = {});
   bool unload_if_idle(std::chrono::seconds idle_unload_seconds,

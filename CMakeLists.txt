@@ -182,6 +182,7 @@ add_executable(
   src/model_import.cpp
   src/model_registry.cpp
   src/model_session.cpp
+  src/model_update.cpp
   src/recovering_runner.cpp
   src/now_playing_window.cpp
   src/playback_controller.cpp
@@ -823,6 +824,41 @@ if(BUILD_TESTING)
       tts-host-model-registry-tier-tests
       ${CMAKE_SOURCE_DIR}/schemas
       ${CMAKE_CURRENT_BINARY_DIR}/model-registry-tier-tests
+  )
+
+  # Manual catalogue model update (src/model_update.cpp): staged replacement,
+  # one kept previous version, Revert/Delete, and interrupted-commit recovery,
+  # with a fake fetcher in place of WinHTTP.
+  add_executable(
+    tts-host-model-update-tests
+    src/catalogue_download.cpp
+    src/model_catalogue.cpp
+    src/model_registry.cpp
+    src/model_update.cpp
+    src/sha256.cpp
+    tests/model_update_tests.cpp
+  )
+  target_include_directories(tts-host-model-update-tests PRIVATE include)
+  target_link_libraries(
+    tts-host-model-update-tests
+    PRIVATE
+      nlohmann_json::nlohmann_json
+      ${JSON_SCHEMA_VALIDATOR_TARGET}
+  )
+  if(WIN32)
+    target_link_libraries(tts-host-model-update-tests PRIVATE winhttp)
+  endif()
+  if(MSVC)
+    target_compile_options(tts-host-model-update-tests PRIVATE /W4 /permissive-)
+  else()
+    target_compile_options(tts-host-model-update-tests PRIVATE -Wall -Wextra -Wpedantic)
+  endif()
+  add_test(
+    NAME tts_host_model_update
+    COMMAND
+      tts-host-model-update-tests
+      ${CMAKE_SOURCE_DIR}/schemas
+      ${CMAKE_CURRENT_BINARY_DIR}/model-update-tests
   )
 
   add_executable(

@@ -197,6 +197,20 @@ std::optional<CliOptions> parse_cli(int argc, char **argv, std::string &error_me
       continue;
     }
 
+    if (argument == "--update-model" || argument == "--revert-model" ||
+        argument == "--delete-previous-model" || argument == "--remove-superseded-model") {
+      if (index + 1 >= argc) {
+        error_message = std::string(argument) + " requires a model id";
+        return std::nullopt;
+      }
+      auto &target = argument == "--update-model"     ? options.update_model_id
+                     : argument == "--revert-model"   ? options.revert_model_id
+                     : argument == "--delete-previous-model" ? options.delete_previous_model_id
+                                                       : options.remove_superseded_model_id;
+      target = argv[++index];
+      continue;
+    }
+
     if (argument == "--model-directory") {
       if (index + 1 >= argc) {
         error_message = "--model-directory requires a path";
@@ -293,6 +307,8 @@ std::optional<CliOptions> parse_cli(int argc, char **argv, std::string &error_me
       error_message =
           "Usage: tts-host [--headless [--list-models] [--list-catalogue] [--import-model <path>]\n"
           "                 [--download-model <id> [--model-directory <path>]]\n"
+          "                 [--update-model <id>] [--revert-model <id>]\n"
+          "                 [--delete-previous-model <id>] [--remove-superseded-model <id>]\n"
           "                 [--config <path>]\n"
           "                 [--data-dir <path>]\n"
           "                 [(--synthesize <text> | --stdin | --clipboard) (--out <path.wav> | --play)\n"
@@ -313,6 +329,13 @@ std::optional<CliOptions> parse_cli(int argc, char **argv, std::string &error_me
           "  --model-directory <path>\n"
           "                      with --download-model, which configured model directory to\n"
           "                      install into (default: the first one)\n"
+          "  --update-model <id>  replace an installed catalogue model with the catalogue's\n"
+          "                      revision, keeping the old one for --revert-model (Windows only)\n"
+          "  --revert-model <id>  swap an installed model with its kept previous version\n"
+          "  --delete-previous-model <id>\n"
+          "                      delete the kept previous version of a model\n"
+          "  --remove-superseded-model <id>\n"
+          "                      delete per-user copies of a model that are superseded\n"
           "  --config <path>     load a specific config.json\n"
           "  --data-dir <path>   override the portable or installed data directory\n"
           "  --synthesize <text> synthesize text through a runner process\n"
@@ -340,7 +363,9 @@ std::optional<CliOptions> parse_cli(int argc, char **argv, std::string &error_me
     // assume --headless and are rejected here rather than silently ignored.
     const bool requests_cli_action =
         options.list_models || options.import_model_path.has_value() ||
-        options.download_model_id.has_value() ||
+        options.download_model_id.has_value() || options.update_model_id.has_value() ||
+        options.revert_model_id.has_value() || options.delete_previous_model_id.has_value() ||
+        options.remove_superseded_model_id.has_value() ||
         options.synthesize_text.has_value() || options.use_stdin_text ||
         options.use_clipboard_text || options.output_path.has_value() || options.play_audio ||
         options.runner_path_override.has_value() || options.model_id.has_value() ||

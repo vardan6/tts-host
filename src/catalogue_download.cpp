@@ -76,17 +76,16 @@ bool DownloadProgressThrottle::should_report(const DownloadProgress &progress,
   return true;
 }
 
-ImportedModelPackage download_catalogue_entry(const CatalogueEntry &entry,
-                                              const std::filesystem::path &destination_root,
-                                              const ConfigDocument &config, const HttpFetchFunction &fetch,
-                                              const DownloadProgressCallback &progress) {
-  const auto destination = destination_root / entry.id;
-  std::error_code exists_ec;
-  if (std::filesystem::exists(destination, exists_ec)) {
-    throw std::runtime_error("'" + entry.id + "' is already installed at " + destination.string());
-  }
+std::filesystem::path catalogue_staging_path(const CatalogueEntry &entry,
+                                             const std::filesystem::path &destination_root) {
+  return destination_root / ("." + entry.id + ".downloading");
+}
 
-  const auto staging = destination_root / ("." + entry.id + ".downloading");
+std::filesystem::path stage_catalogue_entry(const CatalogueEntry &entry,
+                                            const std::filesystem::path &destination_root,
+                                            const ConfigDocument &config, const HttpFetchFunction &fetch,
+                                            const DownloadProgressCallback &progress) {
+  const auto staging = catalogue_staging_path(entry, destination_root);
   std::filesystem::create_directories(staging);
 
   for (const auto &file : entry.files) {
@@ -139,7 +138,20 @@ ImportedModelPackage download_catalogue_entry(const CatalogueEntry &entry,
     throw std::runtime_error("the downloaded package '" + entry.id +
                              "' did not validate: " + error.what());
   }
+  return staging;
+}
 
+ImportedModelPackage download_catalogue_entry(const CatalogueEntry &entry,
+                                              const std::filesystem::path &destination_root,
+                                              const ConfigDocument &config, const HttpFetchFunction &fetch,
+                                              const DownloadProgressCallback &progress) {
+  const auto destination = destination_root / entry.id;
+  std::error_code exists_ec;
+  if (std::filesystem::exists(destination, exists_ec)) {
+    throw std::runtime_error("'" + entry.id + "' is already installed at " + destination.string());
+  }
+
+  const auto staging = stage_catalogue_entry(entry, destination_root, config, fetch, progress);
   std::error_code rename_ec;
   std::filesystem::rename(staging, destination, rename_ec);
   if (rename_ec) {

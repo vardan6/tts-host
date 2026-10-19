@@ -27,6 +27,7 @@
 #include "tts_host/selection_capture.hpp"
 #include "tts_host/startup_registration.hpp"
 #include "tts_host/model_session.hpp"
+#include "tts_host/model_update.hpp"
 #include "tts_host/playback_sink.hpp"
 
 namespace tts_host {
@@ -55,6 +56,10 @@ constexpr int kAudioBufferComboId = 120;
 constexpr int kSentencePauseComboId = 121;
 constexpr int kLookaheadComboId = 122;
 constexpr int kResetPlaybackButtonId = 123;
+constexpr int kUpdateModelButtonId = 124;
+constexpr int kRevertModelButtonId = 125;
+constexpr int kDeletePreviousModelButtonId = 126;
+constexpr int kRemoveSupersededModelButtonId = 127;
 constexpr int kSettingsHotkeyProbeId = 2;
 
 // Tab order of the Settings pages; docs/design/architecture.md#desktop-integration.
@@ -744,6 +749,118 @@ void on_download_model_clicked(SettingsState &state, HWND combo, HWND window) {
   }
 }
 
+// Package switches go through the shared session manager, so an active
+// utterance refuses them and a resident runner of the model is released first
+// (docs/design/architecture.md#model-installation-and-updates).
+PackageSwitchGuard session_switch_guard(SettingsState &state) {
+  return [&state](const std::string &model_id, const std::function<void()> &switch_package) {
+    state.sessions.replace_package(model_id, switch_package);
+  };
+}
+
+void on_update_model_clicked(SettingsState &state, HWND combo, HWND window) {
+  const int index = static_cast<int>(SendMessageW(combo, CB_GETCURSEL, 0, 0));
+  if (index < 0 || static_cast<std::size_t>(index) >= state.catalogue_ids.size()) {
+    append_activity_log(state, L"Select a catalogue entry to update.");
+    return;
+  }
+  const auto &entries = model_catalogue();
+  const auto &entry_id = state.catalogue_ids[static_cast<std::size_t>(index)];
+  const auto found = std::find_if(entries.begin(), entries.end(),
+                                  [&](const auto &entry) { return entry.id == entry_id; });
+  if (found == entries.end()) {
+    return;
+  }
+  const auto *installed = catalogue_entry_package(*found, state.last_scan);
+  if (installed == nullptr) {
+    append_activity_log(state, utf8_to_wide(found->id) + L" is not installed; use Download.");
+    return;
+  }
+  if (package_status(*installed) != PackageStatus::update_available) {
+    append_activity_log(state, utf8_to_wide(found->id) + L" has no update: it is " +
+                                   utf8_to_wide(describe_package_status(package_status(*installed))) + L".");
+    return;
+  }
+
+  try {
+    append_activity_log(state, L"Updating " + utf8_to_wide(found->display_name) + L"…");
+    DownloadProgressThrottle throttle(std::chrono::milliseconds(250));
+    update_catalogue_package(
+        *found, state.last_scan, state.document, fetch_url_to_file,
+        [&state, &throttle](const DownloadProgress &progress) {
+          if (!throttle.should_report(progress, std::chrono::steady_clock::now())) {
+            return;
+          }
+          record_transient_activity("download:" + progress.relative_path,
+                                    progress.relative_path + ": " +
+                                        std::to_string(progress.bytes_downloaded) + " / " +
+                                        std::to_string(progress.bytes_total) + " bytes");
+          show_new_activity(state);
+        },
+        session_switch_guard(state));
+    refresh_model_views(state, window);
+    append_activity_log(state, L"Updated " + utf8_to_wide(found->display_name) +
+                                   L". The previous version is kept for Revert.");
+  } catch (const std::exception &error) {
+    append_activity_log(state, L"Update failed; the installed version is unchanged: " +
+                                   utf8_to_wide(error.what()));
+  }
+}
+
+// The model id selected in the Model combo, or empty with a prompt logged.
+std::string selected_model_id(SettingsState &state, HWND combo, const wchar_t *action) {
+  const int index = static_cast<int>(SendMessageW(combo, CB_GETCURSEL, 0, 0));
+  if (index < 0 || static_cast<std::size_t>(index) >= state.model_ids.size()) {
+    append_activity_log(state, std::wstring(L"Select a model to ") + action + L".");
+    return {};
+  }
+  return state.model_ids[static_cast<std::size_t>(index)];
+}
+
+void on_revert_model_clicked(SettingsState &state, HWND combo, HWND window) {
+  const auto model_id = selected_model_id(state, combo, L"revert");
+  if (model_id.empty()) {
+    return;
+  }
+  try {
+    revert_model_package(model_id, scan_model_registry(state.document), session_switch_guard(state));
+    refresh_model_views(state, window);
+    append_activity_log(state, L"Reverted " + utf8_to_wide(model_id) + L" to its previous version.");
+  } catch (const std::exception &error) {
+    append_activity_log(state, L"Revert failed: " + utf8_to_wide(error.what()));
+  }
+}
+
+void on_delete_previous_model_clicked(SettingsState &state, HWND combo, HWND window) {
+  const auto model_id = selected_model_id(state, combo, L"delete the previous version of");
+  if (model_id.empty()) {
+    return;
+  }
+  try {
+    const auto removed = delete_previous_model_versions(model_id, scan_model_registry(state.document));
+    refresh_model_views(state, window);
+    append_activity_log(state, removed ? L"Deleted the previous version of " + utf8_to_wide(model_id) + L"."
+                                       : utf8_to_wide(model_id) + L" has no kept previous version.");
+  } catch (const std::exception &error) {
+    append_activity_log(state, L"Delete failed: " + utf8_to_wide(error.what()));
+  }
+}
+
+void on_remove_superseded_model_clicked(SettingsState &state, HWND combo, HWND window) {
+  const auto model_id = selected_model_id(state, combo, L"remove superseded copies of");
+  if (model_id.empty()) {
+    return;
+  }
+  try {
+    const auto removed = remove_superseded_model_copies(model_id, scan_model_registry(state.document));
+    refresh_model_views(state, window);
+    append_activity_log(state, removed ? L"Removed superseded copies of " + utf8_to_wide(model_id) + L"."
+                                       : utf8_to_wide(model_id) + L" has no removable superseded copy.");
+  } catch (const std::exception &error) {
+    append_activity_log(state, L"Remove failed: " + utf8_to_wide(error.what()));
+  }
+}
+
 void on_idle_timer(SettingsState &state) {
   const auto idle_unload_seconds =
       state.document.value["modelRegistry"]["idleUnloadSeconds"].get<int>();
@@ -792,6 +909,15 @@ std::wstring format_installed_models(const ModelRegistryScan &scan) {
     for (const auto &package : scan.superseded_packages) {
       text += L"\r\n";
       text += utf8_to_wide(package.id) + (package.bundled ? L" [bundled] " : L" [per-user] ");
+      text += package.package_path.wstring();
+    }
+  }
+
+  if (!scan.previous_packages.empty()) {
+    text += L"\r\n\r\nPrevious versions (Revert or Delete previous):";
+    for (const auto &package : scan.previous_packages) {
+      text += L"\r\n";
+      text += utf8_to_wide(package.id) + L" ";
       text += package.package_path.wstring();
     }
   }
@@ -990,6 +1116,14 @@ LRESULT CALLBACK settings_window_proc(HWND window, UINT message, WPARAM wparam, 
           on_import_model_clicked(*state, window);
         } else if (LOWORD(wparam) == kDownloadModelButtonId && HIWORD(wparam) == BN_CLICKED) {
           on_download_model_clicked(*state, GetDlgItem(window, kCatalogueComboId), window);
+        } else if (LOWORD(wparam) == kUpdateModelButtonId && HIWORD(wparam) == BN_CLICKED) {
+          on_update_model_clicked(*state, GetDlgItem(window, kCatalogueComboId), window);
+        } else if (LOWORD(wparam) == kRevertModelButtonId && HIWORD(wparam) == BN_CLICKED) {
+          on_revert_model_clicked(*state, GetDlgItem(window, kModelComboId), window);
+        } else if (LOWORD(wparam) == kDeletePreviousModelButtonId && HIWORD(wparam) == BN_CLICKED) {
+          on_delete_previous_model_clicked(*state, GetDlgItem(window, kModelComboId), window);
+        } else if (LOWORD(wparam) == kRemoveSupersededModelButtonId && HIWORD(wparam) == BN_CLICKED) {
+          on_remove_superseded_model_clicked(*state, GetDlgItem(window, kModelComboId), window);
         } else if (LOWORD(wparam) == kCheckHotkeyButtonId && HIWORD(wparam) == BN_CLICKED) {
           on_check_hotkey_clicked(*state, window, GetDlgItem(window, kReadSelectionHotkeyEditId));
         } else if (LOWORD(wparam) == kStartAtLoginCheckboxId && HIWORD(wparam) == BN_CLICKED) {
@@ -1242,8 +1376,26 @@ void run_settings_window(ConfigDocument &document,
   const HWND download_button = on_page(kModelsPage, CreateWindowExW(
       0, L"BUTTON", L"Download", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 176, 156, 100, 26, window,
       reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kDownloadModelButtonId)), instance, nullptr));
-  if (!download_button) {
-    throw std::runtime_error("failed to create the download-model control");
+  const HWND update_button = on_page(kModelsPage, CreateWindowExW(
+      0, L"BUTTON", L"Update", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 286, 156, 100, 26, window,
+      reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kUpdateModelButtonId)), instance, nullptr));
+  if (!download_button || !update_button) {
+    throw std::runtime_error("failed to create the download/update model controls");
+  }
+
+  // Versions of the model selected above (ADR 0010: one previous version kept).
+  label(kModelsPage, L"Selected model:", 24, 208, 148, 24);
+  const HWND revert_button = on_page(kModelsPage, CreateWindowExW(
+      0, L"BUTTON", L"Revert", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 176, 204, 90, 26, window,
+      reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kRevertModelButtonId)), instance, nullptr));
+  const HWND delete_previous_button = on_page(kModelsPage, CreateWindowExW(
+      0, L"BUTTON", L"Delete previous", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 276, 204, 110, 26, window,
+      reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kDeletePreviousModelButtonId)), instance, nullptr));
+  const HWND remove_superseded_button = on_page(kModelsPage, CreateWindowExW(
+      0, L"BUTTON", L"Remove superseded", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 176, 236, 210, 26, window,
+      reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kRemoveSupersededModelButtonId)), instance, nullptr));
+  if (!revert_button || !delete_previous_button || !remove_superseded_button) {
+    throw std::runtime_error("failed to create the model version controls");
   }
 
   // Server page.

@@ -58,7 +58,7 @@ Synthetic Copy adapter compatibility remains separate open work below.
     — see
     [update design](docs/design/architecture.md#model-installation-and-updates)
     and [ADR 0010](docs/adr/0010-model-revisions-storage-and-release-layout.md).
-  - [ ] **AFK — Manual catalogue model update:** user-triggered staged
+  - [x] **AFK — Manual catalogue model update:** user-triggered staged
     replacement keeping one previous version with Revert/Delete, preserving the
     working package on failure and recovering interrupted commits; verify
     resident-model handling and stable profile references — see

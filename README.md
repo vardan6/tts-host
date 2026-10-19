@@ -202,6 +202,16 @@ LJ001-0001 as its reference voice). The settings window downloads entries on
 Windows; other platforms list them only — use the fetch script above for
 Kokoro, and the Qwen evaluation steps below for Qwen.
 
+When an installed catalogue model shows `update available`, the settings
+window's Update button (or `--update-model <id>`) downloads the catalogue
+revision into staging and swaps it in only after it verifies. The replaced
+version is kept, one per model, under `.previous/` in the model directory:
+Revert (`--revert-model <id>`) swaps back and Delete previous
+(`--delete-previous-model <id>`) removes it. Remove superseded
+(`--remove-superseded-model <id>`) deletes per-user copies that a newer
+bundled copy shadows. Stop speech before updating or reverting the model
+that is speaking.
+
 ## Qwen evaluation
 
 The optional `qwen3-gguf` runner evaluates Qwen Base GGUF packages with CUDA.

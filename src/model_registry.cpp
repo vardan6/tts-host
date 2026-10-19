@@ -205,6 +205,11 @@ void scan_registry_directory(ModelRegistryScan &scan, const std::filesystem::pat
   for (const auto &entry : iterator) {
     const auto package_path = entry.path().lexically_normal();
     const auto manifest_path = package_path / "model.json";
+    // Download staging, update journals, and .previous/ belong to model
+    // installation and updates, not to the registry.
+    if (package_path.filename().string().rfind('.', 0) == 0) {
+      continue;
+    }
 
     if (!entry.is_directory(ec)) {
       if (ec) {
@@ -284,6 +289,40 @@ std::vector<ModelPackageCandidate> drop_duplicate_ids(ModelRegistryScan &scan,
   return unique;
 }
 
+// Lists `<directory>/.previous/<id>@<revision>/` folders. Only the manifest's
+// identity is read: these packages are never loaded, and a relative $schema
+// no longer resolves one folder deeper. Revert validates in place.
+void scan_previous_versions(ModelRegistryScan &scan, const std::filesystem::path &registry_directory) {
+  const auto previous_root = registry_directory / ".previous";
+  std::error_code ec;
+  if (!std::filesystem::is_directory(previous_root, ec)) {
+    return;
+  }
+  for (const auto &entry : std::filesystem::directory_iterator(previous_root, ec)) {
+    const auto package_path = entry.path().lexically_normal();
+    if (!entry.is_directory(ec) || package_path.filename().string().rfind('.', 0) == 0) {
+      continue;
+    }
+    try {
+      const auto manifest_path = package_path / "model.json";
+      const auto manifest = load_json_file(manifest_path, "model manifest");
+      ModelPackageCandidate candidate;
+      candidate.id = manifest.at("id").get<std::string>();
+      candidate.display_name = manifest.at("displayName").get<std::string>();
+      candidate.engine = manifest.at("engine").get<std::string>();
+      candidate.package_path = package_path;
+      candidate.manifest_path = manifest_path;
+      if (manifest.contains("revision")) {
+        candidate.revision = manifest.at("revision").get<std::string>();
+      }
+      candidate.manifest = manifest;
+      scan.previous_packages.push_back(std::move(candidate));
+    } catch (const std::exception &error) {
+      add_unsupported(scan, package_path, error.what());
+    }
+  }
+}
+
 }  // namespace
 
 std::filesystem::path resolve_registry_directory(const std::filesystem::path &config_path,
@@ -326,6 +365,7 @@ ModelRegistryScan scan_model_registry(const ConfigDocument &config) {
         resolve_registry_directory(config.paths.config_path, directory_value.get<std::string>());
     writable_directories.push_back(registry_directory);
     scan_registry_directory(scan, registry_directory, false, writable);
+    scan_previous_versions(scan, registry_directory);
   }
   writable = drop_duplicate_ids(scan, std::move(writable));
 
@@ -367,6 +407,11 @@ ModelRegistryScan scan_model_registry(const ConfigDocument &config) {
               return std::tie(left.id, left.manifest_path) <
                      std::tie(right.id, right.manifest_path);
             });
+  std::sort(scan.previous_packages.begin(), scan.previous_packages.end(),
+            [](const ModelPackageCandidate &left, const ModelPackageCandidate &right) {
+              return std::tie(left.id, left.manifest_path) <
+                     std::tie(right.id, right.manifest_path);
+            });
   std::sort(scan.unsupported_entries.begin(), scan.unsupported_entries.end(),
             [](const UnsupportedRegistryEntry &left, const UnsupportedRegistryEntry &right) {
               return std::tie(left.path, left.reason) < std::tie(right.path, right.reason);
@@ -395,6 +440,15 @@ bool registry_scan_changed(const ModelRegistryScan &previous, const ModelRegistr
   }
   for (std::size_t index = 0; index < previous.superseded_packages.size(); ++index) {
     if (previous.superseded_packages[index].manifest_path != current.superseded_packages[index].manifest_path) {
+      return true;
+    }
+  }
+
+  if (previous.previous_packages.size() != current.previous_packages.size()) {
+    return true;
+  }
+  for (std::size_t index = 0; index < previous.previous_packages.size(); ++index) {
+    if (previous.previous_packages[index].manifest_path != current.previous_packages[index].manifest_path) {
       return true;
     }
   }

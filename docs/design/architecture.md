@@ -509,6 +509,25 @@ rather than silently choosing a different voice. Replacement applies equally to
 bundled packages; installed-mode updates go to the per-user tier and never write
 the application's `models/`.
 
+Staging is the dot-prefixed `.<id>.downloading` folder beside the installed
+one, the same folder a first download uses, so a retry resumes it. The
+registry skips every dot-prefixed entry, which keeps staging, journals, and
+`.previous/` out of discovery. A commit removes the older previous version,
+writes the journal `.<id>.updating` naming the old folder's `.previous/` name,
+renames the old folder there and the staged one into place, then deletes the
+journal. On start, a journal left behind means the commit was cut short:
+recovery installs the staged folder if it validates and otherwise moves the
+old one back. Revert swaps the installed and kept versions through
+`.previous/.<id>.reverting`, so the version reverted from becomes the previous
+one, and puts both back if the restored package does not validate. A kept
+version is listed by its manifest identity only, because a relative `$schema`
+no longer resolves one folder deeper. The package switch runs inside the
+session manager's speech lock: it is refused while an utterance holds the
+runner, and a resident runner of that model is unloaded first, which also
+closes the files Windows would otherwise refuse to rename. Configuration
+references the stable id, so profiles keep working across an update or
+revert.
+
 ## Engines and models
 
 - **Kokoro-82M** — bundled with the application at full precision (ONNX, roughly
