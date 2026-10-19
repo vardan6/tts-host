@@ -1,18 +1,19 @@
 # Active Context
 
-- Mode: session closed; console-window fix implemented, Host link pending.
-- Branch: `feature/bundled-models`; release checkpoint pushed (`3402563`),
-  Settings worker fix committed (`c3a85aa`). Release/build history: `progress.md`.
-- State: `src/runner_launcher.cpp` adds `CREATE_NO_WINDOW` for speech runners.
-  Windows runner inheritance/protocol/audio CTest passes (1/1). The Host source
-  compiles, but replacing `build/Debug/tts-host.exe` failed with LNK1168 while
-  the existing Host was running. Desktop visibility remains unverified.
+- Activity-log repaint fix: read-only EDIT controls now use opaque backgrounds
+  to erase old glyphs when scrolling. Windows compilation passes; link blocked
+  by running Host (LNK1168). After the rebuild below, reopen Settings and scroll
+  the log to verify. Existing combo-selection changes preserved.
+- Mode: STEP closed; console-window fix verified by user; Settings combo fix pending.
+- Branch: `feature/bundled-models`; HEAD `a5e1347`. Uncommitted:
+  `src/settings_window.cpp` keeps the Model/Catalogue combo selection across
+  `refresh_model_views` (was jumping to Kokoro after Delete previous / Remove
+  superseded). Compiles; not linked (LNK1168, Host running). See `progress.md`.
 - Next: user quits TTS Host from tray; run
-  `cmake --build build --config Debug --target tts-host`, then launch
-  `.\build\Debug\tts-host.exe --config config.development.json` and verify
-  startup/model loading creates no terminal. Run pending Settings worker checks.
-  Qwen 1.7B loads in the Debug Host (runner fallback/dependency/if-different
-  copy in `CMakeLists.txt`, uncommitted).
+  `cmake --build build --config Debug --target tts-host`, launch
+  `.\build\Debug\tts-host.exe --config config.development.json`, select Qwen,
+  press Delete previous and Remove superseded — Qwen must stay selected. Then
+  commit the fix and run the remaining Settings worker checks.
 - After that: clean Windows two-model acceptance from `roadmap.md`, including
   offline install, upgrade install, and interactive startup selection.
 - Pending user checks (combined acceptance): Windows Settings model status

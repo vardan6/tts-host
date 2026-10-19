@@ -1075,6 +1075,23 @@ std::wstring pick_model_package_folder(HWND owner) {
   return chosen;
 }
 
+// A refresh repopulates the combos; these keep the user's pick across it
+// instead of falling back to the first entry.
+std::string combo_selected_id(HWND combo, const std::vector<std::string> &ids) {
+  const int index = static_cast<int>(SendMessageW(combo, CB_GETCURSEL, 0, 0));
+  if (index < 0 || static_cast<std::size_t>(index) >= ids.size()) {
+    return {};
+  }
+  return ids[static_cast<std::size_t>(index)];
+}
+
+void reselect_combo_id(HWND combo, const std::vector<std::string> &ids, const std::string &id) {
+  const auto found = std::find(ids.begin(), ids.end(), id);
+  if (!id.empty() && found != ids.end()) {
+    SendMessageW(combo, CB_SETCURSEL, static_cast<WPARAM>(found - ids.begin()), 0);
+  }
+}
+
 // Re-reads the registry into both model views and records the scan they now
 // reflect. Importing and directory watching are what changes what is
 // installed while the window is open; the resident session is left alone, so
@@ -1083,17 +1100,21 @@ void refresh_model_views(SettingsState &state, HWND window) {
   state.last_scan = scan_model_registry(state.document);
   const HWND combo = GetDlgItem(window, kModelComboId);
   if (combo != nullptr) {
+    const auto selected = combo_selected_id(combo, state.model_ids);
     SendMessageW(combo, CB_RESETCONTENT, 0, 0);
     state.model_ids.clear();
     populate_model_combo(combo, state, state.last_scan);
+    reselect_combo_id(combo, state.model_ids, selected);
   }
   append_activity_log(state, L"Installed models and licences updated:\r\n" +
                                  format_installed_models(state.last_scan));
   const HWND catalogue_combo = GetDlgItem(window, kCatalogueComboId);
   if (catalogue_combo != nullptr) {
+    const auto selected = combo_selected_id(catalogue_combo, state.catalogue_ids);
     SendMessageW(catalogue_combo, CB_RESETCONTENT, 0, 0);
     state.catalogue_ids.clear();
     populate_catalogue_combo(catalogue_combo, state, state.last_scan);
+    reselect_combo_id(catalogue_combo, state.catalogue_ids, selected);
   }
 }
 
@@ -1139,6 +1160,16 @@ LRESULT CALLBACK settings_window_proc(HWND window, UINT message, WPARAM wparam, 
     // COLOR_BTNFACE-grey the window itself is painted with below.
     case WM_CTLCOLORSTATIC: {
       const HDC dc = reinterpret_cast<HDC>(wparam);
+      // Read-only EDIT controls also send WM_CTLCOLORSTATIC. They need an
+      // opaque background so scrolling erases the previous text pixels.
+      wchar_t class_name[16]{};
+      GetClassNameW(reinterpret_cast<HWND>(lparam), class_name, 16);
+      if (lstrcmpiW(class_name, L"EDIT") == 0) {
+        SetTextColor(dc, GetSysColor(COLOR_WINDOWTEXT));
+        SetBkColor(dc, GetSysColor(COLOR_BTNFACE));
+        SetBkMode(dc, OPAQUE);
+        return reinterpret_cast<LRESULT>(GetSysColorBrush(COLOR_BTNFACE));
+      }
       SetBkMode(dc, TRANSPARENT);
       return reinterpret_cast<LRESULT>(GetSysColorBrush(COLOR_BTNFACE));
     }
