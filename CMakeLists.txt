@@ -234,6 +234,17 @@ add_executable(
 # the runner, which loads them from its own directory. A model manifest never
 # supplies the runtime.
 set(TTS_HOST_QWEN_RUNTIME_DIR "" CACHE PATH "Pinned llama.cpp b11029 runtime copied beside the Qwen runner")
+# An unset directory falls back to the fetch tool's repo-local output, so a
+# clean Windows configure does not silently drop the runner.
+set(TTS_HOST_QWEN_DEFAULT_RUNTIME_DIR "${CMAKE_CURRENT_SOURCE_DIR}/cache/qwen-evaluation/b11029/runtime")
+if(WIN32 AND NOT TTS_HOST_QWEN_RUNTIME_DIR
+   AND EXISTS "${TTS_HOST_QWEN_DEFAULT_RUNTIME_DIR}/tts-qwen-runtime.txt")
+  set(TTS_HOST_QWEN_RUNTIME_DIR "${TTS_HOST_QWEN_DEFAULT_RUNTIME_DIR}" CACHE PATH
+      "Pinned llama.cpp b11029 runtime copied beside the Qwen runner" FORCE)
+endif()
+if(NOT TTS_HOST_QWEN_RUNTIME_DIR)
+  message(STATUS "Qwen runner disabled: set TTS_HOST_QWEN_RUNTIME_DIR or run tools/fetch_qwen_evaluation_runtime.py")
+endif()
 if(TTS_HOST_QWEN_RUNTIME_DIR)
   FetchContent_Declare(qwen_llama_headers
     URL https://codeload.github.com/ggml-org/llama.cpp/tar.gz/5c53396b89b05666c9d57445b7616a35f6198a16
@@ -251,7 +262,7 @@ if(TTS_HOST_QWEN_RUNTIME_DIR)
   file(TO_CMAKE_PATH "${TTS_HOST_QWEN_RUNTIME_DIR}" QWEN_RUNTIME_PATH)
   tts_host_runner_layout(tts-host-qwen3-gguf-runner qwen3-gguf)
   add_custom_command(TARGET tts-host-qwen3-gguf-runner POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_directory "${QWEN_RUNTIME_PATH}"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory_if_different "${QWEN_RUNTIME_PATH}"
             $<TARGET_FILE_DIR:tts-host-qwen3-gguf-runner>)
   target_link_libraries(tts-host-qwen3-gguf-runner PRIVATE
     nlohmann_json::nlohmann_json ${JSON_SCHEMA_VALIDATOR_TARGET} ${CMAKE_DL_LIBS})
@@ -320,7 +331,7 @@ tts_host_runner_layout(tts-host-kokoro-onnx-runner kokoro-onnx)
 add_custom_command(
   TARGET tts-host-kokoro-onnx-runner POST_BUILD
   COMMAND
-    ${CMAKE_COMMAND} -E copy
+    ${CMAKE_COMMAND} -E copy_if_different
     ${ONNXRUNTIME_RUNTIME_FILE}
     $<TARGET_FILE_DIR:tts-host-kokoro-onnx-runner>/$<IF:$<BOOL:${WIN32}>,onnxruntime.dll,libonnxruntime.so.1>
 )
@@ -333,12 +344,12 @@ if(WIN32)
   add_custom_command(
     TARGET tts-host-kokoro-onnx-runner POST_BUILD
     COMMAND
-      ${CMAKE_COMMAND} -E copy
+      ${CMAKE_COMMAND} -E copy_if_different
       "${ESPEAK_NG_EXECUTABLE}"
       "${ESPEAK_NG_LIBRARY}"
       $<TARGET_FILE_DIR:tts-host-kokoro-onnx-runner>
     COMMAND
-      ${CMAKE_COMMAND} -E copy_directory
+      ${CMAKE_COMMAND} -E copy_directory_if_different
       "${ESPEAK_NG_DATA_DIR}"
       $<TARGET_FILE_DIR:tts-host-kokoro-onnx-runner>/espeak-ng-data
   )
@@ -346,6 +357,11 @@ endif()
 
 target_include_directories(tts-host PRIVATE include ${boost_headers_SOURCE_DIR})
 target_compile_definitions(tts-host PRIVATE BOOST_ERROR_CODE_HEADER_ONLY)
+# Building the Host alone (an IDE startup project) also refreshes its runners.
+add_dependencies(tts-host tts-host-kokoro-onnx-runner)
+if(TARGET tts-host-qwen3-gguf-runner)
+  add_dependencies(tts-host tts-host-qwen3-gguf-runner)
+endif()
 
 target_link_libraries(
   tts-host

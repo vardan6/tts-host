@@ -10,8 +10,9 @@
 - Next: user quits TTS Host from tray; run
   `cmake --build build --config Debug --target tts-host`, then launch
   `.\build\Debug\tts-host.exe --config config.development.json` and verify
-  startup/model loading creates no terminal. Run pending Settings worker checks
-  and retry loading the downloaded Qwen 1.7B model (Debug runner now built).
+  startup/model loading creates no terminal. Run pending Settings worker checks.
+  Qwen 1.7B loads in the Debug Host (runner fallback/dependency/if-different
+  copy in `CMakeLists.txt`, uncommitted).
 - After that: clean Windows two-model acceptance from `roadmap.md`, including
   offline install, upgrade install, and interactive startup selection.
 - Pending user checks (combined acceptance): Windows Settings model status
@@ -29,8 +30,7 @@
   points at Debug Host; left for the user per `PROJECT.md`.
 - Environment: Debug `build/` is configured with
   `TTS_HOST_QWEN_RUNTIME_DIR=…/cache/qwen-evaluation/b11029/runtime` (same as
-  `build-release`); a new build folder needs it set or the Qwen runner is not built. At 22:51
-  `build/` was wiped and re-configured from outside the repo without it; re-set.
+  `build-release`); configure now falls back to it when unset (Windows), and `tts-host` depends on its runners.
   Linux Qwen runs need
   `LD_LIBRARY_PATH=~/.cache/tts-bakeoff/llama/b11029/cudart-llama-b11029-bin-ubuntu-cuda-13.3-x64:/usr/lib/wsl/lib`.
   A catalogue Qwen package (Windows) persists in
@@ -49,6 +49,9 @@
   Debug --target <targets>; ctest --test-dir build -C Debug -R <regex>"`.
 - Discarded as noise: Host already uses the GUI subsystem; the speech runner
   lacked `CREATE_NO_WINDOW`. LNK1168 is a running-executable lock, not a compiler
-  failure. Missing Qwen runner was a Debug CMake configuration issue; see progress.
+  failure. Missing Qwen runner was a Debug CMake configuration issue (a clean configure
+  without the runtime dir); runtime-copy "Permission denied" was a loaded runner
+  holding its DLLs — both fixed, see progress. Grep for the Qwen name trips the
+  harness guard; use a script file.
   Build test targets before CTest; GUI Host output must be piped for PowerShell
   to wait and set `$LASTEXITCODE`.

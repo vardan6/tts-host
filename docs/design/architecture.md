@@ -581,7 +581,9 @@ Current upstream evidence:
 The trusted Qwen evaluation runner uses llama.cpp **b11029**, commit
 `5c53396b89b05666c9d57445b7616a35f6198a16`. Its optional CMake target uses
 pinned headers and an application-owned runtime directory configured with
-`TTS_HOST_QWEN_RUNTIME_DIR`; a model cannot select libraries or an executable.
+`TTS_HOST_QWEN_RUNTIME_DIR` (on Windows, unset falls back to the preparation
+tool's `cache/qwen-evaluation/b11029/runtime`); a model cannot select libraries
+or an executable.
 The Windows preparation tool pins the CUDA 12.4 x64 runtime archives by
 SHA-256. This is a developer build layout; the release runner/runtime layout is
 still to be decided (see [Distribution](#distribution)).

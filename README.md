@@ -216,15 +216,18 @@ that is speaking.
 
 The optional `qwen3-gguf` runner runs Qwen Base GGUF packages with CUDA. The
 build copies the pinned runtime beside it into `runners/qwen3-gguf/`, where it
-loads it from. On Windows, prepare the runtime and enable the target (Python is
-a development tool only):
+loads it from. On Windows, prepare the runtime once (Python is a development
+tool only); configure finds it at `cache/qwen-evaluation/b11029/runtime` when
+`TTS_HOST_QWEN_RUNTIME_DIR` is unset, and otherwise reports the runner disabled:
 
 ```powershell
-python tools/fetch_qwen_evaluation_runtime.py --cache cache/qwen-downloads --out cache/qwen-runtime-b11029
-$qwenRuntime = (Resolve-Path cache/qwen-runtime-b11029).Path
-cmake -S . -B build "-DTTS_HOST_QWEN_RUNTIME_DIR=$qwenRuntime"
+python tools/fetch_qwen_evaluation_runtime.py --cache cache/qwen-evaluation/b11029 --out cache/qwen-evaluation/b11029/runtime
+cmake -S . -B build
 cmake --build build --config Debug --parallel
 ```
+
+Building `tts-host` also builds its runners. Runtime files are copied only when
+they differ, so rebuilding while a runner has them loaded succeeds.
 
 Package local Qwen Base backbone/mmproj files and a reference recording whose
 use is permitted. Include a text file recording that reference's provenance
