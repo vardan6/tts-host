@@ -679,7 +679,12 @@ Three UI surfaces, divided by task:
   The record is bounded, in memory only, and never holds selected or spoken
   text. Download progress is transient: each file's progress replaces its own
   newest entry and is shown at most every 250 ms, so a download cannot evict
-  earlier messages; start, completion, and failure stay separate entries. Restart-requiring settings are marked. It opens independently of the tray (`tts-host --settings`), so a
+  earlier messages; start, completion, and failure stay separate entries.
+  Download, Update, and Import run one at a time off the window's message
+  loop, which stays responsive; registry-changing buttons are disabled
+  meanwhile. Cancel stops a download at its next read and keeps the partial
+  file for resume. Closing Settings mid-operation cancels a download, or waits
+  for an import's copy, before the window goes. Restart-requiring settings are marked. It opens independently of the tray (`tts-host --settings`), so a
   platform with no usable tray still has a full path to configuration.
 
 The global hotkey and selection capture belong to the host: it is already

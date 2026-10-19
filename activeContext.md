@@ -1,14 +1,17 @@
 # Active Context
 
-- Mode: session closed; test-fixture abort-dialog fix done; release package and installer remain uncommitted.
-- Branch: `feature/bundled-models`; both slices uncommitted, not pushed.
+- Mode: session closed; unplanned Settings freeze fix committed, compiled only — not linked or verified.
+- Branch: `feature/bundled-models`; release slices committed and pushed (`3402563`).
+  Then: Settings model-task worker fix (`src/settings_window.cpp`) —
+  Download/Update/Import froze the window ("Not Responding") on the UI thread.
 - State: `scripts/release-win.ps1` builds the zip and the Inno Setup
   installer into `build-release/dist/`; both models speak from a clean
   extracted zip and from a silent temp install. Models staged once in
   `cache/release-models`.
 - Latest maintenance: failure fixture now reports exceptions and exits unsuccessfully;
   Windows Debug regression and recovery checks pass (4/4). See `progress.md`.
-- Next: HITL **Clean Windows two-model acceptance** (`roadmap.md`) on a clean
+- Next: quit the running Debug Host, link and test the Settings worker fix,
+  user checks Download responsiveness/Cancel/resume; then HITL **Clean Windows two-model acceptance** (`roadmap.md`) on a clean
   machine with networking off, including an upgrade install over an existing
   one and the interactive startup tick.
 - Pending user checks (combined acceptance): Windows Settings model status
@@ -21,7 +24,8 @@
   VRAM unmeasured) — `roadmap.md` open decisions. Linux Qwen with the new
   runner-folder loading is unbuilt and unverified (only Windows has the
   runtime configured).
-- Blockers: none. No agents/external agent CLIs without approval. This
+- Blockers: the running Debug Host (`build\Debug\tts-host.exe`) locks the exe; the
+  worker fix compiled with no warnings but link (LNK1168) and tests wait for the user to quit it. No agents/external agent CLIs without approval. This
   machine has a pre-existing `HKCU\…\Run\TTS Host` entry pointing at
   `build\Debug\tts-host.exe` (against `PROJECT.md`); left for the user.
 - Environment: Linux Qwen runs need

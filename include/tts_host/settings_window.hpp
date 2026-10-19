@@ -35,7 +35,8 @@ class ModelSessionManager;
 // verifies, and installs the entry through the same
 // tts_host/catalogue_download.hpp path `--download-model` uses, into the
 // first configured modelRegistry.directories entry, then refreshes the model
-// views.
+// views. Download, Update, and Import run on a worker thread so the window
+// keeps responding; Cancel stops a download and keeps its partial file.
 void run_settings_window(ConfigDocument &document,
                          const std::filesystem::path &runner_directory,
                          ModelSessionManager *sessions = nullptr);
