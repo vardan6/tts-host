@@ -232,9 +232,13 @@ connected prose and sentence transitions.
   A failed or interrupted update preserves the working package and selected
   profile. Successful updates preserve the package identity and refresh its
   available voices and capabilities. The user can revert an updated package to
-its previous version. Locally imported packages are never offered updates.
-Automatic upstream model-version checks
-  and automatic model updates are outside this scope.
+  its previous version. Locally imported packages are never offered updates.
+  Automatic upstream model-version checks and automatic model updates are
+  outside this scope.
+- Users can remove a model they added or downloaded, verify a catalogue model
+  against its pinned checksums and repair only damaged files, and open a
+  model's folder from Settings. Packages bundled with an installed application
+  are not removable from the application.
 - Portable mode keeps configuration, model packages, logs, and other mutable
   data in user-visible portable locations. Installed mode uses normal per-user
   OS data directories.

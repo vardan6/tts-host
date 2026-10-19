@@ -528,6 +528,49 @@ closes the files Windows would otherwise refuse to rename. Configuration
 references the stable id, so profiles keep working across an update or
 revert.
 
+### Model removal, repair, and maintenance actions
+
+Agreed 2026-10-19; applies to every platform's native Settings, built on
+Windows first. There is no separate force-update or reinstall action: a
+pinned catalogue revision re-downloads identical bytes, so a full
+re-download is Remove followed by Download, and damage is handled by Repair.
+
+- **Remove…** deletes a per-user, imported, or superseded package. A
+  confirmation shows the space freed and deletes the kept `.previous/`
+  version too, unless the user ticks to keep it. Profiles that reference the
+  id are listed before removal and are reported unavailable afterwards, never
+  switched silently. Removal takes the same speech lock as update: refused
+  during an utterance, resident runner unloaded first. Removing a per-user
+  copy that shadowed a bundled one makes the bundled copy active again, and
+  the confirmation says so. In installed mode a bundled package is read-only
+  ([ADR 0010](../adr/0010-model-revisions-storage-and-release-layout.md)):
+  Remove is disabled with "Bundled with the app". Portable mode has no
+  read-only tier, so every package is removable; removing the last one warns
+  that nothing will be left to speak with.
+- **Verify and repair…** applies to catalogue packages only (imports have no
+  pinned checksums). It hashes every file against the compiled catalogue
+  entry, reports damaged or missing files with their size, and on
+  confirmation downloads only those into the `.<id>.downloading` staging
+  folder, carries the good files over without a second full copy, validates,
+  and commits through a journal so an interrupted repair recovers on the next
+  start like an update. The damaged copy is discarded, not kept as the previous
+  version, and an existing `.previous/` version is left untouched. Hashing a
+  multi-gigabyte package runs on the model-task worker with progress and
+  Cancel. A damaged bundled package in installed mode is reported only, with
+  "reinstall or upgrade the application" as the action, because the Host
+  never writes the application's `models/`.
+- **Open folder** reveals the selected package folder (a superseded row opens
+  that copy); **Open models folder** opens the writable tier. Manual deletion
+  there is picked up by directory watching; a package whose runner is resident
+  cannot be deleted on Windows, so Settings says to unload it first.
+- **Layout:** Load, Unload, Download, and Update stay buttons. Revert, Delete
+  previous, Remove superseded, Remove…, Verify and repair…, and Open folder
+  live behind one **More ▾** menu that lists only the actions valid for the
+  selected package. Actions that cannot apply are disabled, never answered
+  with a refusal in the log. A later unified model list (installed and
+  not-installed catalogue rows, source/status/size/loaded columns, a details
+  pane replacing the registry dump in the activity log) reuses the same menu.
+
 ## Engines and models
 
 - **Kokoro-82M** — bundled with the application at full precision (ONNX, roughly

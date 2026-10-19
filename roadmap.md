@@ -79,10 +79,29 @@ Synthetic Copy adapter compatibility remains separate open work below.
     and [distribution design](docs/design/architecture.md#distribution).
     Bundled models stay read-only; additions live in per-user storage — see
     [ADR 0010](docs/adr/0010-model-revisions-storage-and-release-layout.md).
+  - [ ] **HITL — Review and merge `feature/bundled-models`:** cross-review
+    `main..feature/bundled-models` (only `5af176b` was reviewed), triage, fix,
+    and merge; the slices below continue on a new branch — no doc governs:
+    review of already-implemented work.
+  - [ ] **AFK — Model removal, open folder, and maintenance menu:** Remove…
+    with previous-version and profile handling, Open folder / Open models
+    folder, and the More ▾ menu enabling only valid actions (Revert, Delete
+    previous, Remove superseded move into it) — see
+    [maintenance design](docs/design/architecture.md#model-removal-repair-and-maintenance-actions)
+    and [ADR 0010](docs/adr/0010-model-revisions-storage-and-release-layout.md).
+  - [ ] **AFK — Verify and repair catalogue models:** hash against the
+    pinned catalogue, report damage, re-download only damaged files, commit
+    in place with recovery; bundled installed-mode packages report only — see
+    [maintenance design](docs/design/architecture.md#model-removal-repair-and-maintenance-actions).
   - [ ] **HITL — Clean Windows two-model acceptance:** verify offline install,
-    both models speaking, model selection, local/catalogue additions, and a
-    manual update on supported hardware — see
+    both models speaking, model selection, local/catalogue additions, a
+    manual update, removal, and verify/repair on supported hardware — see
     [distribution requirements](docs/requirements/product.md#distribution-and-usability).
+  - [ ] **AFK — Unified Settings model list:** one list of installed and
+    not-installed catalogue packages with source/status/size/loaded columns
+    and a details pane replacing the registry dump, reusing the More ▾ menu —
+    see
+    [maintenance design](docs/design/architecture.md#model-removal-repair-and-maintenance-actions).
 - [ ] **AFK — Synthetic Copy compatibility verification:** validate
   focused-control identification, modifier handling, and clipboard
   ownership/preservation for each adapter before enabling it. Unknown targets
