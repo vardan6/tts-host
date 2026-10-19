@@ -815,7 +815,7 @@ it slower to start and harder to inspect, update, and repair.
 tts-host/
   tts-host.exe
   runners/
-    kokoro/        runner + ONNX Runtime
+    kokoro-onnx/   runner + ONNX Runtime + espeak-ng
     qwen3-gguf/    runner + llama.cpp, ggml, CUDA libraries
   schemas/
   models/
@@ -833,12 +833,19 @@ llama.cpp build ships; without a usable NVIDIA GPU, Qwen is listed unavailable
 with a reason. See
 [ADR 0010](../adr/0010-model-revisions-storage-and-release-layout.md).
 
-Producing the zip is implemented today via CMake's `package` target (CPack,
-`ZIP` generator; see `CMakeLists.txt`) — run it after a normal build. Its
-current output is still flat: the runner and its private runtime library sit
-directly beside `tts-host`, matching the `tts-host-<engine>-runner` naming
-`src/main.cpp` resolves against. The two-model release package moves it to the
-tree above.
+A runner folder is named by its engine ID and holds
+`tts-host-<engine>-runner`. The development build uses the same tree, so the
+host resolves runners identically in both. The MSVC runtime DLLs ship
+app-local beside every executable, because each runner resolves its imports
+from its own folder and a clean machine may lack the VC++ redistributable.
+
+CMake's `package` target (CPack, `ZIP`) produces the zip from a Release build.
+`TTS_HOST_RELEASE=ON` makes it the shipping package: it needs the pinned
+llama.cpp runtime and a staging directory of catalogue installs of both bundled
+packages, so each carries its catalogue revision. Its last install step fails
+on any missing runner, runtime library, licence, or package file.
+`scripts/release-win.ps1` stages the packages, builds, packages, and has both
+models synthesize from a freshly extracted copy.
 
 The portable zip remains a release format. The Windows installer must also
 ship both Kokoro and the ADR 0009 Qwen package plus their complete
@@ -848,7 +855,18 @@ single-model distribution. The installer is per-user, into
 `%LOCALAPPDATA%\Programs\TTS Host` without elevation, and installs the same
 tree minus `portable.marker`. Its startup choice
 follows [Login startup](#login-startup): pre-ticked from
-`startup.launchOnLogin`, written to the OS registration, removed on uninstall. Unzip-and-run
+`startup.launchOnLogin`, written to the OS registration, removed on uninstall.
+
+The installer is an Inno Setup 6 script, `installer/tts-host.iss`, compiled
+by `scripts/release-win.ps1` from the same release tree. It seeds the per-user
+`config.json` once, so an upgrade keeps the user's settings, and refreshes the
+`schemas/` beside it on every install. An upgrade replaces `runners/`,
+`models/`, `schemas/`, and `licenses/` in the application folder wholesale.
+The per-user data directory, with its downloaded, updated, and imported
+packages, is never touched by an upgrade or an uninstall. The startup answer
+writes the same Run command the Host writes and the first-run marker, so the
+Host does not ask again. Uninstall deletes the Run entry only when it starts
+this copy. Unzip-and-run
 needs no code signing, whereas an unsigned installer triggers SmartScreen, which
 is worse for a non-developer than a folder they double-click.
 

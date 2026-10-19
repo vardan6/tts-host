@@ -78,11 +78,7 @@ std::filesystem::path executable_dir(const std::filesystem::path &argv0) {
 }
 
 std::filesystem::path default_runner_path(const std::filesystem::path &argv0) {
-#ifdef _WIN32
-  return executable_dir(argv0) / "tts-host-stub-runner.exe";
-#else
-  return executable_dir(argv0) / "tts-host-stub-runner";
-#endif
+  return tts_host::runner_path_for_engine("stub", executable_dir(argv0));
 }
 
 std::string join_languages(const std::vector<std::string> &languages) {

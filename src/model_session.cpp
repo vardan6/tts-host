@@ -11,11 +11,12 @@
 namespace tts_host {
 
 std::filesystem::path runner_path_for_engine(const std::string &engine,
-                                             const std::filesystem::path &runner_directory) {
+                                             const std::filesystem::path &application_directory) {
+  const auto directory = application_directory / "runners" / path_from_utf8(engine);
 #ifdef _WIN32
-  return runner_directory / ("tts-host-" + engine + "-runner.exe");
+  return directory / path_from_utf8("tts-host-" + engine + "-runner.exe");
 #else
-  return runner_directory / ("tts-host-" + engine + "-runner");
+  return directory / path_from_utf8("tts-host-" + engine + "-runner");
 #endif
 }
 

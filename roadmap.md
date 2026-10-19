@@ -64,7 +64,7 @@ Synthetic Copy adapter compatibility remains separate open work below.
     resident-model handling and stable profile references — see
     [update design](docs/design/architecture.md#model-installation-and-updates)
     and [ADR 0010](docs/adr/0010-model-revisions-storage-and-release-layout.md).
-  - [ ] **AFK — Two-model release package:** move runners into
+  - [x] **AFK — Two-model release package:** move runners into
     `runners/<engine>/` with their libraries beside them, removing the Qwen
     compiled-in runtime path and DLL search setup; package Kokoro, selected
     Qwen, all voice/tokenizer assets, runtimes, and licences; fail packaging if
@@ -72,7 +72,7 @@ Synthetic Copy adapter compatibility remains separate open work below.
     extracted artifact with networking disabled — see
     [distribution design](docs/design/architecture.md#distribution) and
     [ADR 0010](docs/adr/0010-model-revisions-storage-and-release-layout.md).
-  - [ ] **AFK — Offline Windows installer:** per-user, after the two-model
+  - [x] **AFK — Offline Windows installer:** per-user, after the two-model
     artifact, install both models with no network or developer runtime;
     preserve model updates and added packages across application upgrades — see
     [distribution requirements](docs/requirements/product.md#distribution-and-usability)

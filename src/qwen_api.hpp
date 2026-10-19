@@ -1,7 +1,9 @@
 #pragma once
 
-// Private ABI boundary for the pinned llama.cpp b11029 evaluation runtime.
-// Loading absolute application-owned libraries keeps model packages data-only.
+// Private ABI boundary for the pinned llama.cpp b11029 runtime, which ships
+// beside the runner (ADR 0010). Loading absolute application-owned libraries
+// keeps model packages data-only; their own dependencies, including the CUDA
+// libraries ggml-cuda loads, resolve through the executable-directory search.
 #include "llama.h"
 #include "ggml-backend.h"
 #include "mtmd.h"
@@ -17,29 +19,6 @@
 #endif
 
 namespace tts_host {
-class QwenSearchPath {
- public:
-  explicit QwenSearchPath(const std::filesystem::path &directory) {
-#ifdef _WIN32
-    // ggml itself loads backend DLLs; their CUDA dependencies must also resolve
-    // in this application-owned directory, not the current working directory.
-    if (!SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_DEFAULT_DIRS) ||
-        !(cookie_ = AddDllDirectory(directory.c_str())))
-      throw std::runtime_error("Cannot configure the Qwen runtime DLL search directory");
-#else
-    (void)directory;
-#endif
-  }
-  ~QwenSearchPath() {
-#ifdef _WIN32
-    if (cookie_) RemoveDllDirectory(cookie_);
-#endif
-  }
- private:
-#ifdef _WIN32
-  DLL_DIRECTORY_COOKIE cookie_{};
-#endif
-};
 class QwenLibrary {
  public:
   explicit QwenLibrary(const std::filesystem::path &path) {
@@ -107,7 +86,7 @@ class QwenApi {
   static constexpr auto mtmd_name = "libmtmd.so";
 #endif
   explicit QwenApi(const std::filesystem::path &directory)
-      : search_path_(directory), base_(directory / base_name), ggml_(directory / ggml_name),
+      : base_(directory / base_name), ggml_(directory / ggml_name),
         llama_(directory / llama_name), mtmd_(directory / mtmd_name) {
 #define BIND_LLAMA(name) name = llama_.symbol<decltype(name)>(#name);
     TTS_QWEN_LLAMA_API(BIND_LLAMA)
@@ -132,7 +111,6 @@ class QwenApi {
   TTS_QWEN_MTMD_API(DECLARE)
 #undef DECLARE
  private:
-  QwenSearchPath search_path_;
   QwenLibrary base_, ggml_, llama_, mtmd_;
 };
 #undef TTS_QWEN_LLAMA_API

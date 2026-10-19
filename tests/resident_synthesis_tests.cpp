@@ -39,6 +39,7 @@ int main(int argc, char **argv) {
       ~Cleanup() { std::error_code error; std::filesystem::remove_all(path, error); }
     } cleanup{scratch};
     const auto runner = tts_host::runner_path_for_engine("stub", scratch);
+    std::filesystem::create_directories(runner.parent_path());
     std::filesystem::copy_file(argv[1], runner);
     const auto events = scratch / "events.txt";
     env("TTS_TEST_RUNNER_MODE", "normal");

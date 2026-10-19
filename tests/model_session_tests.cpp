@@ -121,7 +121,9 @@ int main(int argc, char **argv) {
       std::ofstream(package / "model.json") << manifest.dump();
       std::ofstream(package / tts_host::path_from_utf8(model_name)) << "model";
       std::ofstream(package / tts_host::path_from_utf8(voice_name)) << "voice";
-      std::filesystem::copy_file(stub_runner, root / stub_runner.filename());
+      const auto unicode_runner = tts_host::runner_path_for_engine("stub", root);
+      std::filesystem::create_directories(unicode_runner.parent_path());
+      std::filesystem::copy_file(stub_runner, unicode_runner);
       auto unicode_config = config;
       unicode_config.paths.config_path = root / "config.json";
       unicode_config.value["modelRegistry"]["directories"] =
@@ -147,7 +149,7 @@ int main(int argc, char **argv) {
       // DLL/API-version mismatch; its runner still compiles in that build.
       const auto kokoro = tts_host::runner_path_for_engine("kokoro-onnx", runner_directory);
       std::filesystem::copy_file(kokoro, root / kokoro.filename());
-      std::filesystem::copy_file(runner_directory / "libonnxruntime.so.1",
+      std::filesystem::copy_file(kokoro.parent_path() / "libonnxruntime.so.1",
                                  root / "libonnxruntime.so.1");
       std::filesystem::copy_file(std::filesystem::path(argv[2]).parent_path() /
                                     "../kokoro_runner/placeholder.onnx", selected.model_path,
@@ -192,7 +194,9 @@ int main(int argc, char **argv) {
       std::ofstream(package / "reference-license.txt") << "test fixture";
       const auto save = [&] { std::ofstream(package / "model.json") << manifest.dump(); };
       save();
-      std::filesystem::copy_file(stub_runner, tts_host::runner_path_for_engine("qwen3-gguf", root));
+      const auto qwen_runner = tts_host::runner_path_for_engine("qwen3-gguf", root);
+      std::filesystem::create_directories(qwen_runner.parent_path());
+      std::filesystem::copy_file(stub_runner, qwen_runner);
       auto qwen_config = config;
       qwen_config.paths.config_path = root / "config.json";
       qwen_config.value["modelRegistry"]["directories"] = nlohmann::json::array({"models"});

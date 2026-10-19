@@ -27,13 +27,14 @@ struct ModelRunnerSelection {
   std::optional<std::filesystem::path> voice_path;
 };
 
+// ADR 0010 layout: <application directory>/runners/<engine>/tts-host-<engine>-runner.
 std::filesystem::path runner_path_for_engine(const std::string &engine,
-                                             const std::filesystem::path &runner_directory);
+                                             const std::filesystem::path &application_directory);
 
 // Resolves a model id against the configured registry
 // (docs/design/architecture.md#model-packages-and-discovery). Throws if the id
 // names no discovered package, or if no runner for the package's engine is
-// installed in runner_directory.
+// installed under runner_directory (the application directory).
 ModelRunnerSelection resolve_model_runner_selection(const std::string &model_id,
                                                     const ConfigDocument &config,
                                                     const std::filesystem::path &runner_directory);

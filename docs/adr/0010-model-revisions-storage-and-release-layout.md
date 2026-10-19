@@ -34,7 +34,7 @@ that an update supersedes stays where it is as its previous version: reverting
 removes the per-user copy. There is no separate downloads archive.
 
 **Release layout.** Each runner lives in its own folder with its private
-libraries beside it: `runners/kokoro/` (runner and ONNX Runtime) and
+libraries beside it: `runners/kokoro-onnx/` (runner and ONNX Runtime) and
 `runners/qwen3-gguf/` (runner, llama.cpp, ggml, CUDA libraries). Windows finds
 the libraries through the executable-directory DLL search, and Linux through
 rpath `$ORIGIN`. This replaces the compiled-in `TTS_QWEN_RUNTIME_DIR` and the
@@ -82,7 +82,8 @@ Runtime and the CUDA/ggml stack apart without runtime search-path code.
 ## Consequences
 
 - The host's runner resolution changes from flat `tts-host-<engine>-runner`
-  beside the executable to `runners/<engine>/`. The CPack layout and the
+  beside the executable to `runners/<engine>/`. Folders take the engine ID
+  (`kokoro-onnx`, not `kokoro`); amended 2026-10-19 with the user. The CPack layout and the
   development build output must follow it.
 - In installed mode the registry scans two directories with defined precedence,
   and catalogue installs target the per-user tier.

@@ -22,11 +22,24 @@ class QwenRequestRejected : public RunnerProtocolError {
   using RunnerProtocolError::RunnerProtocolError;
 };
 
-// Models never supply executable paths or code. This directory is selected by
-// the developer at build time; release-layout decisions are a separate slice.
+// The pinned runtime lives beside this executable (ADR 0010). Models never
+// supply executable paths or code.
+std::filesystem::path runner_directory() {
+#ifdef _WIN32
+  std::wstring path(32768, L'\0');
+  const auto length = GetModuleFileNameW(nullptr, path.data(), static_cast<DWORD>(path.size()));
+  if (length == 0 || length >= path.size())
+    throw std::runtime_error("Cannot resolve the Qwen runner directory");
+  path.resize(length);
+  return std::filesystem::path(path).parent_path();
+#else
+  return std::filesystem::canonical("/proc/self/exe").parent_path();
+#endif
+}
+
 class QwenRunner {
  public:
-  QwenRunner() : api_(path_from_utf8(TTS_QWEN_RUNTIME_DIR)) {}
+  QwenRunner() : api_(runner_directory()) {}
   ~QwenRunner() { unload(); }
   void unload() {
     if (generator_) api_.mtmd_helper_gen_audio_free(generator_);

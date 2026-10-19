@@ -214,9 +214,10 @@ that is speaking.
 
 ## Qwen evaluation
 
-The optional `qwen3-gguf` runner evaluates Qwen Base GGUF packages with CUDA.
-It is separate from the bundled release/installer work. On Windows, prepare the
-pinned runtime and enable the target (Python is a development tool only):
+The optional `qwen3-gguf` runner runs Qwen Base GGUF packages with CUDA. The
+build copies the pinned runtime beside it into `runners/qwen3-gguf/`, where it
+loads it from. On Windows, prepare the runtime and enable the target (Python is
+a development tool only):
 
 ```powershell
 python tools/fetch_qwen_evaluation_runtime.py --cache cache/qwen-downloads --out cache/qwen-runtime-b11029
@@ -351,21 +352,38 @@ server and has no effect yet.
 
 ## Package a release
 
-The `package` target assembles the self-contained, zip-distributable release
-described in `docs/design/architecture.md`'s "Distribution" section: `tts-host`,
-the Kokoro runner and its ONNX Runtime library, the espeak-ng data, `schemas/`,
-`config.json`, a `portable.marker`, and the bundled Kokoro model if
-`models/kokoro-en-v1/` exists locally. Build first — CPack's `package` target
-does not rebuild for you:
+The Windows release is a zip of the tree in `docs/design/architecture.md`'s
+"Distribution" section: `tts-host.exe`, `runners/kokoro-onnx/` (runner, ONNX
+Runtime, espeak-ng), `runners/qwen3-gguf/` (runner, llama.cpp, ggml, CUDA
+runtime), the MSVC runtime beside each executable, `schemas/`, `licenses/`,
+`config.json`, `portable.marker`, and both bundled models. One script builds
+and checks it:
 
-```sh
-cmake --build build-linux --parallel
-cmake --build build-linux --target package           # Linux/macOS
-cmake --build build --config Debug --target package  # Windows
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/release-win.ps1
 ```
 
-The zip lands in `build-linux/dist/` on Linux/macOS and `build/dist/` on
-Windows. There is no installer yet; unzip and run.
+It reuses or fetches the pinned Qwen runtime, configures `build-release` with
+`TTS_HOST_RELEASE=ON`, builds Release, stages `kokoro-en-v1` and
+`qwen3-tts-1.7b` once into `cache/release-models` through the download
+catalogue (about 1.7 GB), and packages them into `build-release/dist/`.
+Packaging fails if any runner, library, licence, or model file is missing.
+Then it extracts the zip into a temporary folder and has each model synthesize
+a sentence there. Last, it compiles the per-user installer
+`build-release/dist/tts-host-<version>-setup.exe` from the same tree with
+[Inno Setup 6](https://jrsoftware.org/isinfo.php) (`winget install
+JRSoftware.InnoSetup`). `-SkipVerify` skips the extracted-copy check and
+`-SkipInstaller` the installer.
+
+The installer needs no administrator rights. It installs into
+`%LOCALAPPDATA%\Programs\TTS Host`, creates `%LOCALAPPDATA%\TTS Host\config.json`
+on first install, and offers start at sign-in, pre-ticked. Upgrades and
+uninstall keep everything in `%LOCALAPPDATA%\TTS Host`, including downloaded and
+updated models.
+
+A plain `cmake --build <dir> --target package` still zips whatever the build
+has, with Kokoro from `models/kokoro-en-v1/` if present. That is a development
+convenience, not a release.
 
 ## Other targets
 
