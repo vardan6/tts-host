@@ -525,3 +525,12 @@
   configured `fallbackProfile` on rejection; Settings shows
   "[unavailable: reason]" until a load succeeds; reasons and fallbacks go to
   the Activity log. No-CUDA Windows check pending.
+- 2026-10-21: Unified Settings model list — the Models page is one ListView
+  (installed, not-installed catalogue, and previous-only rows; model/source/
+  status/size/loaded columns) with a details pane replacing the activity-log
+  registry dump; buttons and More ▾ act on the selected row and are disabled
+  when they do not apply. Rows and details come from `src/model_list.cpp`
+  (new `tts_host_model_list` CTest). 53/53 Linux CTests pass; Windows
+  `settings_window.cpp` compiles warning-free and the model list/update/
+  registry tests pass, but the `tts-host.exe` link is blocked (LNK1168) by the
+  running Debug Host, so the new page is unseen on Windows.

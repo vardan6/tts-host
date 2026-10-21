@@ -615,9 +615,19 @@ re-download is Remove followed by Download, and damage is handled by Repair.
   previous, Remove superseded, Remove…, Verify and repair…, and Open folder
   live behind one **More ▾** menu that lists only the actions valid for the
   selected package. Actions that cannot apply are disabled, never answered
-  with a refusal in the log. A later unified model list (installed and
-  not-installed catalogue rows, source/status/size/loaded columns, a details
-  pane replacing the registry dump in the activity log) reuses the same menu.
+  with a refusal in the log.
+- **Unified model list:** the Models page is one list with a row per
+  installed package, per catalogue entry not installed, and per id that has
+  only a kept previous version left (reachable for Delete previous and Open
+  folder; restoring it is not designed). Columns are model, source
+  (bundled, per-user, catalogue), status (current, update available, local,
+  not installed, previous version only; "unavailable" after a rejected load),
+  size (on disk, or the download size), and loaded. The buttons and More ▾
+  act on the selected row, enabled only when they apply. A details pane shows
+  the selected row's engine, languages, folder, licence, load rejection
+  reason, superseded copies, and previous version, followed by any folders
+  the registry could not use; the activity log no longer lists installed
+  models.
 
 ## Engines and models
 
