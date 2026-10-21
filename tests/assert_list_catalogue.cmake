@@ -49,8 +49,10 @@ if(NOT offered_exit_code EQUAL 0)
 endif()
 
 foreach(needle
-        "Downloadable model packages: 2"
+        "Downloadable model packages: 4"
         "GET  qwen3-tts-1.7b (qwen3-gguf, en, "
+        "GET  qwen3-tts-1.7b-q8 (qwen3-gguf, en, "
+        "GET  qwen3-tts-1.7b-bf16 (qwen3-gguf, en, "
         "Qwen3-TTS 1.7B Base (English) :: Apache-2.0 (https://huggingface.co/Qwen/"
         "GET  kokoro-en-v1 (kokoro-onnx, en, "
         " MB)"
