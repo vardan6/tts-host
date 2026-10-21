@@ -201,9 +201,22 @@ nlohmann::json make_runner_load_response(const RunnerLoadRequest &request) {
   return {{"jsonrpc", "2.0"}, {"id", request.id}, {"result", nlohmann::json::object()}};
 }
 
+nlohmann::json make_runner_load_error_response(const RunnerLoadRequest &request,
+                                               std::string message) {
+  return {{"jsonrpc", "2.0"},
+          {"id", request.id},
+          {"error", {{"code", -32000}, {"message", std::move(message)}}}};
+}
+
 RunnerLoadResponse parse_runner_load_response(const nlohmann::json &message) {
   require_jsonrpc_2_0(message);
   const auto &id = required_member(message, "id");
+  if (message.contains("error")) {
+    const auto &error = message.at("error");
+    if (!error.is_object() || !error.contains("message") || !error.at("message").is_string())
+      throw RunnerProtocolError("runner load error has invalid fields");
+    throw RunnerLoadRejected(error.at("message").get<std::string>());
+  }
   const auto &result = required_member(message, "result");
   if (id.is_null() || (!id.is_string() && !id.is_number_integer() && !id.is_number_unsigned()) ||
       !result.is_object()) {

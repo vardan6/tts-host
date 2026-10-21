@@ -120,7 +120,8 @@ Synthetic Copy adapter compatibility remains separate open work below.
     result in Settings and the Activity log — see
     [ADR 0002](docs/adr/0002-runner-protocol.md) and
     [load rejection design](docs/design/architecture.md#load-rejection).
-  - [ ] **AFK — Report Qwen unavailable without a usable GPU:** runners reject
+  - [ ] **AFK — Report Qwen unavailable without a usable GPU:** (implemented;
+    only the no-CUDA Windows check remains) runners reject
     `load` with a message (Qwen's GPU check, Kokoro's package errors, a stub
     option for the CTest); the Host skips restart/retry, applies a configured
     `fallbackProfile`, shows the last load result in Settings, and records every

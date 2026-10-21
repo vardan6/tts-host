@@ -18,8 +18,19 @@ void RecoveringRunner::start() {
       session_->send_request(make_runner_initialize_request(1)));
   if (result.protocol_version != kRunnerProtocolVersion)
     throw RunnerLaunchError("runner reported an unsupported protocol version");
-  if (model_) parse_runner_load_response(session_->send_request(make_runner_load_request(
-      2, path_to_utf8(*model_), voice_ ? std::optional<std::string>(path_to_utf8(*voice_)) : std::nullopt)));
+  if (model_) {
+    try {
+      parse_runner_load_response(session_->send_request(make_runner_load_request(
+          2, path_to_utf8(*model_), voice_ ? std::optional<std::string>(path_to_utf8(*voice_)) : std::nullopt)));
+    } catch (const RunnerLoadRejected &error) {
+      // A restart would repeat the failure: shut the unloaded runner down and
+      // report the runner's reason (docs/design/architecture.md#load-rejection).
+      session_->finish();
+      session_.reset();
+      if (load_rejected_callback_) load_rejected_callback_(error.what());
+      throw;
+    }
+  }
   if (state_callback_) state_callback_(true);
 }
 

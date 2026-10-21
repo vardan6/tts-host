@@ -152,6 +152,35 @@ int main() {
     const auto parsed_load_response = tts_host::parse_runner_load_response(load_response);
     require(parsed_load_response.id == 2, "stub runner load response id did not match request");
 
+    // A rejected load carries the runner's reason and is not a protocol error
+    // (ADR 0002); the stub rejects on request so this needs no GPU.
+#ifdef _WIN32
+    _putenv_s("TTS_STUB_RUNNER_REJECT_LOAD", "no usable GPU");
+#else
+    setenv("TTS_STUB_RUNNER_REJECT_LOAD", "no usable GPU", 1);
+#endif
+    const auto rejection = tts_host::handle_stub_runner_load_message(load);
+#ifdef _WIN32
+    _putenv_s("TTS_STUB_RUNNER_REJECT_LOAD", "");
+#else
+    unsetenv("TTS_STUB_RUNNER_REJECT_LOAD");
+#endif
+    bool load_rejected = false;
+    try {
+      static_cast<void>(tts_host::parse_runner_load_response(rejection));
+    } catch (const tts_host::RunnerLoadRejected &error) {
+      load_rejected = std::string(error.what()) == "no usable GPU";
+    }
+    require(load_rejected, "load rejection did not surface the runner's reason");
+    bool malformed_rejection = false;
+    try {
+      static_cast<void>(tts_host::parse_runner_load_response(
+          nlohmann::json{{"jsonrpc", "2.0"}, {"id", 2}, {"error", {{"code", -32000}}}}));
+    } catch (const tts_host::RunnerProtocolError &) {
+      malformed_rejection = true;
+    }
+    require(malformed_rejection, "load error without a message was accepted");
+
     const auto unload = tts_host::make_runner_unload_request("unload-1");
     require(!unload.contains("params"), "unload request carries params it does not define");
     const auto parsed_unload = tts_host::parse_runner_unload_request(unload);

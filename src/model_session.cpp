@@ -5,6 +5,7 @@
 #include <stdexcept>
 #include <utility>
 
+#include "tts_host/activity_log.hpp"
 #include "tts_host/model_registry.hpp"
 #include "tts_host/runner_protocol.hpp"
 
@@ -70,6 +71,10 @@ ModelSessionStatus ModelSessionManager::status() const {
   std::lock_guard lock(status_mutex_);
   return status_;
 }
+std::map<std::string, std::string> ModelSessionManager::load_failures() const {
+  std::lock_guard lock(status_mutex_);
+  return load_failures_;
+}
 
 void ModelSessionManager::unload_locked() {
   publish_status({});
@@ -94,9 +99,22 @@ void ModelSessionManager::select_locked(const ModelRunnerSelection &selection, b
   selection_ = selection;
   session_->set_state_callback([this](bool loaded) {
     const auto &selected = *selection_;
+    if (loaded) {
+      std::lock_guard lock(status_mutex_);
+      load_failures_.erase(selected.model_id);
+    }
     publish_status(loaded
         ? ModelSessionStatus{true, selected.model_id, selected.display_name, selected.engine}
         : ModelSessionStatus{});
+  });
+  session_->set_load_rejected_callback([this](const std::string &reason) {
+    const auto &selected = *selection_;
+    {
+      std::lock_guard lock(status_mutex_);
+      load_failures_[selected.model_id] = reason;
+    }
+    const auto &name = selected.display_name.empty() ? selected.model_id : selected.display_name;
+    record_activity(name + " is unavailable: " + reason);
   });
 }
 

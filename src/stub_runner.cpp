@@ -1,5 +1,6 @@
 #include "tts_host/stub_runner.hpp"
 
+#include <cstdlib>
 #include <string>
 
 namespace tts_host {
@@ -14,8 +15,15 @@ nlohmann::json handle_stub_runner_control_message(const nlohmann::json &message)
       request, {"load", "unload", "synthesize", "cancel", "stats"});
 }
 
+// TTS_STUB_RUNNER_REJECT_LOAD makes the stub reject loads with that message,
+// so the Host's load-rejection path is tested without a GPU (ADR 0002). With
+// TTS_STUB_RUNNER_REJECT_MODEL set, only a modelPath containing it is rejected.
 nlohmann::json handle_stub_runner_load_message(const nlohmann::json &message) {
   const auto request = parse_runner_load_request(message);
+  const auto *reason = std::getenv("TTS_STUB_RUNNER_REJECT_LOAD");
+  const auto *only = std::getenv("TTS_STUB_RUNNER_REJECT_MODEL");
+  if (reason && *reason && (!only || request.model_path.find(only) != std::string::npos))
+    return make_runner_load_error_response(request, reason);
   return make_runner_load_response(request);
 }
 

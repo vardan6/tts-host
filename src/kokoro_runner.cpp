@@ -80,10 +80,19 @@ nlohmann::json KokoroOnnxRunner::handle_control_message(const nlohmann::json &me
 
 nlohmann::json KokoroOnnxRunner::handle_load_message(const nlohmann::json &message) {
   const auto request = parse_runner_load_request(message);
-  session_.emplace(open_session(env_, path_from_utf8(request.model_path)));
-  voice_style_.clear();
-  if (request.voice_path.has_value()) {
-    voice_style_ = load_voice_style_table(path_from_utf8(*request.voice_path));
+  // Package errors repeat after a restart: reject the load and stay alive
+  // with nothing loaded (ADR 0002).
+  try {
+    session_.emplace(open_session(env_, path_from_utf8(request.model_path)));
+    voice_style_.clear();
+    if (request.voice_path.has_value()) {
+      voice_style_ = load_voice_style_table(path_from_utf8(*request.voice_path));
+    }
+  } catch (const std::exception &error) {
+    session_.reset();
+    voice_style_.clear();
+    return make_runner_load_error_response(
+        request, std::string("Kokoro could not load its model package: ") + error.what());
   }
   return make_runner_load_response(request);
 }

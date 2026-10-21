@@ -2,6 +2,7 @@
 #include "tts_host/stub_runner.hpp"
 #include <atomic>
 #include <cstdlib>
+#include <fstream>
 #include <future>
 #include <iostream>
 #include <thread>
@@ -62,6 +63,40 @@ int main(int argc, char **argv) {
                   tts_host::make_stub_runner_synthesis_frame().payload,
               "rejected request's partial PCM leaked into the next sentence");
       require(restarts == 0 && runner.finish() == 0, "runner did not survive a rejection");
+    }
+    // A rejected load is reported once with the runner's reason: no restart,
+    // no retry, and the unloaded runner is shut down (ADR 0002).
+    {
+      env("TTS_TEST_RUNNER_MODE", "normal");
+      env("TTS_STUB_RUNNER_REJECT_LOAD", "no usable GPU");
+      const auto lifecycle = std::filesystem::path(argv[2]) / "runner-load-rejection-lifecycle";
+      std::filesystem::remove(lifecycle);
+      env("TTS_TEST_RUNNER_LIFECYCLE", lifecycle.string());
+      int restarts = 0;
+      std::string reported;
+      tts_host::RecoveringRunner runner(executable, std::filesystem::path("model"), {}, deadlines,
+          {}, [&](const std::string &) { ++restarts; });
+      runner.set_load_rejected_callback([&](const std::string &reason) { reported += reason + ";"; });
+      for (int use = 0; use != 2; ++use) {
+        bool rejected = false;
+        try { runner.synthesize("hello", 1.0); }
+        catch (const tts_host::RunnerLoadRejected &error) {
+          rejected = std::string(error.what()) == "no usable GPU";
+        }
+        require(rejected && !runner.loaded(), "a rejected load was not reported as rejected");
+      }
+      env("TTS_STUB_RUNNER_REJECT_LOAD", "");
+      env("TTS_TEST_RUNNER_LIFECYCLE", "");
+      require(restarts == 0, "a rejected load restarted the runner");
+      // Each explicit use tries once more: two uses, two runner starts.
+      require(reported == "no usable GPU;no usable GPU;", "load rejection callback not called per use");
+      std::ifstream events(lifecycle);
+      int starts = 0;
+      for (std::string event; std::getline(events, event);) starts += event == "start";
+      require(starts == 2, "a rejected load was retried within one use");
+      require(runner.synthesize("hello", 1.0).pcm == tts_host::make_stub_runner_synthesis_frame().payload,
+              "runner did not load once the rejection cleared");
+      require(runner.finish() == 0, "runner failed after a cleared rejection");
     }
     // More than a pipe buffer before the control reply must not deadlock.
     // A death during that stream must discard its PCM before the retry.

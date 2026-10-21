@@ -23,6 +23,15 @@ class RunnerRequestError : public std::runtime_error {
   using std::runtime_error::runtime_error;
 };
 
+// A runner rejected `load` for a reason a restart would repeat (no usable GPU,
+// unreadable package files) and stays alive with nothing loaded. The message
+// is the user-actionable reason; the Host neither restarts nor retries
+// (docs/design/architecture.md#load-rejection).
+class RunnerLoadRejected : public std::runtime_error {
+ public:
+  using std::runtime_error::runtime_error;
+};
+
 inline constexpr int kRunnerProtocolVersion = 1;
 inline constexpr std::size_t kRunnerAudioFrameHeaderBytes = 20;
 inline constexpr std::size_t kMaximumRunnerAudioFramePayloadBytes = 16 * 1024 * 1024;
@@ -59,6 +68,9 @@ RunnerLoadRequest parse_runner_load_request(const nlohmann::json &message);
 nlohmann::json make_runner_load_request(nlohmann::json id, std::string model_path,
                                         std::optional<std::string> voice_path = std::nullopt);
 nlohmann::json make_runner_load_response(const RunnerLoadRequest &request);
+nlohmann::json make_runner_load_error_response(const RunnerLoadRequest &request,
+                                               std::string message);
+// Throws RunnerLoadRejected when the runner replied with an `error`.
 RunnerLoadResponse parse_runner_load_response(const nlohmann::json &message);
 
 // Releases the model a previous `load` made resident, leaving the runner

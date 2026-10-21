@@ -106,14 +106,64 @@ RunnerSelection resolve_runner_selection_for_model(const std::string &model_id,
           selection.model_id, selection.display_name, selection.engine, {}};
 }
 
+// A runner selection plus the profile whose fallbackProfile may still replace
+// it if the runner rejects its load. fallback_profile is empty when no
+// fallback remains: none configured, an explicit --model/--runner, or the
+// fallback already replaced an unresolvable model.
+struct RunnerChoice {
+  RunnerSelection selection;
+  std::string profile_name;
+  std::string fallback_profile;
+};
+
+RunnerSelection resolve_profile_selection(const nlohmann::json &profile,
+                                          const tts_host::ConfigDocument &document,
+                                          const std::filesystem::path &argv0) {
+  auto selected = resolve_runner_selection_for_model(profile.at("model").get<std::string>(), document, argv0);
+  if (profile.contains("idleUnloadSeconds"))
+    selected.idle_override = std::chrono::seconds(profile.at("idleUnloadSeconds").get<int>());
+  return selected;
+}
+
+// Replaces profile_name's model, unavailable for `reason`, with its
+// fallbackProfile and logs why (docs/design/architecture.md#configuration).
+RunnerSelection resolve_fallback_selection(const std::string &profile_name, const std::string &reason,
+                                           const tts_host::ConfigDocument &document,
+                                           const std::filesystem::path &argv0) {
+  const auto &profiles = document.value.at("profiles");
+  const auto fallback_profile_name = profiles.at(profile_name).at("fallbackProfile").get<std::string>();
+  if (fallback_profile_name == profile_name) {
+    throw std::runtime_error("profiles." + profile_name +
+                             ".fallbackProfile must name a different profile");
+  }
+  if (!profiles.contains(fallback_profile_name)) {
+    throw std::runtime_error("profiles." + profile_name + ".fallbackProfile names unknown profile: " +
+                             fallback_profile_name);
+  }
+
+  const auto &fallback_profile = profiles.at(fallback_profile_name);
+  const auto message = "Profile " + profile_name + " is unavailable (" + reason +
+                       "); using fallback profile " + fallback_profile_name + ", model " +
+                       fallback_profile.at("model").get<std::string>();
+  std::cout << message << '\n';
+  tts_host::record_activity(message);
+  try {
+    return resolve_profile_selection(fallback_profile, document, argv0);
+  } catch (const std::exception &fallback_error) {
+    throw std::runtime_error("Profile " + profile_name + " is unavailable (" + reason +
+                             "); fallback profile " + fallback_profile_name + " is also unavailable (" +
+                             fallback_error.what() + ")");
+  }
+}
+
 // With no --model/--runner override, synthesis follows the same path a
 // settings-window profile pick would: the request's language names a
 // languageDefaults profile, and that profile's "model" is the model id to
 // load. The language itself comes from --language, else the text's script,
 // else English (docs/design/architecture.md#speech-pipeline).
-RunnerSelection resolve_default_runner_selection(const tts_host::SelectedLanguage &language,
-                                                 const tts_host::ConfigDocument &document,
-                                                 const std::filesystem::path &argv0) {
+RunnerChoice resolve_default_runner_selection(const tts_host::SelectedLanguage &language,
+                                              const tts_host::ConfigDocument &document,
+                                              const std::filesystem::path &argv0) {
   const auto &language_defaults = document.value.at("languageDefaults");
   if (!language_defaults.contains(language.tag)) {
     // An explicit tag the user typed is a mistake worth naming; a fallback to
@@ -122,7 +172,7 @@ RunnerSelection resolve_default_runner_selection(const tts_host::SelectedLanguag
     if (language.source == tts_host::LanguageSource::Explicit) {
       throw std::runtime_error("languageDefaults has no entry for language: " + language.tag);
     }
-    return {default_runner_path(argv0), std::nullopt, std::nullopt, {}, {}, {}, {}};
+    return {{default_runner_path(argv0), std::nullopt, std::nullopt, {}, {}, {}, {}}, {}, {}};
   }
   const auto profile_name = language_defaults.at(language.tag).get<std::string>();
   const auto &profiles = document.value.at("profiles");
@@ -136,55 +186,29 @@ RunnerSelection resolve_default_runner_selection(const tts_host::SelectedLanguag
             << tts_host::describe_language_source(language.source) << "), profile " << profile_name
             << ", model " << model_id << '\n';
   try {
-    auto selected = resolve_runner_selection_for_model(model_id, document, argv0);
-    if (profile.contains("idleUnloadSeconds"))
-      selected.idle_override = std::chrono::seconds(profile.at("idleUnloadSeconds").get<int>());
-    return selected;
+    return {resolve_profile_selection(profile, document, argv0), profile_name,
+            profile.value("fallbackProfile", std::string())};
   } catch (const std::exception &primary_error) {
     if (!profile.contains("fallbackProfile")) {
       throw;
     }
-
-    const auto fallback_profile_name = profile.at("fallbackProfile").get<std::string>();
-    if (fallback_profile_name == profile_name) {
-      throw std::runtime_error("profiles." + profile_name +
-                               ".fallbackProfile must name a different profile");
-    }
-    if (!profiles.contains(fallback_profile_name)) {
-      throw std::runtime_error("profiles." + profile_name + ".fallbackProfile names unknown profile: " +
-                               fallback_profile_name);
-    }
-
-    const auto &fallback_profile = profiles.at(fallback_profile_name);
-    const auto fallback_model_id = fallback_profile.at("model").get<std::string>();
-    std::cout << "Profile " << profile_name << " is unavailable (" << primary_error.what()
-              << "); using fallback profile " << fallback_profile_name << ", model "
-              << fallback_model_id << '\n';
-    try {
-      auto selected = resolve_runner_selection_for_model(fallback_model_id, document, argv0);
-      if (fallback_profile.contains("idleUnloadSeconds"))
-        selected.idle_override = std::chrono::seconds(fallback_profile.at("idleUnloadSeconds").get<int>());
-      return selected;
-    } catch (const std::exception &fallback_error) {
-      throw std::runtime_error("Profile " + profile_name + " is unavailable (" + primary_error.what() +
-                               "); fallback profile " + fallback_profile_name + " is also unavailable (" +
-                               fallback_error.what() + ")");
-    }
+    return {resolve_fallback_selection(profile_name, primary_error.what(), document, argv0),
+            profile_name, {}};
   }
 }
 
 // `spoken_text` is the normalized text, so script detection sees what will
 // actually be spoken rather than the markup around it.
-RunnerSelection resolve_runner_selection(const tts_host::CliOptions &options,
-                                         const std::string &spoken_text,
-                                         const tts_host::ConfigDocument &document,
-                                         const std::filesystem::path &argv0) {
+RunnerChoice resolve_runner_selection(const tts_host::CliOptions &options,
+                                      const std::string &spoken_text,
+                                      const tts_host::ConfigDocument &document,
+                                      const std::filesystem::path &argv0) {
   if (options.runner_path_override.has_value()) {
-    return {*options.runner_path_override, std::nullopt, std::nullopt, {}, {}, {}, {}};
+    return {{*options.runner_path_override, std::nullopt, std::nullopt, {}, {}, {}, {}}, {}, {}};
   }
 
   if (options.model_id.has_value()) {
-    return resolve_runner_selection_for_model(*options.model_id, document, argv0);
+    return {resolve_runner_selection_for_model(*options.model_id, document, argv0), {}, {}};
   }
 
   std::vector<std::string> configured_languages;
@@ -225,19 +249,45 @@ void run_synthesis(const tts_host::CliOptions &options, const tts_host::ConfigDo
     throw std::runtime_error("nothing to synthesize: the text is empty once markup is removed");
   }
 
-  const auto selection = resolve_runner_selection(options, spoken_text, document, argv0);
+  auto choice = resolve_runner_selection(options, spoken_text, document, argv0);
+  const auto cancelled = [control] { return control && control->cancelled(); };
 
-  if (sessions) {
-    const tts_host::ModelRunnerSelection model{selection.model_id, selection.display_name,
-        selection.engine, selection.runner_path, selection.model_path.value_or(std::filesystem::path{}),
-        selection.voice_path};
-    auto lease = sessions->acquire(model,
-        [control] { return control && control->cancelled(); }, selection.idle_override);
-    tts_host::run_synthesis_pipeline(spoken_text, options, document, selection,
-                                     control, playback_controller, nullptr, {}, &lease.runner());
-  } else {
-    tts_host::run_synthesis_pipeline(spoken_text, options, document, selection,
-                                     control, playback_controller);
+  // The model loads before the first sentence, so a rejected load has emitted
+  // no audio and the profile's fallback can serve the whole request. A later
+  // failure never switches models (docs/design/architecture.md#load-rejection).
+  const auto prepared = [&](tts_host::RecoveringRunner &runner) {
+    try {
+      runner.prepare();
+      return true;
+    } catch (const tts_host::RunnerLoadRejected &error) {
+      if (choice.fallback_profile.empty()) throw;
+      choice.selection = resolve_fallback_selection(choice.profile_name, error.what(), document, argv0);
+      choice.fallback_profile.clear();
+      return false;
+    }
+  };
+
+  for (;;) {
+    const auto selection = choice.selection;
+    if (sessions) {
+      const tts_host::ModelRunnerSelection model{selection.model_id, selection.display_name,
+          selection.engine, selection.runner_path, selection.model_path.value_or(std::filesystem::path{}),
+          selection.voice_path};
+      auto lease = sessions->acquire(model, cancelled, selection.idle_override);
+      if (!prepared(lease.runner())) continue;
+      tts_host::run_synthesis_pipeline(spoken_text, options, document, selection,
+                                       control, playback_controller, nullptr, {}, &lease.runner());
+    } else {
+      tts_host::RecoveringRunner runner(selection.runner_path, selection.model_path,
+                                        selection.voice_path, {}, cancelled);
+      if (!prepared(runner)) continue;
+      tts_host::run_synthesis_pipeline(spoken_text, options, document, selection,
+                                       control, playback_controller, nullptr, {}, &runner);
+      if (const auto exit_code = runner.finish(); exit_code != 0) {
+        throw std::runtime_error("runner process exited with code " + std::to_string(exit_code));
+      }
+    }
+    return;
   }
 }
 

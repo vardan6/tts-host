@@ -102,7 +102,9 @@ class QwenApi {
     auto type = base_.symbol<decltype(&::ggml_backend_dev_type)>("ggml_backend_dev_type");
     bool gpu = false;
     for (size_t i = 0; i < count(); ++i) gpu |= type(get(i)) == GGML_BACKEND_DEVICE_TYPE_GPU;
-    if (!gpu) throw std::runtime_error("Qwen evaluation requires a working CUDA runtime/GPU; CPU fallback is disabled");
+    if (!gpu) throw std::runtime_error(
+        "Qwen needs an NVIDIA GPU with a working CUDA driver, and none was found; "
+        "update the NVIDIA driver or choose a CPU model such as Kokoro");
     llama_backend_init();
   }
   ~QwenApi() { llama_backend_free(); }

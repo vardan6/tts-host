@@ -16,6 +16,7 @@
 #include <cwchar>
 #include <fstream>
 #include <functional>
+#include <map>
 #include <memory>
 #include <string>
 #include <thread>
@@ -144,6 +145,9 @@ struct SettingsState {
   std::vector<std::string> model_ids;
   // Catalogue entry ids in combo-box order, mirroring model_ids above.
   std::vector<std::string> catalogue_ids;
+  // The rejected loads the model combo currently shows; a load during speech
+  // can change them while the window is open.
+  std::map<std::string, std::string> shown_load_failures;
   // The lower pane is the one durable place for user-visible settings-window
   // output: model information, progress, successes, and actionable failures.
   HWND activity_log = nullptr;
@@ -678,10 +682,17 @@ void on_open_startup_settings_clicked(SettingsState &state) {
 // Fills the combo box with every discovered package and records the matching
 // model ids, which is what load() actually takes. Selection defaults to the
 // first package so the Load button is meaningful without a pick first.
+// A model whose last load was rejected shows as unavailable with the
+// runner's reason until a load of it succeeds
+// (docs/design/architecture.md#load-rejection).
 void populate_model_combo(HWND combo, SettingsState &state, const ModelRegistryScan &scan) {
+  state.shown_load_failures = state.sessions.load_failures();
   for (const auto &package : scan.discovered_packages) {
-    const auto label = package.display_name + " (" + package.id + ") [" +
-                       describe_package_status(package_status(package)) + "]";
+    auto label = package.display_name + " (" + package.id + ") [" +
+                 describe_package_status(package_status(package)) + "]";
+    if (const auto failure = state.shown_load_failures.find(package.id);
+        failure != state.shown_load_failures.end())
+      label += " [unavailable: " + failure->second + "]";
     SendMessageW(combo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(utf8_to_wide(label).c_str()));
     state.model_ids.push_back(package.id);
   }
@@ -1456,16 +1467,19 @@ void reselect_combo_id(HWND combo, const std::vector<std::string> &ids, const st
 // reflect. Importing and directory watching are what changes what is
 // installed while the window is open; the resident session is left alone, so
 // a model loaded before either stays loaded.
+void refresh_model_combo(SettingsState &state, HWND window) {
+  const HWND combo = GetDlgItem(window, kModelComboId);
+  if (combo == nullptr) return;
+  const auto selected = combo_selected_id(combo, state.model_ids);
+  SendMessageW(combo, CB_RESETCONTENT, 0, 0);
+  state.model_ids.clear();
+  populate_model_combo(combo, state, state.last_scan);
+  reselect_combo_id(combo, state.model_ids, selected);
+}
+
 void refresh_model_views(SettingsState &state, HWND window) {
   state.last_scan = scan_model_registry(state.document);
-  const HWND combo = GetDlgItem(window, kModelComboId);
-  if (combo != nullptr) {
-    const auto selected = combo_selected_id(combo, state.model_ids);
-    SendMessageW(combo, CB_RESETCONTENT, 0, 0);
-    state.model_ids.clear();
-    populate_model_combo(combo, state, state.last_scan);
-    reselect_combo_id(combo, state.model_ids, selected);
-  }
+  refresh_model_combo(state, window);
   append_activity_log(state, L"Installed models and licences updated:\r\n" +
                                  format_installed_models(state.last_scan));
   const HWND catalogue_combo = GetDlgItem(window, kCatalogueComboId);
@@ -1587,6 +1601,8 @@ LRESULT CALLBACK settings_window_proc(HWND window, UINT message, WPARAM wparam, 
         on_directory_watch_timer(*state, window);
       } else if (wparam == kActivityTimerId) {
         show_new_activity(*state);
+        if (state->sessions.load_failures() != state->shown_load_failures)
+          refresh_model_combo(*state, window);
       }
       return 0;
     }

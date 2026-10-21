@@ -3,6 +3,7 @@
 #include <chrono>
 #include <filesystem>
 #include <functional>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -83,6 +84,10 @@ class ModelSessionManager {
   bool unload_if_idle(std::chrono::seconds idle_unload_seconds,
                       std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now());
   ModelSessionStatus status() const;
+  // Model id -> the runner's reason, for each model whose last load was
+  // rejected; an entry goes once a load of it succeeds
+  // (docs/design/architecture.md#load-rejection).
+  std::map<std::string, std::string> load_failures() const;
 
  private:
   void unload_locked();
@@ -94,6 +99,7 @@ class ModelSessionManager {
   std::unique_ptr<RecoveringRunner> session_;
   std::optional<ModelRunnerSelection> selection_;
   ModelSessionStatus status_;
+  std::map<std::string, std::string> load_failures_;
   std::chrono::steady_clock::time_point last_used_;
   std::optional<std::chrono::seconds> idle_override_;
 };
