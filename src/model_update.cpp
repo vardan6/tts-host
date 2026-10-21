@@ -89,6 +89,55 @@ bool validates(const std::filesystem::path &package_path) {
   }
 }
 
+std::uintmax_t folder_bytes(const std::filesystem::path &folder) {
+  std::uintmax_t total = 0;
+  std::error_code ec;
+  for (const auto &item : std::filesystem::recursive_directory_iterator(folder, ec)) {
+    if (item.is_regular_file(ec)) {
+      total += item.file_size(ec);
+    }
+  }
+  return total;
+}
+
+// Where removal moves a folder before deleting it; dot-prefixed, so neither
+// scan sees it.
+std::filesystem::path removal_path(const std::filesystem::path &folder) {
+  return folder.parent_path() / ("." + folder.filename().string() + ".removing");
+}
+
+bool is_removal_leftover(const std::filesystem::path &path) {
+  const auto name = path.filename().string();
+  return name.size() > 10 && name.front() == '.' && name.compare(name.size() - 9, 9, ".removing") == 0;
+}
+
+// Renames `folder` aside, then deletes it. The rename is what fails when a
+// file is held open, leaving `folder` whole.
+void remove_folder(const std::filesystem::path &folder, const std::string &what) {
+  const auto aside = removal_path(folder);
+  std::filesystem::remove_all(aside);
+  std::error_code ec;
+  std::filesystem::rename(folder, aside, ec);
+  if (ec) {
+    throw std::runtime_error("could not remove " + what + ": " + ec.message() +
+                             " (unload the model and close files open in its folder)");
+  }
+  std::filesystem::remove_all(aside);
+}
+
+void remove_leftovers_in(const std::filesystem::path &directory) {
+  std::error_code ec;
+  std::vector<std::filesystem::path> leftovers;
+  for (const auto &item : std::filesystem::directory_iterator(directory, ec)) {
+    if (item.is_directory(ec) && is_removal_leftover(item.path())) {
+      leftovers.push_back(item.path());
+    }
+  }
+  for (const auto &leftover : leftovers) {
+    std::filesystem::remove_all(leftover, ec);
+  }
+}
+
 }  // namespace
 
 std::filesystem::path writable_model_directory(const ConfigDocument &config) {
@@ -230,6 +279,48 @@ std::size_t remove_superseded_model_copies(const std::string &id, const ModelReg
   return removed;
 }
 
+ModelRemovalPlan plan_model_removal(const std::string &id, const ModelRegistryScan &scan,
+                                    const ConfigDocument &config) {
+  const auto &current = installed_package(id, scan);
+  if (current.bundled) {
+    throw std::runtime_error("'" + id + "' is bundled with the app and cannot be removed");
+  }
+  ModelRemovalPlan plan;
+  plan.id = id;
+  plan.display_name = current.display_name;
+  plan.package_path = current.package_path;
+  plan.package_bytes = folder_bytes(current.package_path);
+
+  const auto directory = current.package_path.parent_path();
+  for (const auto &previous : scan.previous_packages) {
+    if (previous.id == id && previous.package_path.parent_path().parent_path() == directory) {
+      plan.previous_path = previous.package_path;
+      plan.previous_bytes = folder_bytes(previous.package_path);
+    }
+  }
+  if (config.value.contains("profiles")) {
+    for (const auto &profile : config.value.at("profiles").items()) {
+      if (profile.value().value("model", "") == id) {
+        plan.profiles.push_back(profile.key());
+      }
+    }
+  }
+  plan.bundled_becomes_active =
+      std::any_of(scan.superseded_packages.begin(), scan.superseded_packages.end(),
+                  [&](const ModelPackageCandidate &package) { return package.id == id && package.bundled; });
+  plan.last_package = scan.discovered_packages.size() == 1 && !plan.bundled_becomes_active;
+  return plan;
+}
+
+void remove_model_package(const ModelRemovalPlan &plan, bool keep_previous, const PackageSwitchGuard &guard) {
+  run_guarded(guard, plan.id, [&] {
+    remove_folder(plan.package_path, "'" + plan.id + "'");
+    if (plan.previous_path && !keep_previous) {
+      remove_folder(*plan.previous_path, "the previous version of '" + plan.id + "'");
+    }
+  });
+}
+
 std::vector<std::string> recover_interrupted_model_updates(const ConfigDocument &config) {
   std::vector<std::string> messages;
   for (const auto &entry : config.value.at("modelRegistry").at("directories")) {
@@ -237,6 +328,11 @@ std::vector<std::string> recover_interrupted_model_updates(const ConfigDocument 
     std::error_code ec;
     if (!std::filesystem::is_directory(directory, ec)) {
       continue;
+    }
+    // A removal cut short after its rename left only a dot-prefixed folder.
+    remove_leftovers_in(directory);
+    if (std::filesystem::is_directory(directory / ".previous", ec)) {
+      remove_leftovers_in(directory / ".previous");
     }
 
     std::vector<std::filesystem::path> journals;

@@ -562,7 +562,10 @@ re-download is Remove followed by Download, and damage is handled by Repair.
   ([ADR 0010](../adr/0010-model-revisions-storage-and-release-layout.md)):
   Remove is disabled with "Bundled with the app". Portable mode has no
   read-only tier, so every package is removable; removing the last one warns
-  that nothing will be left to speak with.
+  that nothing will be left to speak with. Each folder is first renamed to a
+  dot-prefixed `.<name>.removing` beside it and then deleted, so a file
+  Windows holds open fails the removal with the package whole instead of
+  half-deleted; a start that finds such a folder deletes it.
 - **Verify and repair…** applies to catalogue packages only (imports have no
   pinned checksums). It hashes every file against the compiled catalogue
   entry, reports damaged or missing files with their size, and on

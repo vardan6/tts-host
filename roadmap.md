@@ -102,10 +102,10 @@ Synthetic Copy adapter compatibility remains separate open work below.
       [review #5](docs/reviews/code-review-2026-10-19-bundled-models.md#triage--2026-10-19),
       [engine design](docs/design/architecture.md#engines-and-models), and
       [ADR 0010](docs/adr/0010-model-revisions-storage-and-release-layout.md).
-  - [ ] **HITL — Merge `feature/bundled-models`:** after the three fixes above
+  - [x] **HITL — Merge `feature/bundled-models`:** after the three fixes above
     pass build and tests, user approves the merge to `main`; the slices below
     continue on a new branch — no doc governs: merge of reviewed work.
-  - [ ] **AFK — Model removal, open folder, and maintenance menu:** Remove…
+  - [x] **AFK — Model removal, open folder, and maintenance menu:** Remove…
     with previous-version and profile handling, Open folder / Open models
     folder, and the More ▾ menu enabling only valid actions (Revert, Delete
     previous, Remove superseded move into it) — see

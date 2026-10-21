@@ -5,6 +5,7 @@
 #ifdef _WIN32
 #include <windows.h>
 #include <shobjidl.h>
+#include <shellapi.h>
 #include <commctrl.h>
 
 #include <algorithm>
@@ -61,10 +62,15 @@ constexpr int kSentencePauseComboId = 121;
 constexpr int kLookaheadComboId = 122;
 constexpr int kResetPlaybackButtonId = 123;
 constexpr int kUpdateModelButtonId = 124;
-constexpr int kRevertModelButtonId = 125;
-constexpr int kDeletePreviousModelButtonId = 126;
-constexpr int kRemoveSupersededModelButtonId = 127;
+// Commands of the More ▾ menu for the selected model.
+constexpr int kRevertModelCommandId = 125;
+constexpr int kDeletePreviousModelCommandId = 126;
+constexpr int kRemoveSupersededModelCommandId = 127;
 constexpr int kCancelModelTaskButtonId = 128;
+constexpr int kMoreModelActionsButtonId = 129;
+constexpr int kRemoveModelCommandId = 130;
+constexpr int kOpenModelFolderCommandId = 131;
+constexpr int kOpenModelsFolderCommandId = 132;
 constexpr int kSettingsHotkeyProbeId = 2;
 
 // Tab order of the Settings pages; docs/design/architecture.md#desktop-integration.
@@ -732,12 +738,11 @@ void populate_catalogue_combo(HWND combo, SettingsState &state, const ModelRegis
   }
 }
 
-// Registry-changing buttons are disabled while a model task runs; Cancel is
-// enabled only for a task that can stop early (a download).
+// Registry-changing buttons are disabled while a model task runs (the More ▾
+// menu disables its registry-changing items itself); Cancel is enabled only
+// for a task that can stop early (a download).
 void set_model_task_controls(HWND window, bool running, bool cancellable) {
-  for (const int id : {kImportModelButtonId, kDownloadModelButtonId, kUpdateModelButtonId,
-                       kRevertModelButtonId, kDeletePreviousModelButtonId,
-                       kRemoveSupersededModelButtonId}) {
+  for (const int id : {kImportModelButtonId, kDownloadModelButtonId, kUpdateModelButtonId}) {
     EnableWindow(GetDlgItem(window, id), running ? FALSE : TRUE);
   }
   EnableWindow(GetDlgItem(window, kCancelModelTaskButtonId), running && cancellable ? TRUE : FALSE);
@@ -955,6 +960,264 @@ void on_remove_superseded_model_clicked(SettingsState &state, HWND combo, HWND w
                                        : utf8_to_wide(model_id) + L" has no removable superseded copy.");
   } catch (const std::exception &error) {
     append_activity_log(state, L"Remove failed: " + utf8_to_wide(error.what()));
+  }
+}
+
+// The Remove… confirmation. A plain window rather than TaskDialog, whose
+// verification checkbox needs a common-controls v6 manifest the Host does not
+// ship.
+constexpr int kKeepPreviousCheckboxId = 3;
+
+struct RemoveConfirmation {
+  bool done = false;
+  bool confirmed = false;
+  bool keep_previous = false;
+};
+
+LRESULT CALLBACK remove_confirmation_proc(HWND dialog, UINT message, WPARAM wparam, LPARAM lparam) {
+  auto *confirmation = reinterpret_cast<RemoveConfirmation *>(GetWindowLongPtrW(dialog, GWLP_USERDATA));
+  switch (message) {
+    case WM_CTLCOLORSTATIC:
+      SetBkMode(reinterpret_cast<HDC>(wparam), TRANSPARENT);
+      return reinterpret_cast<LRESULT>(GetSysColorBrush(COLOR_BTNFACE));
+    case WM_COMMAND:
+      if (confirmation != nullptr && (LOWORD(wparam) == IDOK || LOWORD(wparam) == IDCANCEL)) {
+        confirmation->confirmed = LOWORD(wparam) == IDOK;
+        confirmation->keep_previous =
+            IsDlgButtonChecked(dialog, kKeepPreviousCheckboxId) == BST_CHECKED;
+        confirmation->done = true;
+      }
+      return 0;
+    case WM_CLOSE:
+      if (confirmation != nullptr) confirmation->done = true;
+      return 0;
+    default:
+      return DefWindowProcW(dialog, message, wparam, lparam);
+  }
+}
+
+std::wstring describe_removal(const ModelRemovalPlan &plan) {
+  auto text = L"Remove " + utf8_to_wide(plan.display_name) + L" (" + utf8_to_wide(plan.id) + L")?\r\n\r\n" +
+              L"This frees " + utf8_to_wide(describe_download_size(plan.package_bytes)) + L".";
+  if (plan.previous_path) {
+    text += L" Its previous version (" + utf8_to_wide(describe_download_size(plan.previous_bytes)) +
+            L") is deleted too unless you keep it.";
+  }
+  if (plan.bundled_becomes_active) {
+    text += L"\r\n\r\nThe copy bundled with the app becomes active again.";
+  } else if (!plan.profiles.empty()) {
+    std::wstring names;
+    for (const auto &profile : plan.profiles) {
+      names += (names.empty() ? L"" : L", ") + utf8_to_wide(profile);
+    }
+    text += L"\r\n\r\nProfiles using it become unavailable: " + names + L".";
+  }
+  if (plan.last_package) {
+    text += L"\r\n\r\nThis is the last installed model: nothing will be left to speak with.";
+  }
+  return text;
+}
+
+// Shows the confirmation modally over `owner`; true when the user chose Remove.
+bool confirm_model_removal(HWND owner, const ModelRemovalPlan &plan, bool &keep_previous) {
+  const wchar_t *kClassName = L"TtsHostRemoveModelDialog";
+  const HINSTANCE instance = GetModuleHandleW(nullptr);
+  WNDCLASSW window_class{};
+  window_class.lpfnWndProc = remove_confirmation_proc;
+  window_class.hInstance = instance;
+  window_class.lpszClassName = kClassName;
+  window_class.hbrBackground = GetSysColorBrush(COLOR_BTNFACE);
+  window_class.hCursor = LoadCursorW(nullptr, MAKEINTRESOURCEW(32512));
+  if (!RegisterClassW(&window_class) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) {
+    throw std::runtime_error("failed to register the removal confirmation window class");
+  }
+
+  constexpr DWORD kStyle = WS_POPUP | WS_CAPTION | WS_SYSMENU;
+  RECT frame{0, 0, 440, 250};
+  AdjustWindowRectEx(&frame, kStyle, FALSE, WS_EX_DLGMODALFRAME);
+  RECT owner_rect{};
+  GetWindowRect(owner, &owner_rect);
+  const int width = frame.right - frame.left;
+  const int height = frame.bottom - frame.top;
+  const HWND dialog = CreateWindowExW(
+      WS_EX_DLGMODALFRAME, kClassName, L"Remove model", kStyle,
+      owner_rect.left + ((owner_rect.right - owner_rect.left) - width) / 2,
+      owner_rect.top + ((owner_rect.bottom - owner_rect.top) - height) / 2, width, height, owner, nullptr,
+      instance, nullptr);
+  if (!dialog) {
+    throw std::runtime_error("failed to create the removal confirmation");
+  }
+  RemoveConfirmation confirmation;
+  SetWindowLongPtrW(dialog, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(&confirmation));
+
+  CreateWindowExW(0, L"STATIC", describe_removal(plan).c_str(), WS_CHILD | WS_VISIBLE, 20, 16, 400, 150,
+                  dialog, nullptr, instance, nullptr);
+  if (plan.previous_path) {
+    CreateWindowExW(0, L"BUTTON", L"Keep the previous version", WS_CHILD | WS_VISIBLE | WS_TABSTOP |
+                    BS_AUTOCHECKBOX, 20, 172, 400, 24, dialog,
+                    reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kKeepPreviousCheckboxId)), instance, nullptr);
+  }
+  CreateWindowExW(0, L"BUTTON", L"Remove", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON, 234, 208, 90, 26,
+                  dialog, reinterpret_cast<HMENU>(static_cast<UINT_PTR>(IDOK)), instance, nullptr);
+  // Cancel is the default, so Enter does not delete gigabytes by accident.
+  const HWND cancel = CreateWindowExW(
+      0, L"BUTTON", L"Cancel", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON, 330, 208, 90, 26, dialog,
+      reinterpret_cast<HMENU>(static_cast<UINT_PTR>(IDCANCEL)), instance, nullptr);
+  EnumChildWindows(dialog, apply_shell_ui_font, reinterpret_cast<LPARAM>(shell_ui_font()));
+
+  EnableWindow(owner, FALSE);
+  ShowWindow(dialog, SW_SHOWNORMAL);
+  SetFocus(cancel);
+  MSG message{};
+  while (!confirmation.done) {
+    const auto result = GetMessageW(&message, nullptr, 0, 0);
+    if (result <= 0) {
+      // A tray quit: leave the loop and let the Settings loop see WM_QUIT.
+      if (result == 0) PostQuitMessage(static_cast<int>(message.wParam));
+      confirmation.confirmed = false;
+      break;
+    }
+    if (!IsDialogMessageW(dialog, &message)) {
+      TranslateMessage(&message);
+      DispatchMessageW(&message);
+    }
+  }
+  // Re-enable the owner first so Windows activates it, not another app.
+  EnableWindow(owner, TRUE);
+  DestroyWindow(dialog);
+  keep_previous = confirmation.keep_previous;
+  return confirmation.confirmed;
+}
+
+void on_remove_model_clicked(SettingsState &state, HWND combo, HWND window) {
+  const auto model_id = selected_model_id(state, combo, L"remove");
+  if (model_id.empty()) {
+    return;
+  }
+  try {
+    const auto plan = plan_model_removal(model_id, scan_model_registry(state.document), state.document);
+    bool keep_previous = false;
+    if (!confirm_model_removal(window, plan, keep_previous)) {
+      return;
+    }
+    remove_model_package(plan, keep_previous, session_switch_guard(state));
+    refresh_model_views(state, window);
+    auto message = L"Removed " + utf8_to_wide(plan.display_name) + L", freeing " +
+                   utf8_to_wide(describe_download_size(
+                       plan.package_bytes + (plan.previous_path && !keep_previous ? plan.previous_bytes : 0))) +
+                   L".";
+    if (plan.previous_path && keep_previous) {
+      message += L" Its previous version is kept.";
+    }
+    if (plan.bundled_becomes_active) {
+      message += L" The bundled copy is active again.";
+    } else {
+      for (const auto &profile : plan.profiles) {
+        message += L" Profile " + utf8_to_wide(profile) + L" is unavailable.";
+      }
+    }
+    append_activity_log(state, message);
+  } catch (const std::exception &error) {
+    append_activity_log(state, L"Remove failed: " + utf8_to_wide(error.what()));
+  }
+}
+
+void open_in_explorer(SettingsState &state, HWND window, const std::filesystem::path &folder) {
+  const auto result = reinterpret_cast<INT_PTR>(
+      ShellExecuteW(window, L"open", folder.wstring().c_str(), nullptr, nullptr, SW_SHOWNORMAL));
+  if (result <= 32) {
+    append_activity_log(state, L"Could not open " + folder.wstring() + L".");
+  }
+}
+
+void on_open_model_folder_clicked(SettingsState &state, HWND combo, HWND window) {
+  const auto model_id = selected_model_id(state, combo, L"open the folder of");
+  const auto &packages = state.last_scan.discovered_packages;
+  const auto found = std::find_if(packages.begin(), packages.end(),
+                                  [&](const ModelPackageCandidate &package) { return package.id == model_id; });
+  if (found == packages.end()) {
+    return;
+  }
+  open_in_explorer(state, window, found->package_path);
+  const auto &status = state.sessions.status();
+  if (status.loaded && status.model_id == model_id) {
+    append_activity_log(state, utf8_to_wide(model_id) +
+                                   L" is loaded, so Windows keeps its files open: unload it before deleting them.");
+  }
+}
+
+void on_open_models_folder_clicked(SettingsState &state, HWND window) {
+  try {
+    const auto directory = writable_model_directory(state.document);
+    std::filesystem::create_directories(directory);
+    open_in_explorer(state, window, directory);
+  } catch (const std::exception &error) {
+    append_activity_log(state, L"Could not open the models folder: " + utf8_to_wide(error.what()));
+  }
+}
+
+// Lists the selected model's maintenance actions, enabling only those that
+// apply to it now; registry-changing ones wait for a running model task.
+void on_more_model_actions_clicked(SettingsState &state, HWND window, HWND button) {
+  const HWND combo = GetDlgItem(window, kModelComboId);
+  const int index = static_cast<int>(SendMessageW(combo, CB_GETCURSEL, 0, 0));
+  const bool has_selection = index >= 0 && static_cast<std::size_t>(index) < state.model_ids.size();
+  const auto model_id = has_selection ? state.model_ids[static_cast<std::size_t>(index)] : std::string();
+  const auto &scan = state.last_scan;
+  const auto *installed = [&]() -> const ModelPackageCandidate * {
+    for (const auto &package : scan.discovered_packages) {
+      if (package.id == model_id) return &package;
+    }
+    return nullptr;
+  }();
+  const bool idle = !state.model_task.joinable();
+  const bool writable = installed != nullptr && !installed->bundled && idle;
+
+  const auto in_directory = [&](const ModelPackageCandidate &package) {
+    return package.package_path.parent_path().parent_path() == installed->package_path.parent_path();
+  };
+  bool has_previous = false;
+  bool revertible = false;
+  for (const auto &package : scan.previous_packages) {
+    if (package.id != model_id) continue;
+    has_previous = true;
+    revertible = revertible || (installed != nullptr && in_directory(package));
+  }
+  bool removable_superseded = false;
+  for (const auto &package : scan.superseded_packages) {
+    if (package.id != model_id) continue;
+    revertible = revertible || package.bundled;
+    removable_superseded = removable_superseded || !package.bundled;
+  }
+
+  const HMENU menu = CreatePopupMenu();
+  const auto add = [&](int command, const wchar_t *text, bool enabled) {
+    AppendMenuW(menu, MF_STRING | (enabled ? MF_ENABLED : MF_GRAYED), command, text);
+  };
+  add(kRevertModelCommandId, L"Revert", writable && revertible);
+  add(kDeletePreviousModelCommandId, L"Delete previous", idle && has_previous);
+  add(kRemoveSupersededModelCommandId, L"Remove superseded", idle && removable_superseded);
+  AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+  add(kRemoveModelCommandId, installed != nullptr && installed->bundled ? L"Remove… (Bundled with the app)" : L"Remove…",
+      writable);
+  AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+  add(kOpenModelFolderCommandId, L"Open folder", installed != nullptr);
+  add(kOpenModelsFolderCommandId, L"Open models folder", true);
+
+  RECT rect{};
+  GetWindowRect(button, &rect);
+  const int command = static_cast<int>(TrackPopupMenu(menu, TPM_RETURNCMD | TPM_LEFTALIGN | TPM_TOPALIGN,
+                                                      rect.left, rect.bottom, 0, window, nullptr));
+  DestroyMenu(menu);
+
+  switch (command) {
+    case kRevertModelCommandId: on_revert_model_clicked(state, combo, window); break;
+    case kDeletePreviousModelCommandId: on_delete_previous_model_clicked(state, combo, window); break;
+    case kRemoveSupersededModelCommandId: on_remove_superseded_model_clicked(state, combo, window); break;
+    case kRemoveModelCommandId: on_remove_model_clicked(state, combo, window); break;
+    case kOpenModelFolderCommandId: on_open_model_folder_clicked(state, combo, window); break;
+    case kOpenModelsFolderCommandId: on_open_models_folder_clicked(state, window); break;
+    default: break;
   }
 }
 
@@ -1270,12 +1533,8 @@ LRESULT CALLBACK settings_window_proc(HWND window, UINT message, WPARAM wparam, 
           on_update_model_clicked(*state, GetDlgItem(window, kCatalogueComboId), window);
         } else if (LOWORD(wparam) == kCancelModelTaskButtonId && HIWORD(wparam) == BN_CLICKED) {
           on_cancel_model_task_clicked(*state);
-        } else if (LOWORD(wparam) == kRevertModelButtonId && HIWORD(wparam) == BN_CLICKED) {
-          on_revert_model_clicked(*state, GetDlgItem(window, kModelComboId), window);
-        } else if (LOWORD(wparam) == kDeletePreviousModelButtonId && HIWORD(wparam) == BN_CLICKED) {
-          on_delete_previous_model_clicked(*state, GetDlgItem(window, kModelComboId), window);
-        } else if (LOWORD(wparam) == kRemoveSupersededModelButtonId && HIWORD(wparam) == BN_CLICKED) {
-          on_remove_superseded_model_clicked(*state, GetDlgItem(window, kModelComboId), window);
+        } else if (LOWORD(wparam) == kMoreModelActionsButtonId && HIWORD(wparam) == BN_CLICKED) {
+          on_more_model_actions_clicked(*state, window, reinterpret_cast<HWND>(lparam));
         } else if (LOWORD(wparam) == kCheckHotkeyButtonId && HIWORD(wparam) == BN_CLICKED) {
           on_check_hotkey_clicked(*state, window, GetDlgItem(window, kReadSelectionHotkeyEditId));
         } else if (LOWORD(wparam) == kStartAtLoginCheckboxId && HIWORD(wparam) == BN_CLICKED) {
@@ -1538,19 +1797,14 @@ void run_settings_window(ConfigDocument &document,
     throw std::runtime_error("failed to create the download/update model controls");
   }
 
-  // Versions of the model selected above (ADR 0010: one previous version kept).
+  // Revert, Delete previous, Remove superseded, Remove…, and the folder
+  // actions for the model selected above, behind one menu that offers only
+  // what applies (docs/design/architecture.md#model-removal-repair-and-maintenance-actions).
   label(kModelsPage, L"Selected model:", 24, 208, 148, 24);
-  const HWND revert_button = on_page(kModelsPage, CreateWindowExW(
-      0, L"BUTTON", L"Revert", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 176, 204, 90, 26, window,
-      reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kRevertModelButtonId)), instance, nullptr));
-  const HWND delete_previous_button = on_page(kModelsPage, CreateWindowExW(
-      0, L"BUTTON", L"Delete previous", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 276, 204, 110, 26, window,
-      reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kDeletePreviousModelButtonId)), instance, nullptr));
-  const HWND remove_superseded_button = on_page(kModelsPage, CreateWindowExW(
-      0, L"BUTTON", L"Remove superseded", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 176, 236, 210, 26, window,
-      reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kRemoveSupersededModelButtonId)), instance, nullptr));
-  if (!revert_button || !delete_previous_button || !remove_superseded_button) {
-    throw std::runtime_error("failed to create the model version controls");
+  if (!on_page(kModelsPage, CreateWindowExW(
+          0, L"BUTTON", L"More ▾", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 176, 204, 100, 26, window,
+          reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kMoreModelActionsButtonId)), instance, nullptr))) {
+    throw std::runtime_error("failed to create the model actions control");
   }
 
   // Server page.
