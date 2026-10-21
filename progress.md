@@ -469,3 +469,9 @@
   isolated Windows environment. #5: architecture Qwen manifest example and
   runner-layout sentence corrected. 51/51 Linux CTests pass; Windows build not
   run.
+- 2026-10-21: Qwen quality and model options planned — after the user judged
+  bundled Q4_K_M Qwen clearly worse than Kokoro, captured catalogue-only Q8_0
+  and bf16 variants (design), a listening comparison with a cleaner reference
+  clip, CustomVoice/VoiceDesign llama.cpp research, and a per-model options
+  plan in `roadmap.md`; the deferred sampling-parameters item folded into the
+  last. 1.7B is the largest Qwen3-TTS release. No code changed.

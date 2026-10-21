@@ -532,7 +532,10 @@ journal. On start, a journal left behind means the commit was cut short:
 recovery installs the staged folder if it validates and otherwise moves the
 old one back. Revert swaps the installed and kept versions through
 `.previous/.<id>.reverting`, so the version reverted from becomes the previous
-one, and puts both back if the restored package does not validate. A kept
+one, and puts both back if the restored package does not validate. A start
+that finds the parked folder finishes the revert only if the restored package
+validates; otherwise it returns that package to its `.previous/` slot, puts the
+parked one back, and reports it. A kept
 version is listed by its manifest identity only, because a relative `$schema`
 no longer resolves one folder deeper. The package switch runs inside the
 session manager's speech lock: it is refused while an utterance holds the
