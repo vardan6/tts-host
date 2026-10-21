@@ -2,12 +2,13 @@
 
 - Mode: implementation, bundled two-model release follow-ups.
 - Branch: `feature/model-maintenance` (from `main` at `01f1684`, PR #3 merged).
-  "Reject stale staged release models" is done (uncommitted); 52/52 Linux
+  "Reject stale staged release models" is done (`0f6d3a1`); 52/52 Linux
   CTests pass; Windows build compiles, `tts-host.exe` link blocked by the
   running Debug Host.
-- Next: `/next-slice` → "HITL — Decide how a runner reports an unusable
-  load" needs the user's decision; "Report Qwen unavailable without a usable
-  GPU" waits on it.
+- Next: `/next-slice` → "AFK — Report Qwen unavailable without a usable
+  GPU" (load rejection decided 2026-10-21; see the design's "Load rejection"
+  section). Applying `fallbackProfile` after a rejected load is new code:
+  today it applies only at runner resolution (`src/main.cpp`).
 - Pending user checks on Windows: a full `scripts/release-win.ps1` run
   reusing the existing `cache/release-models` stage (verifies, reuses or
   restages); quit Debug Host, run
@@ -21,8 +22,11 @@
 - Risk: setup.exe is 1.99 GB, near Inno's 2.1 GB single-file limit; a larger
   bundle needs `DiskSpanning`. The pinned Hugging Face revision may lack the
   Q8_0/bf16 files (only `main` was checked).
-- Open questions: in `roadmap.md` (runner load-failure reporting, Qwen default,
-  per-model options). Linux Qwen with runner-folder loading is unverified.
+- Open questions: in `roadmap.md` (Qwen default, per-model options). The user
+  has not yet confirmed that a rejected load uses a configured
+  `fallbackProfile` (captured that way, from the existing Configuration rule);
+  confirm before implementing. Linux Qwen with runner-folder loading is
+  unverified.
 - Blockers: running Debug Host locks its executable (LNK1168); do not
   terminate it without asking. Developer Run entry left for the user per
   `PROJECT.md`.

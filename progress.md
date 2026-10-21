@@ -513,3 +513,8 @@
   files); Linux 52/52; the install-check code was exercised against a fake
   prefix. Windows Debug compiles, link blocked by the running Debug Host. A
   full `release-win.ps1` run from the previous stage not yet executed.
+- 2026-10-21: Decide how a runner reports an unusable load — a `load`
+  rejection reply with a message; the Host skips restart/retry, applies only a
+  configured `fallbackProfile`, shows the last load result in Settings, and
+  records every message in the Activity log; no startup probe. ADR 0002
+  amended; design section "Load rejection" added.
