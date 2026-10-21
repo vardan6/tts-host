@@ -198,7 +198,8 @@ std::optional<CliOptions> parse_cli(int argc, char **argv, std::string &error_me
     }
 
     if (argument == "--update-model" || argument == "--revert-model" ||
-        argument == "--delete-previous-model" || argument == "--remove-superseded-model") {
+        argument == "--delete-previous-model" || argument == "--remove-superseded-model" ||
+        argument == "--verify-model") {
       if (index + 1 >= argc) {
         error_message = std::string(argument) + " requires a model id";
         return std::nullopt;
@@ -206,6 +207,7 @@ std::optional<CliOptions> parse_cli(int argc, char **argv, std::string &error_me
       auto &target = argument == "--update-model"     ? options.update_model_id
                      : argument == "--revert-model"   ? options.revert_model_id
                      : argument == "--delete-previous-model" ? options.delete_previous_model_id
+                     : argument == "--verify-model"   ? options.verify_model_id
                                                        : options.remove_superseded_model_id;
       target = argv[++index];
       continue;
@@ -309,6 +311,7 @@ std::optional<CliOptions> parse_cli(int argc, char **argv, std::string &error_me
           "                 [--download-model <id> [--model-directory <path>]]\n"
           "                 [--update-model <id>] [--revert-model <id>]\n"
           "                 [--delete-previous-model <id>] [--remove-superseded-model <id>]\n"
+          "                 [--verify-model <id>]\n"
           "                 [--config <path>]\n"
           "                 [--data-dir <path>]\n"
           "                 [(--synthesize <text> | --stdin | --clipboard) (--out <path.wav> | --play)\n"
@@ -336,6 +339,8 @@ std::optional<CliOptions> parse_cli(int argc, char **argv, std::string &error_me
           "                      delete the kept previous version of a model\n"
           "  --remove-superseded-model <id>\n"
           "                      delete per-user copies of a model that are superseded\n"
+          "  --verify-model <id>  hash an installed catalogue model against the catalogue;\n"
+          "                      exits non-zero on a different revision or any damaged file\n"
           "  --config <path>     load a specific config.json\n"
           "  --data-dir <path>   override the portable or installed data directory\n"
           "  --synthesize <text> synthesize text through a runner process\n"
@@ -365,7 +370,7 @@ std::optional<CliOptions> parse_cli(int argc, char **argv, std::string &error_me
         options.list_models || options.import_model_path.has_value() ||
         options.download_model_id.has_value() || options.update_model_id.has_value() ||
         options.revert_model_id.has_value() || options.delete_previous_model_id.has_value() ||
-        options.remove_superseded_model_id.has_value() ||
+        options.remove_superseded_model_id.has_value() || options.verify_model_id.has_value() ||
         options.synthesize_text.has_value() || options.use_stdin_text ||
         options.use_clipboard_text || options.output_path.has_value() || options.play_audio ||
         options.runner_path_override.has_value() || options.model_id.has_value() ||

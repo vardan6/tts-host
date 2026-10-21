@@ -511,7 +511,7 @@ endif()
 if(TTS_HOST_RELEASE)
   # Last install step: every runtime, licence, and bundled package file must be
   # in the tree, and each package must be a catalogue install whose $schema
-  # resolves inside it.
+  # resolves inside it and whose files match the compiled catalogue.
   set(TTS_HOST_RELEASE_REQUIRED
     tts-host.exe
     runners/kokoro-onnx/tts-host-kokoro-onnx-runner.exe runners/kokoro-onnx/onnxruntime.dll
@@ -556,6 +556,19 @@ if(TTS_HOST_RELEASE)
           message(FATAL_ERROR \"Bundled model \${model} is missing \${relative}\")
         endif()
       endforeach()
+      # The packaged host hashes the package against its own compiled
+      # catalogue, so a stale or modified stage cannot ship. The empty data
+      # directory keeps a developer's per-user copy out of the scan.
+      set(data \"${CMAKE_BINARY_DIR}/release-verify-data\")
+      file(REMOVE_RECURSE \"\${data}\")
+      file(MAKE_DIRECTORY \"\${data}\")
+      execute_process(
+        COMMAND \"\${prefix}/tts-host.exe\" --headless --config \"\${prefix}/config.json\" --data-dir \"\${data}\"
+                --verify-model \${model}
+        RESULT_VARIABLE verified OUTPUT_VARIABLE verify_out ERROR_VARIABLE verify_error)
+      if(NOT verified EQUAL 0)
+        message(FATAL_ERROR \"Bundled model \${model} does not match the compiled catalogue:\\n\${verify_error}\")
+      endif()
     endforeach()
   ")
 endif()
@@ -879,6 +892,16 @@ if(BUILD_TESTING)
       -Dschemas=${CMAKE_SOURCE_DIR}/schemas
       -Dwork=${CMAKE_CURRENT_BINARY_DIR}/cli-list-catalogue
       -P ${CMAKE_SOURCE_DIR}/tests/assert_list_catalogue.cmake
+  )
+
+  add_test(
+    NAME tts_host_cli_verify_model
+    COMMAND
+      ${CMAKE_COMMAND}
+      -Dexe=$<TARGET_FILE:tts-host>
+      -Dschemas=${CMAKE_SOURCE_DIR}/schemas
+      -Dwork=${CMAKE_CURRENT_BINARY_DIR}/cli-verify-model
+      -P ${CMAKE_SOURCE_DIR}/tests/assert_verify_model.cmake
   )
 
   # Drives download_catalogue_entry (src/catalogue_download.cpp) end to end
