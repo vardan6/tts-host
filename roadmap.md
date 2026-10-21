@@ -132,7 +132,7 @@ Synthetic Copy adapter compatibility remains separate open work below.
     [review #2](docs/reviews/code-review-2026-10-19-bundled-models.md#2--surface-unavailable-hardware-through-the-host),
     [ADR 0010](docs/adr/0010-model-revisions-storage-and-release-layout.md),
     and [ADR 0002](docs/adr/0002-runner-protocol.md).
-  - [ ] **AFK — Reject stale staged release models:** before reusing the
+  - [x] **AFK — Reject stale staged release models:** before reusing the
     release stage, compare each package's revision and file sizes/SHA-256 with
     the compiled catalogue and restage stale content; the shipping check fails
     on a catalogue mismatch; cover preparing a second release from the previous

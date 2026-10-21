@@ -503,3 +503,13 @@
   `tts_host_model_update`); Windows Debug build compiles everything and the
   catalogue/update tests pass, `tts-host.exe` link blocked by the running Debug
   Host (LNK1168). Menu and repair dialog not yet viewed on Windows.
+- 2026-10-21: Reject stale staged release models — new headless
+  `--verify-model <id>` hashes an installed catalogue package against the
+  compiled catalogue (naming both revisions on a mismatch, listing damaged
+  files) and exits non-zero; `release-win.ps1` verifies each staged package and
+  restages a stale or damaged one; the `TTS_HOST_RELEASE` install check runs the
+  packaged host's `--verify-model` with an empty data directory and fails on a
+  mismatch. New `tts_host_cli_verify_model` CTest (stale revision, damaged
+  files); Linux 52/52; the install-check code was exercised against a fake
+  prefix. Windows Debug compiles, link blocked by the running Debug Host. A
+  full `release-win.ps1` run from the previous stage not yet executed.

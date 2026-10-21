@@ -2,13 +2,15 @@
 
 - Mode: implementation, bundled two-model release follow-ups.
 - Branch: `feature/model-maintenance` (from `main` at `01f1684`, PR #3 merged).
-  "Verify and repair catalogue models" is done (uncommitted); 51/51 Linux
+  "Reject stale staged release models" is done (uncommitted); 52/52 Linux
   CTests pass; Windows build compiles, `tts-host.exe` link blocked by the
   running Debug Host.
 - Next: `/next-slice` → "HITL — Decide how a runner reports an unusable
-  load" needs the user's decision; the first AFK slice after it is "Reject
-  stale staged release models".
-- Pending user checks on Windows: quit Debug Host, run
+  load" needs the user's decision; "Report Qwen unavailable without a usable
+  GPU" waits on it.
+- Pending user checks on Windows: a full `scripts/release-win.ps1` run
+  reusing the existing `cache/release-models` stage (verifies, reuses or
+  restages); quit Debug Host, run
   `powershell -f .\fresh-win.ps1`, then in Settings → Models try More ▾,
   Remove… (dialog, keep-previous tick, Cancel default), and Verify and
   repair… (corrupt a per-user file; No is the default); scroll the activity log

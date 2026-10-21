@@ -209,7 +209,9 @@ version is kept, one per model, under `.previous/` in the model directory:
 Revert (`--revert-model <id>`) swaps back and Delete previous
 (`--delete-previous-model <id>`) removes it. Remove superseded
 (`--remove-superseded-model <id>`) deletes per-user copies that a newer
-bundled copy shadows. Stop speech before updating or reverting the model
+bundled copy shadows. `--verify-model <id>` hashes an installed catalogue
+model against the catalogue and exits non-zero on any difference, without
+repairing. Stop speech before updating or reverting the model
 that is speaking.
 
 ## Qwen evaluation
@@ -370,7 +372,10 @@ It reuses or fetches the pinned Qwen runtime, configures `build-release` with
 `TTS_HOST_RELEASE=ON`, builds Release, stages `kokoro-en-v1` and
 `qwen3-tts-1.7b` once into `cache/release-models` through the download
 catalogue (about 1.7 GB), and packages them into `build-release/dist/`.
-Packaging fails if any runner, library, licence, or model file is missing.
+A staged package is reused only while `--verify-model <id>` finds it at the
+compiled catalogue's revision with every file hash matching; otherwise it is
+downloaded again. Packaging fails if any runner, library, licence, or model
+file is missing, or if a bundled package differs from the catalogue.
 Then it extracts the zip into a temporary folder and has each model synthesize
 a sentence there. Last, it compiles the per-user installer
 `build-release/dist/tts-host-<version>-setup.exe` from the same tree with

@@ -2,7 +2,8 @@
 # (docs/design/architecture.md#distribution), and checks that both bundled
 # models speak from a clean extracted copy of the zip.
 # Staging downloads the bundled packages once through the catalogue, so each
-# carries its catalogue revision (ADR 0010); later runs reuse the staged copy.
+# carries its catalogue revision (ADR 0010); later runs reuse the staged copy
+# only while it still matches the compiled catalogue.
 param(
     [string]$QwenRuntime = "cache\qwen-evaluation\b11029\runtime",
     [string]$QwenDownloads = "cache\qwen-evaluation\b11029",
@@ -48,7 +49,18 @@ $config.modelRegistry.directories = @("./models")
 $config.startup.launchOnLogin = $false
 [System.IO.File]::WriteAllText($stageConfig, ($config | ConvertTo-Json -Depth 100), (New-Object System.Text.UTF8Encoding $false))
 foreach ($model in @("kokoro-en-v1", "qwen3-tts-1.7b")) {
-    if (-not (Test-Path -LiteralPath (Join-Path $stageModels "$model\model.json"))) {
+    # A staged package is reused only while it matches the compiled catalogue:
+    # an earlier release's stage, or a damaged file, is downloaded again.
+    $staged = Join-Path $stageModels $model
+    if (Test-Path -LiteralPath (Join-Path $staged "model.json")) {
+        & $host_exe --headless --config $stageConfig --data-dir $stagePath --verify-model $model |
+            Select-Object -Last 3 | Out-Host
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "Restaging ${model}: the staged copy differs from the catalogue"
+            Remove-Item -Recurse -Force -LiteralPath $staged
+        }
+    }
+    if (-not (Test-Path -LiteralPath (Join-Path $staged "model.json"))) {
         Invoke-Checked $host_exe @("--headless", "--config", $stageConfig, "--data-dir", $stagePath,
             "--download-model", $model) -Quiet
     }

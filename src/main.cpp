@@ -650,6 +650,36 @@ int run_main(int argc, char **argv) {
       std::cout << "Removed " << removed << " superseded copy(ies) of " << *options->remove_superseded_model_id
                 << '\n';
     }
+    // Report only, never repair: the release build uses it to reject a staged
+    // package that differs from the compiled catalogue
+    // (docs/design/architecture.md#distribution).
+    if (options->verify_model_id.has_value()) {
+      const auto &entries = tts_host::model_catalogue();
+      const auto found = std::find_if(entries.begin(), entries.end(),
+                                      [&](const auto &entry) { return entry.id == *options->verify_model_id; });
+      if (found == entries.end()) {
+        throw std::runtime_error("unknown catalogue entry id: " + *options->verify_model_id);
+      }
+      const auto scan = tts_host::scan_model_registry(document);
+      const auto installed = tts_host::catalogue_entry_package(*found, scan);
+      const auto expected = tts_host::catalogue_entry_revision(*found);
+      if (installed && installed->revision && *installed->revision != expected) {
+        throw std::runtime_error("'" + found->id + "' in " + tts_host::path_to_utf8(installed->package_path) +
+                                 " is at revision " + *installed->revision + "; the catalogue has " + expected);
+      }
+      const auto verification = tts_host::verify_catalogue_package(*found, scan, nullptr);
+      if (!verification.damaged.empty()) {
+        std::string damaged;
+        for (const auto &file : verification.damaged) {
+          damaged += "\n  " + file.relative_path + (file.missing ? " (missing)" : " (differs)");
+        }
+        throw std::runtime_error("'" + found->id + "' in " + tts_host::path_to_utf8(verification.package_path) +
+                                 " differs from the catalogue:" + damaged);
+      }
+      std::cout << "Verified " << found->id << ": " << verification.files_checked
+                << " file(s) match the catalogue in " << tts_host::path_to_utf8(verification.package_path)
+                << '\n';
+    }
 
     if (options->synthesize_text.has_value() || options->use_stdin_text || options->use_clipboard_text) {
       run_synthesis(*options, document, tts_host::path_from_utf8(argv[0]));

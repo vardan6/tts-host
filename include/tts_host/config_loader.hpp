@@ -21,6 +21,7 @@ struct CliOptions {
   std::optional<std::string> revert_model_id;
   std::optional<std::string> delete_previous_model_id;
   std::optional<std::string> remove_superseded_model_id;
+  std::optional<std::string> verify_model_id;
   std::optional<std::filesystem::path> config_path_override;
   std::optional<std::filesystem::path> data_dir_override;
   std::optional<std::string> synthesize_text;
