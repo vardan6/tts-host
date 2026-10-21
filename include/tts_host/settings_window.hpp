@@ -36,7 +36,11 @@ class ModelSessionManager;
 // tts_host/catalogue_download.hpp path `--download-model` uses, into the
 // first configured modelRegistry.directories entry, then refreshes the model
 // views. Download, Update, and Import run on a worker thread so the window
-// keeps responding; Cancel stops a download and keeps its partial file.
+// keeps responding; Cancel stops a download and keeps its partial file. A
+// More ▾ menu holds the selected model's Revert, Delete previous, Remove
+// superseded, Remove… (with a confirmation), Open folder, and Open models
+// folder, enabling only the actions that apply
+// (docs/design/architecture.md#model-removal-repair-and-maintenance-actions).
 void run_settings_window(ConfigDocument &document,
                          const std::filesystem::path &runner_directory,
                          ModelSessionManager *sessions = nullptr);

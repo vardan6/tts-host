@@ -475,3 +475,19 @@
   clip, CustomVoice/VoiceDesign llama.cpp research, and a per-model options
   plan in `roadmap.md`; the deferred sampling-parameters item folded into the
   last. 1.7B is the largest Qwen3-TTS release. No code changed.
+- 2026-10-21: Merge `feature/bundled-models` — PR #3 merged into `main`
+  (`01f1684`); review #2 and #3 stay as roadmap slices. Branch deleted locally
+  and on `origin`; work continues on `feature/model-maintenance`. The user's
+  Windows checks (`fresh-win.ps1`, isolated unticked-startup upgrade, log
+  scrolling) were not run before the merge.
+- 2026-10-21: Model removal, open folder, and maintenance menu — Settings
+  replaces the Revert/Delete previous/Remove superseded buttons with a More ▾
+  menu enabling only valid actions, plus Remove… (confirmation with space
+  freed, affected profiles, bundled-copy-returns and last-model notes, and a
+  "Keep the previous version" tick), Open folder, and Open models folder.
+  `plan_model_removal`/`remove_model_package` rename each folder to
+  `.<name>.removing` before deleting, so a locked file fails with the package
+  whole; start-up recovery deletes leftovers. Bundled packages in installed
+  mode are not removable. Linux 51/51 CTests (new removal cases in
+  `tts_host_model_update`); Windows `settings_window.cpp` compiles, link
+  blocked by the running Debug Host. Menu and dialog not yet viewed on Windows.

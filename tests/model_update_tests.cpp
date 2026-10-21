@@ -321,6 +321,97 @@ int main(int argc, char **argv) {
       }
       require(local_rejected && installed_revision(config) == "local", "a local package was updated");
     }
+
+    {
+      // Remove… deletes the package and, unless kept, its previous version;
+      // profiles naming it are listed, and a refused switch leaves it whole.
+      for (const bool keep_previous : {false, true}) {
+        const auto name = std::string(keep_previous ? "remove-keep" : "remove");
+        const auto user = work / name / "user";
+        std::filesystem::create_directories(user);
+        auto config = make_config(work / name, schemas, user, {});
+        config.value["profiles"] = json{{"fast", {{"model", "kokoro-en-v1"}}}, {"quality", {{"model", "demo-update"}}}};
+        FakeNetwork network;
+        tts_host::download_catalogue_entry(v1, user, config, network.fetcher(), nullptr);
+        tts_host::update_catalogue_package(v2, tts_host::scan_model_registry(config), config, network.fetcher(),
+                                           nullptr, nullptr);
+
+        const auto plan = tts_host::plan_model_removal("demo-update", tts_host::scan_model_registry(config), config);
+        require(plan.package_path == (user / "demo-update").lexically_normal() &&
+                    plan.package_bytes >= std::string("weights-two").size(),
+                name + ": the plan did not measure the installed package");
+        require(plan.previous_path && plan.previous_bytes >= std::string("weights-one").size(),
+                name + ": the plan did not find the kept previous version");
+        require(plan.profiles == std::vector<std::string>{"quality"}, name + ": the plan listed the wrong profiles");
+        require(plan.last_package && !plan.bundled_becomes_active, name + ": the only package was not flagged last");
+
+        const tts_host::PackageSwitchGuard busy = [](const std::string &, const std::function<void()> &) {
+          throw std::runtime_error("Model is in use");
+        };
+        bool refused = false;
+        try {
+          tts_host::remove_model_package(plan, keep_previous, busy);
+        } catch (const std::runtime_error &) {
+          refused = true;
+        }
+        require(refused && installed_revision(config) == r2 && previous_count(config) == 1,
+                name + ": a refused removal changed the installed models");
+
+        tts_host::remove_model_package(plan, keep_previous, nullptr);
+        const auto scan = tts_host::scan_model_registry(config);
+        require(scan.discovered_packages.empty() && scan.unsupported_entries.empty(),
+                name + ": the package was not removed cleanly");
+        require(scan.previous_packages.size() == (keep_previous ? 1u : 0u),
+                name + ": the previous version was not handled as asked");
+        require(!std::filesystem::exists(user / ".demo-update.removing") &&
+                    !std::filesystem::exists(user / ".previous" / (".demo-update@" + r1 + ".removing")),
+                name + ": a removal folder was left behind");
+      }
+    }
+
+    {
+      // Removing a per-user copy that shadowed a bundled one makes the bundled
+      // copy active again; the bundled copy itself is read-only.
+      const auto user = work / "remove-bundled" / "user";
+      const auto bundled = work / "remove-bundled" / "app-models";
+      std::filesystem::create_directories(user);
+      std::filesystem::create_directories(bundled);
+      const auto config = make_config(work / "remove-bundled", schemas, user, bundled);
+      FakeNetwork network;
+      tts_host::download_catalogue_entry(v1, bundled, config, network.fetcher(), nullptr);
+      tts_host::update_catalogue_package(v2, tts_host::scan_model_registry(config), config, network.fetcher(),
+                                         nullptr, nullptr);
+
+      const auto plan = tts_host::plan_model_removal("demo-update", tts_host::scan_model_registry(config), config);
+      require(plan.bundled_becomes_active && !plan.last_package && !plan.previous_path,
+              "the plan did not report the bundled copy taking over");
+      tts_host::remove_model_package(plan, false, nullptr);
+      const auto scan = tts_host::scan_model_registry(config);
+      require(installed_revision(config) == r1 && scan.discovered_packages.front().bundled,
+              "the bundled copy did not become active again");
+
+      bool bundled_refused = false;
+      try {
+        tts_host::plan_model_removal("demo-update", scan, config);
+      } catch (const std::runtime_error &) {
+        bundled_refused = true;
+      }
+      require(bundled_refused && std::filesystem::is_directory(bundled / "demo-update"),
+              "a bundled package was offered for removal");
+    }
+
+    {
+      // A removal cut short after its rename is finished on the next start.
+      const auto user = work / "remove-interrupted" / "user";
+      std::filesystem::create_directories(user / ".previous" / ".demo-update@old.removing");
+      std::filesystem::create_directories(user / ".demo-update.removing");
+      std::ofstream(user / ".demo-update.removing" / "model.onnx") << "weights";
+      const auto config = make_config(work / "remove-interrupted", schemas, user, {});
+      require(tts_host::recover_interrupted_model_updates(config).empty() &&
+                  !std::filesystem::exists(user / ".demo-update.removing") &&
+                  !std::filesystem::exists(user / ".previous" / ".demo-update@old.removing"),
+              "an interrupted removal was not finished");
+    }
   } catch (const std::exception &error) {
     std::cerr << error.what() << '\n';
     return EXIT_FAILURE;

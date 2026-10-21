@@ -1,7 +1,9 @@
 #pragma once
 
+#include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -54,9 +56,41 @@ std::size_t delete_previous_model_versions(const std::string &id, const ModelReg
 // are read-only and stay. Returns how many folders went.
 std::size_t remove_superseded_model_copies(const std::string &id, const ModelRegistryScan &scan);
 
+// What Remove… of an installed package would do, shown in its confirmation
+// (docs/design/architecture.md#model-removal-repair-and-maintenance-actions).
+struct ModelRemovalPlan {
+  std::string id;
+  std::string display_name;
+  std::filesystem::path package_path;
+  std::uintmax_t package_bytes = 0;
+  // The kept .previous/ version in the package's directory, deleted with it
+  // unless the user keeps it.
+  std::optional<std::filesystem::path> previous_path;
+  std::uintmax_t previous_bytes = 0;
+  // Profiles whose model is `id`: unavailable after removal unless a bundled
+  // copy becomes active again. Never switched to another model.
+  std::vector<std::string> profiles;
+  // The removed per-user copy shadowed a bundled one, which becomes active.
+  bool bundled_becomes_active = false;
+  // Nothing will be left to speak with (only possible in portable mode or
+  // with no bundled models).
+  bool last_package = false;
+};
+
+// Plans removing the installed `id`. Throws when it is not installed or is a
+// bundled package in installed mode, which is read-only (ADR 0010).
+ModelRemovalPlan plan_model_removal(const std::string &id, const ModelRegistryScan &scan,
+                                    const ConfigDocument &config);
+
+// Deletes the planned package, and its kept previous version unless
+// `keep_previous`, inside `guard`. Each folder is first renamed to a dot-prefixed
+// `.<name>.removing` beside it, so a file Windows holds open fails the removal
+// with the package intact rather than half-deleted; recovery deletes leftovers.
+void remove_model_package(const ModelRemovalPlan &plan, bool keep_previous, const PackageSwitchGuard &guard);
+
 // Completes or rolls back an update or revert interrupted mid-commit in any
-// configured directory. Run at start before the first scan. Returns one
-// message per recovered package.
+// configured directory, and finishes deleting interrupted removals. Run at
+// start before the first scan. Returns one message per recovered package.
 std::vector<std::string> recover_interrupted_model_updates(const ConfigDocument &config);
 
 }  // namespace tts_host

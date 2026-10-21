@@ -21,6 +21,17 @@ The layout is fixed-pixel and not DPI-aware. Coordinates assume the shell font
 at 96 DPI; the label column is sized to the longest caption. Changing a caption
 can therefore clip it even with the correct font.
 
+## No TaskDialog: the Host ships no common-controls v6 manifest
+
+`TaskDialogIndirect` (and its verification checkbox) and other comctl32 v6
+features need an application manifest selecting Common Controls 6, which the
+Host does not have; adding one restyles every existing control and would need a
+fresh visual pass. Dialogs needing more than `MessageBoxW` are plain modal
+windows, as the Remove… confirmation is (`confirm_model_removal` in
+`src/settings_window.cpp`): disable the owner, run a local loop through
+`IsDialogMessageW`, re-post `WM_QUIT`, and re-enable the owner before
+destroying the dialog.
+
 ## The tray thread owns the editable config; the speech worker reads snapshots
 
 In tray mode, `main` hands `run_tray_icon` a mutable `ConfigDocument` that
