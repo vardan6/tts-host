@@ -383,7 +383,9 @@ models/
   qwen3-tts-1.7b/
     model.json
     model.gguf
-    voices/
+    mmproj.gguf
+    reference.wav
+    reference-license.txt
   kokoro-en-v1/
     model.json
     model.onnx
@@ -397,15 +399,18 @@ Illustrative manifest:
   "$schema": "../../schemas/model.schema.json",
   "schemaVersion": 1,
   "id": "qwen3-tts-1.7b",
-  "displayName": "Qwen3 TTS 1.7B",
+  "displayName": "Qwen3-TTS 1.7B Base (English)",
   "engine": "qwen3-gguf",
-  "languages": ["en", "ru"],
+  "languages": ["en"],
   "files": {
-    "model": "model.gguf"
+    "model": "model.gguf",
+    "mmproj": "mmproj.gguf",
+    "voice": "reference.wav",
+    "voiceLicense": "reference-license.txt"
   },
   "license": {
     "name": "Apache-2.0",
-    "url": "https://huggingface.co/Qwen"
+    "url": "https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-Base"
   }
 }
 ```
@@ -465,6 +470,14 @@ repository revision. Base clones a reference voice, so the entry downloads the
 public-domain [LJ Speech](https://keithito.com/LJ-Speech-Dataset/) clip
 LJ001-0001 from a revision-pinned mirror, and the host writes its
 `voiceLicense` provenance notice.
+
+Higher-precision builds of the same model are separate catalogue-only
+packages, never bundled (ADR 0009 keeps Q4_K_M):
+`qwen3-tts-1.7b-q8` (Q8_0 backbone and mmproj, about 2.3 GB) and
+`qwen3-tts-1.7b-bf16` (bf16 backbone and mmproj, about 4.1 GB), from the same
+ggml-org repository pinned to a revision that has those files, with the same
+reference voice and `qwen3-gguf` runner. 1.7B is the largest Qwen3-TTS
+release; these trade speed and VRAM for less quantization loss.
 
 ### Model installation and updates
 
@@ -628,8 +641,9 @@ pinned headers and an application-owned runtime directory configured with
 tool's `cache/qwen-evaluation/b11029/runtime`); a model cannot select libraries
 or an executable.
 The Windows preparation tool pins the CUDA 12.4 x64 runtime archives by
-SHA-256. This is a developer build layout; the release runner/runtime layout is
-still to be decided (see [Distribution](#distribution)).
+SHA-256. Development and release builds both place the runner and these
+libraries in `runners/qwen3-gguf/` (see [Distribution](#distribution) and
+[ADR 0010](../adr/0010-model-revisions-storage-and-release-layout.md)).
 See [evaluation setup](../../README.md#qwen-evaluation).
 
 The adapter keeps weights resident between requests, resets generation state
@@ -853,7 +867,8 @@ marker (`kStartupChoiceMarkerName` in `include/tts_host/startup_choice.hpp`)
 is Host state in the data directory, not configuration. `compile-win.ps1`
 development launches pre-create the marker so the developer machine is never
 asked or registered (see `PROJECT.md`). The installer asks the same question and
-writes the marker; uninstall removes the registration it owns.
+writes the marker; a negative answer, like uninstall, removes the registration
+this copy owns and leaves another copy's entry alone.
 
 ## Distribution
 
@@ -893,7 +908,9 @@ CMake's `package` target (CPack, `ZIP`) produces the zip from a Release build.
 `TTS_HOST_RELEASE=ON` makes it the shipping package: it needs the pinned
 llama.cpp runtime and a staging directory of catalogue installs of both bundled
 packages, so each carries its catalogue revision. Its last install step fails
-on any missing runner, runtime library, licence, or package file.
+on any missing runner, runtime library, licence, or package file, and on a
+staged package whose revision or files differ from the compiled catalogue; the
+persistent stage is restaged rather than reused when stale.
 `scripts/release-win.ps1` stages the packages, builds, packages, and has both
 models synthesize from a freshly extracted copy.
 

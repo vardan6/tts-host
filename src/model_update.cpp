@@ -66,6 +66,15 @@ std::optional<std::string> manifest_revision(const std::filesystem::path &packag
   return manifest.at("revision").get<std::string>();
 }
 
+// The revision of a package that may not parse, for naming its .previous/ slot.
+std::optional<std::string> readable_revision(const std::filesystem::path &package_path) {
+  try {
+    return manifest_revision(package_path);
+  } catch (const std::exception &) {
+    return std::nullopt;
+  }
+}
+
 std::string read_text(const std::filesystem::path &path) {
   std::ifstream input(path, std::ios::binary);
   return std::string(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
@@ -270,11 +279,17 @@ std::vector<std::string> recover_interrupted_model_updates(const ConfigDocument 
       const auto name = parking.filename().string();
       const auto id = name.substr(1, name.size() - 11);
       const auto installed = directory / id;
-      if (std::filesystem::exists(installed)) {
+      if (std::filesystem::exists(installed) && validates(installed)) {
         const auto kept = previous_root / previous_folder_name(id, manifest_revision(parking));
         std::filesystem::remove_all(kept);
         std::filesystem::rename(parking, kept);
         messages.push_back("Completed the interrupted revert of '" + id + "'.");
+      } else if (std::filesystem::exists(installed)) {
+        // The restored version does not validate: as a completed revert would,
+        // keep it as the previous version and put the working copy back.
+        std::filesystem::rename(installed, previous_root / previous_folder_name(id, readable_revision(installed)));
+        std::filesystem::rename(parking, installed);
+        messages.push_back("Restored '" + id + "' after an interrupted revert; the previous version does not validate.");
       } else {
         std::filesystem::rename(parking, installed);
         messages.push_back("Restored '" + id + "' after an interrupted revert.");

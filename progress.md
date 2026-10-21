@@ -456,3 +456,16 @@
 
 - 2026-10-19: Activity-log scrolling repaint fix — read-only EDIT controls now receive opaque text backgrounds rather than the labels transparent background, erasing old glyphs during scrolling. Windows compilation passes; linking blocked by running Host (LNK1168); visual verification pending.
 - 2026-10-19: Model maintenance planning captured — grilled Remove, Verify and repair, Open folder, and a More ▾ menu (no force-reinstall; bundled installed-mode packages not removable or repairable in-app); design section and requirement added, three roadmap slices queued for a new branch after this branch is reviewed and merged.
+- 2026-10-19: Bundled-models cross-review triaged and planned — Codex review of `main..feature/bundled-models` (51/51 CTests) gave five findings, all confirmed against code. #1 interrupted-Revert recovery and #4 installer negative startup answer must be fixed before merge, with #5 stale architecture examples; #2 GPU-unavailable reporting (needs an ADR 0002 decision) and #3 stale release stage are queued after merge. Design states the #3/#4 intent; no code changed.
+- 2026-10-19: Bundled-models pre-merge fixes — #1: interrupted-Revert recovery
+  now validates the restored package before finishing; if it does not
+  validate, the working copy goes back in place, the restored version returns
+  to its `.previous/` slot, and recovery reports it. New tests inject a crash
+  after the second and third revert renames, including an invalid (schema 2)
+  previous package; the invalid case fails on the old code. #4: the installer
+  shares one ownership check between uninstall and an unticked startup box,
+  which now removes this copy's Run entry; `StartupApproved` is untouched.
+  The script compiles with ISCC against a dummy tree; it was not run in an
+  isolated Windows environment. #5: architecture Qwen manifest example and
+  runner-layout sentence corrected. 51/51 Linux CTests pass; Windows build not
+  run.

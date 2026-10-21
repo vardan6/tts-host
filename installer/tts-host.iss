@@ -87,28 +87,41 @@ const
   RunKey = 'Software\Microsoft\Windows\CurrentVersion\Run';
   RunValue = 'TTS Host';
 
+// Removes the Run entry only when it starts this copy, whether the installer
+// or the Host's Settings wrote it; another copy's entry stays. StartupApproved
+// is never touched (ADR 0008).
+procedure RemoveOwnedRunEntry();
+var
+  Command: String;
+begin
+  if RegQueryStringValue(HKCU, RunKey, RunValue, Command) then
+    if Pos(Lowercase('"' + ExpandConstant('{app}\tts-host.exe') + '"'), Lowercase(Command)) = 1 then
+      RegDeleteValue(HKCU, RunKey, RunValue);
+end;
+
 // The installer asks the first-run startup question, so record its answer
 // the way the Host does (src/startup_choice.cpp) and the Host never asks again.
+// A no on upgrade also removes the registration this copy already owns.
 procedure CurStepChanged(CurStep: TSetupStep);
 var
   Answer: String;
 begin
   if CurStep = ssPostInstall then
   begin
-    if WizardIsTaskSelected('startup') then Answer := 'launchOnLogin' else Answer := 'declined';
+    if WizardIsTaskSelected('startup') then
+      Answer := 'launchOnLogin'
+    else
+    begin
+      Answer := 'declined';
+      RemoveOwnedRunEntry();
+    end;
     ForceDirectories(ExpandConstant('{localappdata}\TTS Host'));
     SaveStringToFile(ExpandConstant('{localappdata}\TTS Host\startup-choice.marker'), Answer + #10, False);
   end;
 end;
 
-// Uninstall removes the Run entry only when it starts this copy, whether the
-// installer or the Host's Settings wrote it; another copy's entry stays.
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
-var
-  Command: String;
 begin
   if CurUninstallStep = usUninstall then
-    if RegQueryStringValue(HKCU, RunKey, RunValue, Command) then
-      if Pos(Lowercase('"' + ExpandConstant('{app}\tts-host.exe') + '"'), Lowercase(Command)) = 1 then
-        RegDeleteValue(HKCU, RunKey, RunValue);
+    RemoveOwnedRunEntry();
 end;

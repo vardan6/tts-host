@@ -217,6 +217,54 @@ int main(int argc, char **argv) {
     }
 
     {
+      // A revert interrupted after the kept version moved into place finishes
+      // only if that version validates; otherwise the working copy goes back
+      // and the kept version stays previous. After the last rename there is
+      // nothing to recover.
+      for (const std::string stage : {"restored-valid", "restored-invalid", "finished"}) {
+        const auto user = work / ("revert-" + stage) / "user";
+        std::filesystem::create_directories(user);
+        const auto config = make_config(work / ("revert-" + stage), schemas, user, {});
+        FakeNetwork network;
+        tts_host::download_catalogue_entry(v1, user, config, network.fetcher(), nullptr);
+        tts_host::update_catalogue_package(v2, tts_host::scan_model_registry(config), config, network.fetcher(),
+                                           nullptr, nullptr);
+        const auto kept = user / ".previous" / ("demo-update@" + r1);
+        if (stage == "restored-invalid") {
+          // E.g. kept from before a schema change.
+          std::ifstream input(kept / "model.json");
+          auto manifest = json::parse(input);
+          input.close();
+          manifest["schemaVersion"] = 2;
+          std::ofstream(kept / "model.json", std::ios::trunc) << manifest.dump(2);
+        }
+        const auto parking = user / ".previous" / ".demo-update.reverting";
+        std::filesystem::rename(user / "demo-update", parking);
+        std::filesystem::rename(kept, user / "demo-update");
+        if (stage == "finished") {
+          std::filesystem::rename(parking, user / ".previous" / ("demo-update@" + r2));
+        }
+
+        const auto messages = tts_host::recover_interrupted_model_updates(config);
+        require(messages.size() == (stage == "finished" ? 0u : 1u),
+                stage + ": recovery reported " + std::to_string(messages.size()) + " messages");
+        require(!std::filesystem::exists(parking), stage + ": the parked version was left behind");
+        if (stage == "restored-invalid") {
+          require(messages.front().find("does not validate") != std::string::npos,
+                  stage + ": recovery did not report the invalid previous version");
+          require(installed_revision(config) == r2 && std::filesystem::is_directory(kept) && previous_count(config) == 1,
+                  stage + ": the working copy was not put back with the invalid version kept");
+        } else {
+          require(installed_revision(config) == r1 &&
+                      std::filesystem::is_directory(user / ".previous" / ("demo-update@" + r2)) &&
+                      previous_count(config) == 1,
+                  stage + ": the revert was not completed");
+        }
+        require(tts_host::recover_interrupted_model_updates(config).empty(), stage + ": recovery is not idempotent");
+      }
+    }
+
+    {
       // A bundled package is never written: the update lands in the per-user
       // directory and the bundled copy is the previous version, so Revert
       // removes the per-user copy.

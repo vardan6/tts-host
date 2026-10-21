@@ -79,10 +79,32 @@ Synthetic Copy adapter compatibility remains separate open work below.
     and [distribution design](docs/design/architecture.md#distribution).
     Bundled models stay read-only; additions live in per-user storage — see
     [ADR 0010](docs/adr/0010-model-revisions-storage-and-release-layout.md).
-  - [ ] **HITL — Review and merge `feature/bundled-models`:** cross-review
-    `main..feature/bundled-models` (only `5af176b` was reviewed), triage, fix,
-    and merge; the slices below continue on a new branch — no doc governs:
-    review of already-implemented work.
+  - Fixes before merge, on `feature/bundled-models`, from the
+    [bundled-models review triage](docs/reviews/code-review-2026-10-19-bundled-models.md#triage--2026-10-19):
+    - [x] **AFK — Validate the restored package in interrupted-Revert
+      recovery:** on startup recovery, validate the installed folder before
+      finalizing; on failure put the working copy back and the previous version
+      in its `.previous` slot, and report it; fault-injection tests after each
+      of the three revert renames, including an invalid previous package — see
+      [review #1](docs/reviews/code-review-2026-10-19-bundled-models.md#1--validate-restored-content-before-completing-recovery)
+      and [update design](docs/design/architecture.md#model-installation-and-updates).
+    - [x] **AFK — Installer honours an unticked startup box on upgrade:**
+      remove the Run entry only when it starts this copy, sharing the
+      uninstall ownership check; never touch `StartupApproved`; validate in
+      isolation, not on the developer machine — see
+      [review #4](docs/reviews/code-review-2026-10-19-bundled-models.md#4--apply-a-negative-installer-answer-to-an-owned-registration),
+      [login startup design](docs/design/architecture.md#login-startup), and
+      [ADR 0008](docs/adr/0008-os-owned-login-startup.md).
+    - [x] **AFK — Correct stale architecture examples:** single-language Qwen
+      manifest example declaring `mmproj`, `voice`, `voiceLicense`; replace the
+      "release runner/runtime layout still to be decided" sentence with a
+      pointer to the `runners/<engine>/` layout — see
+      [review #5](docs/reviews/code-review-2026-10-19-bundled-models.md#triage--2026-10-19),
+      [engine design](docs/design/architecture.md#engines-and-models), and
+      [ADR 0010](docs/adr/0010-model-revisions-storage-and-release-layout.md).
+  - [ ] **HITL — Merge `feature/bundled-models`:** after the three fixes above
+    pass build and tests, user approves the merge to `main`; the slices below
+    continue on a new branch — no doc governs: merge of reviewed work.
   - [ ] **AFK — Model removal, open folder, and maintenance menu:** Remove…
     with previous-version and profile handling, Open folder / Open models
     folder, and the More ▾ menu enabling only valid actions (Revert, Delete
@@ -93,6 +115,30 @@ Synthetic Copy adapter compatibility remains separate open work below.
     pinned catalogue, report damage, re-download only damaged files, commit
     in place with recovery; bundled installed-mode packages report only — see
     [maintenance design](docs/design/architecture.md#model-removal-repair-and-maintenance-actions).
+  - [ ] **HITL — Decide how a runner reports an unusable load:** ADR 0002
+    says any failure other than a `synthesize` rejection is reported by
+    exiting, so a missing GPU reaches the host only as a closed pipe. Proposed:
+    a `load` rejection reply (JSON-RPC `error` with `message`, runner stays
+    alive, host neither restarts nor retries) mirroring the `synthesize`
+    rejection; alternative is a device-availability report from `initialize`.
+    Amends ADR 0002 and the runner protocol design — see
+    [review #2](docs/reviews/code-review-2026-10-19-bundled-models.md#2--surface-unavailable-hardware-through-the-host),
+    [ADR 0002](docs/adr/0002-runner-protocol.md), and
+    [runner protocol design](docs/design/architecture.md#runner-protocol).
+  - [ ] **AFK — Report Qwen unavailable without a usable GPU:** implement the
+    decided reporting; Settings records and shows Qwen unavailable with the
+    runner's reason, no restart/retry on this failure, Kokoro stays
+    selectable; verify on a Windows machine without usable CUDA — see
+    [review #2](docs/reviews/code-review-2026-10-19-bundled-models.md#2--surface-unavailable-hardware-through-the-host),
+    [ADR 0010](docs/adr/0010-model-revisions-storage-and-release-layout.md),
+    and [ADR 0002](docs/adr/0002-runner-protocol.md).
+  - [ ] **AFK — Reject stale staged release models:** before reusing the
+    release stage, compare each package's revision and file sizes/SHA-256 with
+    the compiled catalogue and restage stale content; the shipping check fails
+    on a catalogue mismatch; cover preparing a second release from the previous
+    release's stage — see
+    [review #3](docs/reviews/code-review-2026-10-19-bundled-models.md#3--check-cached-release-models-against-the-current-catalogue)
+    and [distribution design](docs/design/architecture.md#distribution).
   - [ ] **HITL — Clean Windows two-model acceptance:** verify offline install,
     both models speaking, model selection, local/catalogue additions, a
     manual update, removal, and verify/repair on supported hardware — see
@@ -102,6 +148,42 @@ Synthetic Copy adapter compatibility remains separate open work below.
     and a details pane replacing the registry dump, reusing the More ▾ menu —
     see
     [maintenance design](docs/design/architecture.md#model-removal-repair-and-maintenance-actions).
+- Qwen quality and model options, after the unified model list:
+  - [ ] **AFK — Higher-precision Qwen catalogue variants:** add the Q8_0 and
+    bf16 packages with pinned URLs, sizes, and SHA-256; download and synthesize
+    each on Windows and record RTF and peak VRAM if measurable — see
+    [catalogue design](docs/design/architecture.md#download-catalogue) and
+    [ADR 0009](docs/adr/0009-qwen-release-selection-without-bake-off.md).
+  - [ ] **HITL — Compare Qwen variants and reference voices with Kokoro:**
+    user listens to Q4_K_M/Q8_0/bf16 at speed 1.0 with the LJ Speech clip and
+    at least one cleaner, licensed reference clip the user approves, against
+    Kokoro; decide whether bundled Qwen stays Q4_K_M, changes, or becomes
+    catalogue-only, and whether the reference voice changes (a superseding
+    ADR if so) — see
+    [ADR 0009](docs/adr/0009-qwen-release-selection-without-bake-off.md) and
+    [default-model criteria](docs/requirements/product.md#acceptance-criteria-for-default-model-selection).
+  - [ ] **AFK — Research Qwen CustomVoice and VoiceDesign via llama.cpp:**
+    whether GGUF conversions of the 1.7B CustomVoice (named speakers, no
+    reference clip) and VoiceDesign models exist or can be produced, and
+    whether pinned or newer llama.cpp runs them; PyTorch stays rejected per
+    [ADR 0009](docs/adr/0009-qwen-release-selection-without-bake-off.md) —
+    no doc governs: the output is a research note for `/planning-capture`.
+  - [ ] **HITL — Plan per-model load and synthesis options in Settings:**
+    decide which typed options users may set per profile and how Settings
+    shows them. Candidates for Qwen: sampling temperature/top-k/top-p/seed
+    (currently fixed at 0.9/50/1.0/42 in the runner, values not recorded in
+    `stats` — [Qwen review finding 6](docs/reviews/code-review-2026-10-16-qwen-evaluation.md#triage--2026-10-16)),
+    context size, KV-cache type, GPU layer count, reference voice; for Kokoro:
+    voice, CPU thread count. Language is a package property (one per Qwen
+    package) and does not reduce memory: the weights are multilingual, so the
+    memory lever is quantization (the package choice). Load options need a
+    reload; synthesis options can travel per request. Typed fields only, no
+    generic options map — see
+    [playback design](docs/design/architecture.md#playback-control-and-position),
+    [configuration design](docs/design/architecture.md#configuration),
+    [ADR 0002](docs/adr/0002-runner-protocol.md), and
+    [ADR 0010](docs/adr/0010-model-revisions-storage-and-release-layout.md)
+    (partial CPU offload must not become the rejected CPU fallback).
 - [ ] **AFK — Synthetic Copy compatibility verification:** validate
   focused-control identification, modifier handling, and clipboard
   ownership/preservation for each adapter before enabling it. Unknown targets
@@ -172,8 +254,5 @@ the runner layout is decided by
 - Token authentication and LAN serving. The config vocabulary is reserved;
   see `docs/adr/0003-no-authentication.md`.
 - Self-updating.
-- Qwen sampling parameters in one source and recorded in stats; seed is fixed
-  at 42 — see
-  [Qwen review finding 6](docs/reviews/code-review-2026-10-16-qwen-evaluation.md#triage--2026-10-16).
 - Spool recovery (October 3 finding 14): rejected without a use case — see
   [validation](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-14).
