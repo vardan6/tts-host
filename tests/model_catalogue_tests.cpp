@@ -178,24 +178,26 @@ void generated_files_follow_the_package_rules() {
                   "an empty generated file shipped");
 }
 
-// The bundled Qwen package (ADR 0009) is offered with every asset the
-// qwen3-gguf registry check requires, so a download validates as installed.
-void the_catalogue_offers_the_bundled_qwen_package() {
+// The bundled Qwen package (ADR 0009) and its catalogue-only higher-precision
+// builds are offered with every asset the qwen3-gguf registry check requires,
+// so a download validates as installed.
+void the_catalogue_offers_the_qwen_packages() {
   const auto &entries = tts_host::model_catalogue();
-  const auto qwen = std::find_if(entries.begin(), entries.end(), [](const tts_host::CatalogueEntry &entry) {
-    return entry.id == "qwen3-tts-1.7b";
-  });
-  if (qwen == entries.end()) {
-    throw std::runtime_error("the catalogue does not offer the bundled Qwen package");
-  }
-  if (qwen->engine != "qwen3-gguf" || qwen->languages != std::vector<std::string>{"en"}) {
-    throw std::runtime_error("the Qwen entry has the wrong engine or languages");
-  }
-  std::set<std::string> keys;
-  for (const auto &file : qwen->files) keys.insert(file.manifest_key);
-  for (const auto &file : qwen->generated_files) keys.insert(file.manifest_key);
-  if (keys != std::set<std::string>{"model", "mmproj", "voice", "voiceLicense"}) {
-    throw std::runtime_error("the Qwen entry does not declare exactly model, mmproj, voice, and voiceLicense");
+  for (const std::string id : {"qwen3-tts-1.7b", "qwen3-tts-1.7b-q8", "qwen3-tts-1.7b-bf16"}) {
+    const auto qwen = std::find_if(entries.begin(), entries.end(),
+                                   [&](const tts_host::CatalogueEntry &entry) { return entry.id == id; });
+    if (qwen == entries.end()) {
+      throw std::runtime_error("the catalogue does not offer " + id);
+    }
+    if (qwen->engine != "qwen3-gguf" || qwen->languages != std::vector<std::string>{"en"}) {
+      throw std::runtime_error(id + " has the wrong engine or languages");
+    }
+    std::set<std::string> keys;
+    for (const auto &file : qwen->files) keys.insert(file.manifest_key);
+    for (const auto &file : qwen->generated_files) keys.insert(file.manifest_key);
+    if (keys != std::set<std::string>{"model", "mmproj", "voice", "voiceLicense"}) {
+      throw std::runtime_error(id + " does not declare exactly model, mmproj, voice, and voiceLicense");
+    }
   }
 }
 
@@ -329,7 +331,7 @@ int main() {
     a_file_path_escaping_the_package_is_rejected();
     manifest_keys_are_required_and_unique();
     generated_files_follow_the_package_rules();
-    the_catalogue_offers_the_bundled_qwen_package();
+    the_catalogue_offers_the_qwen_packages();
     an_installed_entry_is_recognized_by_id();
     the_licence_notice_badges_non_commercial_terms();
     the_download_size_is_summed_and_readable();

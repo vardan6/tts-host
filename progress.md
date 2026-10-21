@@ -1,3 +1,14 @@
+- 2026-10-21: Higher-precision Qwen catalogue variants (partial) — added
+  catalogue-only `qwen3-tts-1.7b-q8` (Q8_0 backbone and mmproj, 2188 MB) and
+  `qwen3-tts-1.7b-bf16` (bf16 backbone and mmproj, 3950 MB), pinned to ggml-org
+  revision `ca27d74` (it has both builds), sharing the LJ Speech reference
+  through `qwen_base_entry`; not bundled. 53/53 Linux CTests pass. On the RTX
+  3070 Laptop (8 GB), `build-release` Release binary, speed 1.0, a 3-sentence
+  16.6 s passage: Q4_K_M ≈ 1.44 RTF, ≈ 3.3 GB peak VRAM; Q8_0 downloaded via
+  WinHTTP with verified checksums, speaks, ≈ 1.65 RTF, ≈ 3.9 GB peak VRAM. RTF is
+  (passage wall − one-word wall) ÷ audio seconds, VRAM is `nvidia-smi` sampled
+  every 200 ms (`--stats` reports it unavailable). bf16 not yet measured.
+  Scratch config, script, and WAVs in `cache/variant-eval/`.
 - 2026-10-17: Qwen catalogue and local import — added `qwen3-tts-1.7b` (Q4_K_M
   backbone, Q8_0 mmproj, revision-pinned Hugging Face URLs, 1414 MB) to the
   compiled catalogue. Its reference voice is the public-domain LJ Speech clip
