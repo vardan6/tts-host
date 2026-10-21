@@ -71,6 +71,7 @@ constexpr int kMoreModelActionsButtonId = 129;
 constexpr int kRemoveModelCommandId = 130;
 constexpr int kOpenModelFolderCommandId = 131;
 constexpr int kOpenModelsFolderCommandId = 132;
+constexpr int kVerifyModelCommandId = 133;
 constexpr int kSettingsHotkeyProbeId = 2;
 
 // Tab order of the Settings pages; docs/design/architecture.md#desktop-integration.
@@ -103,11 +104,15 @@ constexpr UINT kActivityTimerIntervalMs = 500;
 // and refreshes the model views.
 constexpr UINT kModelTaskDoneMessage = WM_APP + 1;
 
-// What a finished model task reports: the activity message, and whether it
-// changed what is installed.
+struct SettingsState;
+
+// What a finished model task reports: the activity message, whether it
+// changed what is installed, and an optional next step for the UI thread
+// (Verify's repair confirmation).
 struct ModelTaskOutcome {
   std::wstring message;
   bool changed = false;
+  std::function<void(SettingsState &, HWND)> follow_up;
 };
 
 // Thrown from a download progress callback when the user cancels; the fetcher
@@ -782,20 +787,26 @@ void on_model_task_done(SettingsState &state, HWND window) {
   append_activity_log(state, state.model_task_outcome.message);
   if (state.close_pending) {
     DestroyWindow(window);
+    return;
+  }
+  if (const auto follow_up = std::move(state.model_task_outcome.follow_up)) {
+    state.model_task_outcome.follow_up = nullptr;
+    follow_up(state, window);
   }
 }
 
 void on_cancel_model_task_clicked(SettingsState &state) {
   if (state.model_task.joinable() && !state.model_task_cancel.exchange(true)) {
-    append_activity_log(state, L"Cancelling the download…");
+    append_activity_log(state, L"Cancelling…");
   }
 }
 
 // Progress for the worker: replaces the file's activity entry at most every
-// 250 ms (2026-10-14 review, finding 4) and stops the transfer on Cancel.
-DownloadProgressCallback model_task_progress(SettingsState &state) {
+// 250 ms (2026-10-14 review, finding 4) and stops the transfer, or the
+// hashing, on Cancel. `verb` prefixes the entry, e.g. "Verifying ".
+DownloadProgressCallback model_task_progress(SettingsState &state, std::string verb = {}) {
   auto throttle = std::make_shared<DownloadProgressThrottle>(std::chrono::milliseconds(250));
-  return [&state, throttle](const DownloadProgress &progress) {
+  return [&state, throttle, verb](const DownloadProgress &progress) {
     if (state.model_task_cancel) {
       throw ModelTaskCancelled();
     }
@@ -803,7 +814,7 @@ DownloadProgressCallback model_task_progress(SettingsState &state) {
       return;
     }
     record_transient_activity("download:" + progress.relative_path,
-                              progress.relative_path + ": " + std::to_string(progress.bytes_downloaded) +
+                              verb + progress.relative_path + ": " + std::to_string(progress.bytes_downloaded) +
                                   " / " + std::to_string(progress.bytes_total) + " bytes");
   };
 }
@@ -1122,6 +1133,85 @@ void on_remove_model_clicked(SettingsState &state, HWND combo, HWND window) {
   }
 }
 
+// What Verify found, for the activity log.
+std::wstring describe_verification(const ModelVerification &report) {
+  const auto name = utf8_to_wide(report.display_name);
+  if (report.damaged.empty()) {
+    return L"Verified " + name + L": all " + std::to_wstring(report.files_checked) +
+           L" files match the catalogue.";
+  }
+  auto text = name + L" has " + std::to_wstring(report.damaged.size()) + L" damaged or missing file" +
+              (report.damaged.size() == 1 ? L"" : L"s") + L":";
+  for (const auto &file : report.damaged) {
+    text += L" " + utf8_to_wide(file.relative_path) + L" (" + utf8_to_wide(describe_download_size(file.size_bytes)) +
+            (file.missing ? L", missing)" : L", damaged)") + L";";
+  }
+  text.back() = L'.';
+  if (report.bundled) {
+    text += L" It is bundled with the app: reinstall or upgrade the application to repair it.";
+  }
+  return text;
+}
+
+void start_model_repair(SettingsState &state, HWND window, const CatalogueEntry &entry,
+                        const ModelVerification &report) {
+  const auto prompt = describe_verification(report) + L"\r\n\r\nRepair downloads " +
+                      utf8_to_wide(describe_download_size(report.repair_download_bytes)) +
+                      L" and replaces only these files; the damaged copy is discarded. Repair now?";
+  // No is the default, so Enter does not start a download by accident.
+  if (MessageBoxW(window, prompt.c_str(), L"Repair model", MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) != IDYES) {
+    append_activity_log(state, L"Repair of " + utf8_to_wide(report.display_name) + L" not started.");
+    return;
+  }
+  append_activity_log(state, L"Repairing " + utf8_to_wide(report.display_name) + L"…");
+  start_model_task(state, window, true,
+                   [&state, &entry, report, config = state.document,
+                    progress = model_task_progress(state)]() -> ModelTaskOutcome {
+    const auto name = utf8_to_wide(report.display_name);
+    try {
+      repair_catalogue_package(entry, report, config, fetch_url_to_file, progress, session_switch_guard(state));
+      return {L"Repaired " + name + L".", true};
+    } catch (const ModelTaskCancelled &) {
+      return {L"Repair of " + name + kDownloadCancelledMessage, false};
+    } catch (const std::exception &error) {
+      return {L"Repair failed; the installed package is unchanged: " + utf8_to_wide(error.what()), false};
+    }
+  });
+}
+
+void on_verify_model_clicked(SettingsState &state, HWND combo, HWND window) {
+  const auto model_id = selected_model_id(state, combo, L"verify");
+  if (model_id.empty()) {
+    return;
+  }
+  const auto &entries = model_catalogue();
+  const auto found = std::find_if(entries.begin(), entries.end(),
+                                  [&](const auto &entry) { return entry.id == model_id; });
+  if (found == entries.end()) {
+    return;
+  }
+  append_activity_log(state, L"Verifying " + utf8_to_wide(found->display_name) + L"…");
+  const CatalogueEntry &entry = *found;
+  start_model_task(state, window, true,
+                   [&entry, scan = state.last_scan,
+                    progress = model_task_progress(state, "Verifying ")]() -> ModelTaskOutcome {
+    try {
+      const auto report = verify_catalogue_package(entry, scan, progress);
+      ModelTaskOutcome outcome{describe_verification(report), false, nullptr};
+      if (!report.damaged.empty() && !report.bundled) {
+        outcome.follow_up = [&entry, report](SettingsState &state, HWND window) {
+          start_model_repair(state, window, entry, report);
+        };
+      }
+      return outcome;
+    } catch (const ModelTaskCancelled &) {
+      return {L"Verification of " + utf8_to_wide(entry.display_name) + L" cancelled.", false};
+    } catch (const std::exception &error) {
+      return {L"Verify failed: " + utf8_to_wide(error.what()), false};
+    }
+  });
+}
+
 void open_in_explorer(SettingsState &state, HWND window, const std::filesystem::path &folder) {
   const auto result = reinterpret_cast<INT_PTR>(
       ShellExecuteW(window, L"open", folder.wstring().c_str(), nullptr, nullptr, SW_SHOWNORMAL));
@@ -1183,6 +1273,11 @@ void on_more_model_actions_clicked(SettingsState &state, HWND window, HWND butto
     has_previous = true;
     revertible = revertible || (installed != nullptr && in_directory(package));
   }
+  const bool catalogued = std::any_of(model_catalogue().begin(), model_catalogue().end(),
+                                      [&](const CatalogueEntry &entry) { return entry.id == model_id; });
+  // Verify compares against the catalogue revision; an older one is updated instead.
+  const bool verifiable =
+      installed != nullptr && idle && catalogued && package_status(*installed) == PackageStatus::current;
   bool removable_superseded = false;
   for (const auto &package : scan.superseded_packages) {
     if (package.id != model_id) continue;
@@ -1200,6 +1295,7 @@ void on_more_model_actions_clicked(SettingsState &state, HWND window, HWND butto
   AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
   add(kRemoveModelCommandId, installed != nullptr && installed->bundled ? L"Remove… (Bundled with the app)" : L"Remove…",
       writable);
+  add(kVerifyModelCommandId, L"Verify and repair…", verifiable);
   AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
   add(kOpenModelFolderCommandId, L"Open folder", installed != nullptr);
   add(kOpenModelsFolderCommandId, L"Open models folder", true);
@@ -1215,6 +1311,7 @@ void on_more_model_actions_clicked(SettingsState &state, HWND window, HWND butto
     case kDeletePreviousModelCommandId: on_delete_previous_model_clicked(state, combo, window); break;
     case kRemoveSupersededModelCommandId: on_remove_superseded_model_clicked(state, combo, window); break;
     case kRemoveModelCommandId: on_remove_model_clicked(state, combo, window); break;
+    case kVerifyModelCommandId: on_verify_model_clicked(state, combo, window); break;
     case kOpenModelFolderCommandId: on_open_model_folder_clicked(state, combo, window); break;
     case kOpenModelsFolderCommandId: on_open_models_folder_clicked(state, window); break;
     default: break;

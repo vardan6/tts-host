@@ -2,13 +2,16 @@
 
 - Mode: implementation, bundled two-model release follow-ups.
 - Branch: `feature/model-maintenance` (from `main` at `01f1684`, PR #3 merged).
-  "Model removal, open folder, and maintenance menu" is done (uncommitted);
-  51/51 Linux CTests pass.
-- Next: `/next-slice` → "AFK — Verify and repair catalogue models" (adds its
-  item to the same More ▾ menu, `src/settings_window.cpp`).
+  "Verify and repair catalogue models" is done (uncommitted); 51/51 Linux
+  CTests pass; Windows build compiles, `tts-host.exe` link blocked by the
+  running Debug Host.
+- Next: `/next-slice` → "HITL — Decide how a runner reports an unusable
+  load" needs the user's decision; the first AFK slice after it is "Reject
+  stale staged release models".
 - Pending user checks on Windows: quit Debug Host, run
-  `powershell -f .\fresh-win.ps1`, then in Settings → Models try More ▾ and
-  Remove… (dialog, keep-previous tick, Cancel default); scroll the activity log
+  `powershell -f .\fresh-win.ps1`, then in Settings → Models try More ▾,
+  Remove… (dialog, keep-previous tick, Cancel default), and Verify and
+  repair… (corrupt a per-user file; No is the default); scroll the activity log
   (repaint fix `1896937`); installer unticked-startup upgrade path in an
   isolated environment (never this machine).
 - Known gap: a previous version kept after Remove… has no installed row to
@@ -23,6 +26,9 @@
   `PROJECT.md`.
 - Environment: Windows Debug `build/` uses the cached b11029 Qwen runtime; use
   `config.development.json` with login startup disabled. Linux tests in
-  `build-linux/`. Commands in README, `progress.md`, `PROJECT.md`.
+  `build-linux/`. Commands in README, `progress.md`, `PROJECT.md`. From WSL,
+  `powershell.exe` is not on PATH: call
+  `/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe` to build
+  `build/` (`cmake --build build --config Debug`) without launching the app.
 - Discarded as noise: the `harness-guard` hook blocks shell commands with a
   segment starting with the Qwen model name; put such text in a file instead.

@@ -4,12 +4,14 @@
 #include <fstream>
 #include <iterator>
 #include <optional>
+#include <set>
 #include <stdexcept>
 #include <system_error>
 
 #include <nlohmann/json.hpp>
 
 #include "tts_host/path_encoding.hpp"
+#include "tts_host/sha256.hpp"
 
 namespace tts_host {
 
@@ -135,6 +137,51 @@ void remove_leftovers_in(const std::filesystem::path &directory) {
   }
   for (const auto &leftover : leftovers) {
     std::filesystem::remove_all(leftover, ec);
+  }
+}
+
+// Written before a repair moves the good files into staging and removed once
+// the repaired package is in place.
+std::filesystem::path repair_journal_path(const std::filesystem::path &directory, const std::string &id) {
+  return directory / ("." + id + ".repairing");
+}
+
+// Where a repair moves the damaged package before deleting it.
+std::filesystem::path repair_discard_path(const std::filesystem::path &directory, const std::string &id) {
+  return directory / ("." + id + ".damaged");
+}
+
+// Dot-prefixed entries of `directory` whose names end in `suffix`.
+std::vector<std::filesystem::path> dot_entries_with_suffix(const std::filesystem::path &directory,
+                                                           const std::string &suffix) {
+  std::vector<std::filesystem::path> found;
+  std::error_code ec;
+  for (const auto &item : std::filesystem::directory_iterator(directory, ec)) {
+    const auto name = item.path().filename().string();
+    if (name.size() > suffix.size() + 1 && name.front() == '.' &&
+        name.compare(name.size() - suffix.size(), suffix.size(), suffix) == 0) {
+      found.push_back(item.path());
+    }
+  }
+  return found;
+}
+
+// Moves back into `installed` every file of `staging` it lacks: undoes a repair
+// that moved good files into staging before its commit failed.
+void put_back_missing_files(const std::filesystem::path &staging, const std::filesystem::path &installed) {
+  std::vector<std::filesystem::path> files;
+  std::error_code ec;
+  for (const auto &item : std::filesystem::recursive_directory_iterator(staging, ec)) {
+    if (item.is_regular_file(ec)) {
+      files.push_back(item.path().lexically_relative(staging));
+    }
+  }
+  for (const auto &relative : files) {
+    const auto target = installed / relative;
+    if (!std::filesystem::exists(target)) {
+      std::filesystem::create_directories(target.parent_path());
+      std::filesystem::rename(staging / relative, target);
+    }
   }
 }
 
@@ -321,6 +368,141 @@ void remove_model_package(const ModelRemovalPlan &plan, bool keep_previous, cons
   });
 }
 
+ModelVerification verify_catalogue_package(const CatalogueEntry &entry, const ModelRegistryScan &scan,
+                                           const DownloadProgressCallback &progress) {
+  const auto &current = installed_package(entry.id, scan);
+  if (!current.revision) {
+    throw std::runtime_error("'" + entry.id + "' is a local package; only catalogue installs can be verified");
+  }
+  if (*current.revision != catalogue_entry_revision(entry)) {
+    throw std::runtime_error("'" + entry.id + "' is not at the catalogue revision; use Update instead");
+  }
+
+  ModelVerification result;
+  result.id = entry.id;
+  result.display_name = current.display_name;
+  result.package_path = current.package_path;
+  result.bundled = current.bundled;
+
+  const auto check = [&](const std::string &relative_path, std::uint64_t size_bytes, const std::string &sha256,
+                         bool downloaded) {
+    ++result.files_checked;
+    const auto path = current.package_path / relative_path;
+    std::error_code ec;
+    const bool missing = !std::filesystem::is_regular_file(path, ec);
+    bool damaged = missing;
+    if (!missing) {
+      const auto size = std::filesystem::file_size(path, ec);
+      damaged = ec || size != size_bytes ||
+                sha256_hex_of_file(path, [&](std::uint64_t hashed) {
+                  if (progress) progress(DownloadProgress{relative_path, hashed, size_bytes});
+                }) != sha256;
+    }
+    if (damaged) {
+      result.damaged.push_back(DamagedModelFile{relative_path, size_bytes, missing});
+      if (downloaded) result.repair_download_bytes += size_bytes;
+    }
+  };
+  for (const auto &file : entry.files) {
+    check(file.relative_path, file.size_bytes, file.sha256, true);
+  }
+  for (const auto &file : entry.generated_files) {
+    check(file.relative_path, file.contents.size(), sha256_hex(file.contents), false);
+  }
+  return result;
+}
+
+void repair_catalogue_package(const CatalogueEntry &entry, const ModelVerification &verification,
+                              const ConfigDocument &config, const HttpFetchFunction &fetch,
+                              const DownloadProgressCallback &progress, const PackageSwitchGuard &guard) {
+  if (verification.damaged.empty()) {
+    throw std::runtime_error("'" + entry.id + "' has no damaged files to repair");
+  }
+  if (verification.bundled) {
+    throw std::runtime_error("'" + entry.id +
+                             "' is bundled with the app; reinstall or upgrade the application to repair it");
+  }
+  const auto installed = verification.package_path;
+  const auto directory = installed.parent_path();
+  const auto staging = catalogue_staging_path(entry, directory);
+  std::set<std::string> damaged;
+  for (const auto &file : verification.damaged) {
+    damaged.insert(file.relative_path);
+  }
+
+  // Anything else staged (an abandoned download, a rolled-back repair) would
+  // collide with the good files moved in; damaged-file prefixes resume.
+  std::error_code ec;
+  if (std::filesystem::is_directory(staging, ec)) {
+    std::vector<std::filesystem::path> stale;
+    for (const auto &item : std::filesystem::recursive_directory_iterator(staging, ec)) {
+      if (item.is_regular_file(ec) && damaged.count(item.path().lexically_relative(staging).generic_string()) == 0) {
+        stale.push_back(item.path());
+      }
+    }
+    for (const auto &path : stale) {
+      std::filesystem::remove(path);
+    }
+  }
+  std::filesystem::create_directories(staging);
+  std::vector<std::string> good;
+  for (const auto &file : entry.files) {
+    if (damaged.count(file.relative_path)) {
+      stage_catalogue_file(entry, file, staging, fetch, progress);
+    } else {
+      good.push_back(file.relative_path);
+    }
+  }
+
+  run_guarded(guard, entry.id, [&] {
+    if (!std::filesystem::is_directory(installed)) {
+      throw std::runtime_error("'" + entry.id + "' is no longer installed at " + path_to_utf8(installed));
+    }
+    const auto journal = repair_journal_path(directory, entry.id);
+    {
+      std::ofstream output(journal, std::ios::binary | std::ios::trunc);
+      if (!output || !(output << "repair")) {
+        throw std::runtime_error("unable to write " + path_to_utf8(journal));
+      }
+    }
+    const auto roll_back = [&](const std::string &reason) {
+      put_back_missing_files(staging, installed);
+      std::filesystem::remove(journal);
+      throw std::runtime_error(reason);
+    };
+
+    // Good files move rather than copy, so a repair never needs a second copy
+    // of a multi-gigabyte package.
+    try {
+      for (const auto &relative : good) {
+        const auto target = staging / relative;
+        std::filesystem::create_directories(target.parent_path());
+        std::filesystem::rename(installed / relative, target);
+      }
+      write_catalogue_generated_files(entry, staging, config);
+      validate_model_package(staging);
+    } catch (const std::exception &error) {
+      roll_back("could not assemble the repaired '" + entry.id + "': " + error.what());
+    }
+
+    const auto discard = repair_discard_path(directory, entry.id);
+    std::filesystem::remove_all(discard);
+    std::error_code rename_ec;
+    std::filesystem::rename(installed, discard, rename_ec);
+    if (rename_ec) {
+      roll_back("could not move the damaged '" + entry.id + "' aside: " + rename_ec.message());
+    }
+    std::filesystem::rename(staging, installed, rename_ec);
+    if (rename_ec) {
+      std::filesystem::rename(discard, installed);
+      roll_back("could not move the repaired '" + entry.id + "' into place: " + rename_ec.message());
+    }
+    std::filesystem::remove(journal);
+    std::error_code cleanup_ec;
+    std::filesystem::remove_all(discard, cleanup_ec);
+  });
+}
+
 std::vector<std::string> recover_interrupted_model_updates(const ConfigDocument &config) {
   std::vector<std::string> messages;
   for (const auto &entry : config.value.at("modelRegistry").at("directories")) {
@@ -358,6 +540,36 @@ std::vector<std::string> recover_interrupted_model_updates(const ConfigDocument 
         messages.push_back("Restored '" + id + "' after an interrupted update.");
       }
       std::filesystem::remove(journal);
+    }
+
+    // A repair cut short: with both folders present the good files were still
+    // moving, so they go back; with only staging, the swap was under way.
+    for (const auto &journal : dot_entries_with_suffix(directory, ".repairing")) {
+      const auto name = journal.filename().string();
+      const auto id = name.substr(1, name.size() - 11);
+      const auto installed = directory / id;
+      const auto staging = directory / ("." + id + ".downloading");
+      const auto discard = repair_discard_path(directory, id);
+      const bool staged = std::filesystem::exists(staging);
+      if (std::filesystem::exists(installed)) {
+        if (staged) {
+          put_back_missing_files(staging, installed);
+          messages.push_back("Rolled back the interrupted repair of '" + id + "'; run Verify and repair again.");
+        }
+      } else if (validates(staging)) {
+        std::filesystem::rename(staging, installed);
+        messages.push_back("Completed the interrupted repair of '" + id + "'.");
+      } else if (std::filesystem::exists(discard)) {
+        std::filesystem::rename(discard, installed);
+        if (staged) {
+          put_back_missing_files(staging, installed);
+        }
+        messages.push_back("Restored '" + id + "' after an interrupted repair; run Verify and repair again.");
+      }
+      std::filesystem::remove(journal);
+    }
+    for (const auto &discard : dot_entries_with_suffix(directory, ".damaged")) {
+      std::filesystem::remove_all(discard, ec);
     }
 
     const auto previous_root = directory / ".previous";

@@ -88,8 +88,48 @@ ModelRemovalPlan plan_model_removal(const std::string &id, const ModelRegistrySc
 // with the package intact rather than half-deleted; recovery deletes leftovers.
 void remove_model_package(const ModelRemovalPlan &plan, bool keep_previous, const PackageSwitchGuard &guard);
 
-// Completes or rolls back an update or revert interrupted mid-commit in any
-// configured directory, and finishes deleting interrupted removals. Run at
+// One file of a catalogue package that does not match the compiled catalogue.
+struct DamagedModelFile {
+  std::string relative_path;
+  // The catalogue size: what a repair fetches, or writes for a host-written file.
+  std::uint64_t size_bytes = 0;
+  bool missing = false;
+};
+
+// What Verify and repair… found
+// (docs/design/architecture.md#model-removal-repair-and-maintenance-actions).
+struct ModelVerification {
+  std::string id;
+  std::string display_name;
+  std::filesystem::path package_path;
+  std::size_t files_checked = 0;
+  std::vector<DamagedModelFile> damaged;
+  // Bytes a repair downloads: damaged files that are not host-written.
+  std::uint64_t repair_download_bytes = 0;
+  // A bundled package in installed mode is read-only: reported, never repaired.
+  bool bundled = false;
+};
+
+// Hashes every file of the installed `entry.id` against `entry`, reporting
+// each file's hashing through `progress` (which may throw to cancel). Throws
+// when the package is not installed, is local, or is not at the entry's
+// revision -- an older revision would differ everywhere, and Update replaces it.
+ModelVerification verify_catalogue_package(const CatalogueEntry &entry, const ModelRegistryScan &scan,
+                                           const DownloadProgressCallback &progress);
+
+// Re-downloads only the damaged files of a verified package into the
+// `.<id>.downloading` staging folder, then, inside `guard`, moves the good files
+// over, validates, and swaps the staged package into place through the
+// `.<id>.repairing` journal. The damaged copy is discarded, not kept as the
+// previous version, and an existing `.previous/` version is left alone. Throws,
+// leaving the installed package whole, when there is nothing to repair, the
+// package is bundled, or any step fails; fetched files stay staged for a retry.
+void repair_catalogue_package(const CatalogueEntry &entry, const ModelVerification &verification,
+                              const ConfigDocument &config, const HttpFetchFunction &fetch,
+                              const DownloadProgressCallback &progress, const PackageSwitchGuard &guard);
+
+// Completes or rolls back an update, revert, or repair interrupted mid-commit
+// in any configured directory, and finishes deleting interrupted removals. Run at
 // start before the first scan. Returns one message per recovered package.
 std::vector<std::string> recover_interrupted_model_updates(const ConfigDocument &config);
 
