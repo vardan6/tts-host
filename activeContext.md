@@ -7,17 +7,12 @@
   link is blocked (LNK1168) by the running Debug Host. Its roadmap item stays
   open until the Windows Settings check. "Report Qwen unavailable without a
   usable GPU" (`195474d`) stays open until the no-CUDA Windows check.
-- Current slice: "Higher-precision Qwen catalogue variants" — entries
-  committed; Q4_K_M and Q8_0 measured (`progress.md`, 2026-10-21). bf16 was
-  downloading into `cache/variant-eval/models` when the session closed.
-- Next: if `cache/variant-eval/models/qwen3-tts-1.7b-bf16` exists, run
-  `cache/variant-eval/measure.sh qwen3-tts-1.7b-bf16 bf16-short` with
-  `short.txt` copied to `text.txt`, then `bf16-long` with `long.txt`; otherwise
-  re-run `--headless --download-model qwen3-tts-1.7b-bf16` from
-  `build-release/Release` with that folder's `config.json` and `data`. Record
-  in `progress.md`, tick the roadmap item. Then the user checks Settings →
-  Models (rows, columns, details pane, button enabling, More ▾ per row) after
-  quitting the Debug Host and rebuilding.
+- Higher-precision Qwen variants done: Q4_K_M ≈ 1.44 RTF / 3.3 GB, Q8_0 ≈
+  1.65 / 3.9 GB, bf16 ≈ 2.64 / 5.4 GB (`progress.md`, 2026-10-21); listening
+  WAVs in `cache/variant-eval/`.
+- Next: user quits the Debug Host, rebuilds, and checks Settings → Models
+  (rows, columns, details pane, button enabling, More ▾ per row); then the
+  roadmap slice "HITL — Compare Qwen variants and reference voices with Kokoro".
 - Pending user checks on Windows: a full `scripts/release-win.ps1` run
   reusing the existing `cache/release-models` stage (verifies, reuses or
   restages); quit Debug Host, run
