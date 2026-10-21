@@ -44,9 +44,23 @@ A runner that cannot serve one `synthesize` request but remains loaded (for
 example an unsupported speed or over-long text) closes the audio stream with an
 `endOfStream` frame and then replies with a JSON-RPC `error` object carrying a
 string `message`. The Host discards any partial PCM and surfaces the message
-without restarting or retrying, because the same request cannot succeed. Any
-other runner failure is reported by exiting and uses the Host's one-restart
-recovery. (Review: [Qwen evaluation findings 1–2](../reviews/code-review-2026-10-16-qwen-evaluation.md).)
+without restarting or retrying, because the same request cannot succeed.
+
+A runner that cannot load its model for a reason a restart would repeat (no
+usable GPU, insufficient memory, unreadable package files) replies to `load`
+with a JSON-RPC `error` carrying a string `message` the user can act on, and
+stays alive with no model loaded. The message is the whole contract: no error
+kind or device report. The Host neither restarts nor retries; the Host's
+handling is in the
+[runner protocol design](../design/architecture.md#runner-protocol). Every
+runner may reject `load` this way, and the stub runner can be told to, so the
+path is tested without a GPU. (Review:
+[bundled-models finding 2](../reviews/code-review-2026-10-19-bundled-models.md#2--surface-unavailable-hardware-through-the-host);
+decided 2026-10-21.)
+
+Any other runner failure — protocol errors, crashes, missed deadlines — is
+reported by exiting and uses the Host's one-restart recovery. (Review:
+[Qwen evaluation findings 1–2](../reviews/code-review-2026-10-16-qwen-evaluation.md).)
 
 The first call is `initialize`, which exchanges protocol version and engine
 capabilities. Capabilities include `load`, `unload`, `synthesize`, `cancel`, and
@@ -103,6 +117,13 @@ test that needs no GPU and no model weights in CI.
   tooling, no benefit over JSON-RPC on the control path.
 - **Audio inline in JSON-RPC as base64.** Size and parse cost on the latency
   path.
+- **Device availability reported by `initialize`** (for load failures). It
+  covers hardware only, while package and memory failures surface during the
+  real load anyway; it would load GPU libraries in every runner start; and a
+  present device does not mean the model fits on it.
+- **The Host reading runner stderr for load failures.** It cannot tell a
+  repeatable failure from a crash, so the restart and retry still happen, and
+  it would make diagnostics part of the protocol.
 
 ## Runner failure
 

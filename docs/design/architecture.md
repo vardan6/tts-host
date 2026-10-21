@@ -78,7 +78,29 @@ A stub runner emitting synthetic audio with no model is a permanent in-repo
 fixture and the basis of the end-to-end test.
 
 Runner death and deadline recovery, complete-chunk publication, and cancellation
-follow [ADR 0002](../adr/0002-runner-protocol.md#runner-failure). Operation and
+follow [ADR 0002](../adr/0002-runner-protocol.md#runner-failure).
+
+### Load rejection
+
+A runner rejects `load` it cannot complete with a JSON-RPC `error` and a
+user-actionable `message` ([ADR 0002](../adr/0002-runner-protocol.md)); this is
+how Qwen reports a missing usable NVIDIA GPU
+([ADR 0010](../adr/0010-model-revisions-storage-and-release-layout.md)). The
+Host then:
+
+- neither restarts nor retries, and shuts the unloaded runner down;
+- applies the profile's `fallbackProfile` if it has one, as for any
+  unavailable runner ([Configuration](#configuration)), and otherwise fails
+  the request with the runner's message — never an implicit fallback;
+- records the message as that model's last load result, shown in Settings as
+  unavailable with the reason until a load of it succeeds; each explicit use
+  tries again, because a memory shortage can be transient;
+- records every message of this path in the Activity log, which Settings
+  shows: the runner's reason, the fallback taken, and the failed request.
+
+The Host does not probe runners at startup: the bundled Qwen is not a default,
+and a probe would load CUDA libraries on every launch. Unavailability is
+learned at the first load. Operation and
 shutdown limits are defined by `RunnerDeadlines` in `runner_launcher.hpp`.
 
 ## Speech pipeline

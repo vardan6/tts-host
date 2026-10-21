@@ -115,23 +115,21 @@ Synthetic Copy adapter compatibility remains separate open work below.
     pinned catalogue, report damage, re-download only damaged files, commit
     in place with recovery; bundled installed-mode packages report only — see
     [maintenance design](docs/design/architecture.md#model-removal-repair-and-maintenance-actions).
-  - [ ] **HITL — Decide how a runner reports an unusable load:** ADR 0002
-    says any failure other than a `synthesize` rejection is reported by
-    exiting, so a missing GPU reaches the host only as a closed pipe. Proposed:
-    a `load` rejection reply (JSON-RPC `error` with `message`, runner stays
-    alive, host neither restarts nor retries) mirroring the `synthesize`
-    rejection; alternative is a device-availability report from `initialize`.
-    Amends ADR 0002 and the runner protocol design — see
-    [review #2](docs/reviews/code-review-2026-10-19-bundled-models.md#2--surface-unavailable-hardware-through-the-host),
-    [ADR 0002](docs/adr/0002-runner-protocol.md), and
-    [runner protocol design](docs/design/architecture.md#runner-protocol).
-  - [ ] **AFK — Report Qwen unavailable without a usable GPU:** implement the
-    decided reporting; Settings records and shows Qwen unavailable with the
-    runner's reason, no restart/retry on this failure, Kokoro stays
-    selectable; verify on a Windows machine without usable CUDA — see
-    [review #2](docs/reviews/code-review-2026-10-19-bundled-models.md#2--surface-unavailable-hardware-through-the-host),
-    [ADR 0010](docs/adr/0010-model-revisions-storage-and-release-layout.md),
-    and [ADR 0002](docs/adr/0002-runner-protocol.md).
+  - [x] **HITL — Decide how a runner reports an unusable load:** a `load`
+    rejection reply; no restart, retry, or implicit fallback; last load
+    result in Settings and the Activity log — see
+    [ADR 0002](docs/adr/0002-runner-protocol.md) and
+    [load rejection design](docs/design/architecture.md#load-rejection).
+  - [ ] **AFK — Report Qwen unavailable without a usable GPU:** runners reject
+    `load` with a message (Qwen's GPU check, Kokoro's package errors, a stub
+    option for the CTest); the Host skips restart/retry, applies a configured
+    `fallbackProfile`, shows the last load result in Settings, and records every
+    message in the Activity log; verify on a Windows machine without usable
+    CUDA — see
+    [load rejection design](docs/design/architecture.md#load-rejection),
+    [ADR 0002](docs/adr/0002-runner-protocol.md),
+    [ADR 0010](docs/adr/0010-model-revisions-storage-and-release-layout.md), and
+    [review #2](docs/reviews/code-review-2026-10-19-bundled-models.md#2--surface-unavailable-hardware-through-the-host).
   - [x] **AFK — Reject stale staged release models:** before reusing the
     release stage, compare each package's revision and file sizes/SHA-256 with
     the compiled catalogue and restage stale content; the shipping check fails
