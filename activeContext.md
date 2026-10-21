@@ -3,11 +3,11 @@
 - Mode: implementation, bundled two-model release follow-ups.
 - Branch: `feature/model-maintenance` (from `main` at `01f1684`, PR #3 merged).
   "Report Qwen unavailable without a usable GPU" is implemented
-  (uncommitted): 52/52 Linux CTests pass; Windows build compiles and the
-  affected Windows tests pass; `tts-host.exe` link blocked by the running
+  (`195474d`, pushed): 52/52 Linux CTests pass; Windows build compiles and
+  the affected Windows tests pass; `tts-host.exe` link blocked by the running
   Debug Host. Its roadmap item stays open until the no-CUDA Windows check.
-- Next: commit the slice, then `/next-slice` → "AFK — Unified Settings model
-  list" (clean Windows acceptance is HITL and waits on the user).
+- Next: `/next-slice` → "AFK — Unified Settings model list" (clean Windows
+  acceptance is HITL and waits on the user).
 - Pending user checks on Windows: a full `scripts/release-win.ps1` run
   reusing the existing `cache/release-models` stage (verifies, reuses or
   restages); quit Debug Host, run
