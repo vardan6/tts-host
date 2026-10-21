@@ -111,7 +111,7 @@ Synthetic Copy adapter compatibility remains separate open work below.
     previous, Remove superseded move into it) — see
     [maintenance design](docs/design/architecture.md#model-removal-repair-and-maintenance-actions)
     and [ADR 0010](docs/adr/0010-model-revisions-storage-and-release-layout.md).
-  - [ ] **AFK — Verify and repair catalogue models:** hash against the
+  - [x] **AFK — Verify and repair catalogue models:** hash against the
     pinned catalogue, report damage, re-download only damaged files, commit
     in place with recovery; bundled installed-mode packages report only — see
     [maintenance design](docs/design/architecture.md#model-removal-repair-and-maintenance-actions).

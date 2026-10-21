@@ -577,7 +577,14 @@ re-download is Remove followed by Download, and damage is handled by Repair.
   multi-gigabyte package runs on the model-task worker with progress and
   Cancel. A damaged bundled package in installed mode is reported only, with
   "reinstall or upgrade the application" as the action, because the Host
-  never writes the application's `models/`.
+  never writes the application's `models/`. Verify is offered only for a
+  package at the catalogue's revision; an older one differs everywhere and
+  takes Update instead. The commit writes the journal `.<id>.repairing`, moves
+  the good files into staging, validates, moves the damaged folder to
+  `.<id>.damaged`, renames staging into place, and drops the journal. A start
+  that finds the journal with both folders present moves the good files back
+  (the repair is retried); with only staging left it installs staging if it
+  validates and otherwise restores the damaged folder.
 - **Open folder** reveals the selected package folder (a superseded row opens
   that copy); **Open models folder** opens the writable tier. Manual deletion
   there is picked up by directory watching; a package whose runner is resident

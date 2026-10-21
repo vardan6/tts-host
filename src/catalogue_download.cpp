@@ -81,44 +81,41 @@ std::filesystem::path catalogue_staging_path(const CatalogueEntry &entry,
   return destination_root / ("." + entry.id + ".downloading");
 }
 
-std::filesystem::path stage_catalogue_entry(const CatalogueEntry &entry,
-                                            const std::filesystem::path &destination_root,
-                                            const ConfigDocument &config, const HttpFetchFunction &fetch,
-                                            const DownloadProgressCallback &progress) {
-  const auto staging = catalogue_staging_path(entry, destination_root);
-  std::filesystem::create_directories(staging);
+void stage_catalogue_file(const CatalogueEntry &entry, const CatalogueFile &file,
+                          const std::filesystem::path &staging, const HttpFetchFunction &fetch,
+                          const DownloadProgressCallback &progress) {
+  const auto file_path = staging / file.relative_path;
+  std::filesystem::create_directories(file_path.parent_path());
 
-  for (const auto &file : entry.files) {
-    const auto file_path = staging / file.relative_path;
-    std::filesystem::create_directories(file_path.parent_path());
-
-    std::error_code size_ec;
-    std::uint64_t bytes_on_disk =
-        std::filesystem::exists(file_path, size_ec) ? std::filesystem::file_size(file_path, size_ec) : 0;
-    if (size_ec || bytes_on_disk > file.size_bytes) {
-      bytes_on_disk = 0;
-    }
-
-    if (bytes_on_disk < file.size_bytes) {
-      fetch(file.url, bytes_on_disk, file_path, file.size_bytes, progress);
-    }
-
-    std::error_code final_size_ec;
-    const auto final_size = std::filesystem::file_size(file_path, final_size_ec);
-    if (final_size_ec || final_size != file.size_bytes) {
-      throw std::runtime_error("download of " + file.relative_path + " for '" + entry.id +
-                               "' is incomplete; rerun to resume");
-    }
-
-    const auto actual_sha256 = sha256_hex_of_file(file_path);
-    if (actual_sha256 != file.sha256) {
-      std::error_code remove_ec;
-      std::filesystem::remove(file_path, remove_ec);
-      throw std::runtime_error("checksum mismatch for " + file.relative_path + " of '" + entry.id +
-                               "': expected " + file.sha256 + ", got " + actual_sha256);
-    }
+  std::error_code size_ec;
+  std::uint64_t bytes_on_disk =
+      std::filesystem::exists(file_path, size_ec) ? std::filesystem::file_size(file_path, size_ec) : 0;
+  if (size_ec || bytes_on_disk > file.size_bytes) {
+    bytes_on_disk = 0;
   }
 
+  if (bytes_on_disk < file.size_bytes) {
+    fetch(file.url, bytes_on_disk, file_path, file.size_bytes, progress);
+  }
+
+  std::error_code final_size_ec;
+  const auto final_size = std::filesystem::file_size(file_path, final_size_ec);
+  if (final_size_ec || final_size != file.size_bytes) {
+    throw std::runtime_error("download of " + file.relative_path + " for '" + entry.id +
+                             "' is incomplete; rerun to resume");
+  }
+
+  const auto actual_sha256 = sha256_hex_of_file(file_path);
+  if (actual_sha256 != file.sha256) {
+    std::error_code remove_ec;
+    std::filesystem::remove(file_path, remove_ec);
+    throw std::runtime_error("checksum mismatch for " + file.relative_path + " of '" + entry.id +
+                             "': expected " + file.sha256 + ", got " + actual_sha256);
+  }
+}
+
+void write_catalogue_generated_files(const CatalogueEntry &entry, const std::filesystem::path &staging,
+                                     const ConfigDocument &config) {
   for (const auto &file : entry.generated_files) {
     const auto file_path = staging / file.relative_path;
     std::filesystem::create_directories(file_path.parent_path());
@@ -129,6 +126,19 @@ std::filesystem::path stage_catalogue_entry(const CatalogueEntry &entry,
   }
 
   write_generated_manifest(entry, staging, config);
+}
+
+std::filesystem::path stage_catalogue_entry(const CatalogueEntry &entry,
+                                            const std::filesystem::path &destination_root,
+                                            const ConfigDocument &config, const HttpFetchFunction &fetch,
+                                            const DownloadProgressCallback &progress) {
+  const auto staging = catalogue_staging_path(entry, destination_root);
+  std::filesystem::create_directories(staging);
+
+  for (const auto &file : entry.files) {
+    stage_catalogue_file(entry, file, staging, fetch, progress);
+  }
+  write_catalogue_generated_files(entry, staging, config);
 
   try {
     validate_model_package(staging);

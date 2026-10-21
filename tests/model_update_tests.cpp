@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <iterator>
 #include <map>
 #include <stdexcept>
 #include <string>
@@ -59,10 +60,12 @@ tts_host::CatalogueEntry version(const std::string &weights) {
 struct FakeNetwork {
   int fetches = 0;
   bool corrupt = false;
+  std::vector<std::string> urls;
   tts_host::HttpFetchFunction fetcher() {
     return [this](const std::string &url, std::uint64_t, const std::filesystem::path &destination,
                   std::uint64_t, const tts_host::DownloadProgressCallback &) {
       ++fetches;
+      urls.push_back(url);
       std::ofstream output(destination, std::ios::binary | std::ios::trunc);
       const auto body = url.substr(url.rfind('/') + 1);
       output << (corrupt ? std::string(body.size(), 'x') : body);
@@ -81,6 +84,25 @@ std::string installed_revision(const tts_host::ConfigDocument &config) {
 
 std::size_t previous_count(const tts_host::ConfigDocument &config) {
   return tts_host::scan_model_registry(config).previous_packages.size();
+}
+
+// A package with a weight file, a file in a subfolder, and a host-written
+// notice, for Verify and repair.
+tts_host::CatalogueEntry multi_file_version() {
+  auto entry = version("weights-multi");
+  entry.files.push_back(tts_host::CatalogueFile{"voices/af.bin", "voices", "https://example.invalid/voices-multi",
+                                                tts_host::sha256_hex("voices-multi"), std::string("voices-multi").size()});
+  entry.generated_files.push_back(tts_host::CatalogueGeneratedFile{"NOTICE.txt", "notice", "public domain notice"});
+  return entry;
+}
+
+void write_file(const std::filesystem::path &path, const std::string &contents) {
+  std::ofstream(path, std::ios::binary | std::ios::trunc) << contents;
+}
+
+std::string read_file(const std::filesystem::path &path) {
+  std::ifstream input(path, std::ios::binary);
+  return std::string(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
 }
 
 }  // namespace
@@ -411,6 +433,166 @@ int main(int argc, char **argv) {
                   !std::filesystem::exists(user / ".demo-update.removing") &&
                   !std::filesystem::exists(user / ".previous" / ".demo-update@old.removing"),
               "an interrupted removal was not finished");
+    }
+
+    const auto multi = multi_file_version();
+    const auto r_multi = tts_host::catalogue_entry_revision(multi);
+
+    {
+      // Verify and repair: damaged and missing files are reported with their
+      // size, only they are re-downloaded, and the kept previous version stays.
+      const auto user = work / "repair" / "user";
+      std::filesystem::create_directories(user);
+      const auto config = make_config(work / "repair", schemas, user, {});
+      FakeNetwork network;
+      tts_host::download_catalogue_entry(v1, user, config, network.fetcher(), nullptr);
+      tts_host::update_catalogue_package(multi, tts_host::scan_model_registry(config), config, network.fetcher(),
+                                         nullptr, nullptr);
+      require(installed_revision(config) == r_multi && previous_count(config) == 1, "repair fixture is wrong");
+
+      std::uint64_t hashed = 0;
+      const tts_host::DownloadProgressCallback count_hashing = [&](const tts_host::DownloadProgress &progress) {
+        hashed = progress.bytes_downloaded;
+      };
+      auto report = tts_host::verify_catalogue_package(multi, tts_host::scan_model_registry(config), count_hashing);
+      require(report.damaged.empty() && report.files_checked == 3 && hashed > 0 && !report.bundled,
+              "an intact package did not verify clean");
+
+      bool cancelled = false;
+      try {
+        tts_host::verify_catalogue_package(multi, tts_host::scan_model_registry(config),
+                                           [](const tts_host::DownloadProgress &) { throw std::runtime_error("cancel"); });
+      } catch (const std::runtime_error &) {
+        cancelled = true;
+      }
+      require(cancelled, "verification ignored a cancelling progress callback");
+
+      const auto package = user / "demo-update";
+      write_file(package / "model.onnx", "xeights-multi");
+      std::filesystem::remove(package / "voices" / "af.bin");
+      report = tts_host::verify_catalogue_package(multi, tts_host::scan_model_registry(config), nullptr);
+      require(report.damaged.size() == 2 && report.damaged[0].relative_path == "model.onnx" &&
+                  !report.damaged[0].missing && report.damaged[1].relative_path == "voices/af.bin" &&
+                  report.damaged[1].missing &&
+                  report.repair_download_bytes == std::string("weights-multi").size() + std::string("voices-multi").size(),
+              "damaged and missing files were not reported");
+
+      // A failed download or a refused switch leaves the damaged package as it was.
+      network.corrupt = true;
+      bool failed = false;
+      try {
+        tts_host::repair_catalogue_package(multi, report, config, network.fetcher(), nullptr, nullptr);
+      } catch (const std::runtime_error &) {
+        failed = true;
+      }
+      require(failed && read_file(package / "model.onnx") == "xeights-multi" &&
+                  !std::filesystem::exists(user / ".demo-update.repairing"),
+              "a failed repair download changed the package");
+      network.corrupt = false;
+      const tts_host::PackageSwitchGuard busy = [](const std::string &, const std::function<void()> &) {
+        throw std::runtime_error("Model is in use");
+      };
+      bool refused = false;
+      try {
+        tts_host::repair_catalogue_package(multi, report, config, network.fetcher(), nullptr, busy);
+      } catch (const std::runtime_error &) {
+        refused = true;
+      }
+      require(refused && read_file(package / "model.onnx") == "xeights-multi" &&
+                  std::filesystem::exists(package / "NOTICE.txt"),
+              "a refused repair changed the package");
+
+      network.urls.clear();
+      tts_host::repair_catalogue_package(multi, report, config, network.fetcher(), nullptr, nullptr);
+      require(network.urls.empty(), "the retry refetched already staged files");
+      require(tts_host::verify_catalogue_package(multi, tts_host::scan_model_registry(config), nullptr).damaged.empty(),
+              "the repaired package does not verify");
+      require(installed_revision(config) == r_multi && previous_count(config) == 1 &&
+                  std::filesystem::is_directory(user / ".previous" / ("demo-update@" + r1)),
+              "repair changed the revision or the kept previous version");
+      require(!std::filesystem::exists(user / ".demo-update.downloading") &&
+                  !std::filesystem::exists(user / ".demo-update.damaged") &&
+                  !std::filesystem::exists(user / ".demo-update.repairing"),
+              "repair left staging, the damaged copy, or its journal behind");
+
+      // Only damaged files are fetched; a damaged host-written file is rewritten.
+      write_file(package / "voices" / "af.bin", "voices-xxxxx");
+      write_file(package / "NOTICE.txt", "tampered");
+      report = tts_host::verify_catalogue_package(multi, tts_host::scan_model_registry(config), nullptr);
+      require(report.damaged.size() == 2 && report.repair_download_bytes == std::string("voices-multi").size(),
+              "a damaged host-written file was counted as a download");
+      network.urls.clear();
+      tts_host::repair_catalogue_package(multi, report, config, network.fetcher(), nullptr, nullptr);
+      require(network.urls == std::vector<std::string>{"https://example.invalid/voices-multi"},
+              "repair fetched files that were intact");
+      require(tts_host::verify_catalogue_package(multi, tts_host::scan_model_registry(config), nullptr).damaged.empty(),
+              "the host-written file was not rewritten");
+
+      bool outdated_rejected = false;
+      try {
+        tts_host::verify_catalogue_package(v2, tts_host::scan_model_registry(config), nullptr);
+      } catch (const std::runtime_error &) {
+        outdated_rejected = true;
+      }
+      require(outdated_rejected, "a package at another revision was verified against this one");
+    }
+
+    {
+      // A damaged bundled package is reported only; the app's models/ is never written.
+      const auto user = work / "repair-bundled" / "user";
+      const auto bundled = work / "repair-bundled" / "app-models";
+      std::filesystem::create_directories(user);
+      std::filesystem::create_directories(bundled);
+      const auto config = make_config(work / "repair-bundled", schemas, user, bundled);
+      FakeNetwork network;
+      tts_host::download_catalogue_entry(multi, bundled, config, network.fetcher(), nullptr);
+      write_file(bundled / "demo-update" / "model.onnx", "xeights-multi");
+      const auto report = tts_host::verify_catalogue_package(multi, tts_host::scan_model_registry(config), nullptr);
+      require(report.bundled && report.damaged.size() == 1, "a damaged bundled package was not reported");
+      bool refused = false;
+      try {
+        tts_host::repair_catalogue_package(multi, report, config, network.fetcher(), nullptr, nullptr);
+      } catch (const std::runtime_error &) {
+        refused = true;
+      }
+      require(refused && read_file(bundled / "demo-update" / "model.onnx") == "xeights-multi" &&
+                  !std::filesystem::exists(bundled / ".demo-update.downloading") &&
+                  !std::filesystem::exists(user / "demo-update"),
+              "a bundled package was repaired");
+    }
+
+    {
+      // A repair cut short is rolled back while good files were moving, and
+      // completed or rolled back after the damaged copy moved aside.
+      for (const std::string stage : {"moving", "swapped", "swapped-invalid"}) {
+        const auto user = work / ("repair-" + stage) / "user";
+        std::filesystem::create_directories(user);
+        const auto config = make_config(work / ("repair-" + stage), schemas, user, {});
+        FakeNetwork network;
+        tts_host::download_catalogue_entry(multi, user, config, network.fetcher(), nullptr);
+        const auto package = user / "demo-update";
+        write_file(package / "model.onnx", "xeights-multi");
+        const auto staging = tts_host::stage_catalogue_entry(multi, user, config, network.fetcher(), nullptr);
+        write_file(user / ".demo-update.repairing", "repair");
+
+        if (stage == "moving") {
+          std::filesystem::remove(staging / "voices" / "af.bin");
+          std::filesystem::rename(package / "voices" / "af.bin", staging / "voices" / "af.bin");
+        } else {
+          std::filesystem::rename(package, user / ".demo-update.damaged");
+          if (stage == "swapped-invalid") std::filesystem::remove(staging / "model.json");
+        }
+
+        require(tts_host::recover_interrupted_model_updates(config).size() == 1,
+                stage + ": the interrupted repair was not reported");
+        const auto report = tts_host::verify_catalogue_package(multi, tts_host::scan_model_registry(config), nullptr);
+        require(report.damaged.size() == (stage == "swapped" ? 0u : 1u),
+                stage + ": recovery left the wrong package installed");
+        require(installed_revision(config) == r_multi && !std::filesystem::exists(user / ".demo-update.repairing") &&
+                    !std::filesystem::exists(user / ".demo-update.damaged"),
+                stage + ": recovery left its journal or the damaged copy");
+        require(tts_host::recover_interrupted_model_updates(config).empty(), stage + ": recovery is not idempotent");
+      }
     }
   } catch (const std::exception &error) {
     std::cerr << error.what() << '\n';

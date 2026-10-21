@@ -141,6 +141,11 @@ std::string to_lowercase_hex(const std::array<unsigned char, 32> &digest) {
 }  // namespace
 
 std::string sha256_hex_of_file(const std::filesystem::path &path) {
+  return sha256_hex_of_file(path, nullptr);
+}
+
+std::string sha256_hex_of_file(const std::filesystem::path &path,
+                               const std::function<void(std::uint64_t bytes_hashed)> &progress) {
   std::ifstream input(path, std::ios::binary);
   if (!input) {
     throw std::runtime_error("unable to read " + path.string() + " to verify its checksum");
@@ -148,12 +153,17 @@ std::string sha256_hex_of_file(const std::filesystem::path &path) {
 
   Sha256 hasher;
   std::vector<char> buffer(64 * 1024);
+  std::uint64_t hashed = 0;
   while (input) {
     input.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
     const auto read = input.gcount();
     if (read > 0) {
       hasher.update(reinterpret_cast<const unsigned char *>(buffer.data()),
                    static_cast<std::size_t>(read));
+      hashed += static_cast<std::uint64_t>(read);
+      if (progress) {
+        progress(hashed);
+      }
     }
   }
   return to_lowercase_hex(hasher.finalize());

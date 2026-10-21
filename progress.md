@@ -491,3 +491,15 @@
   mode are not removable. Linux 51/51 CTests (new removal cases in
   `tts_host_model_update`); Windows `settings_window.cpp` compiles, link
   blocked by the running Debug Host. Menu and dialog not yet viewed on Windows.
+- 2026-10-21: Verify and repair catalogue models — More ▾ gains "Verify and
+  repair…" (enabled only for a package at the catalogue revision). Hashing runs
+  on the model-task worker with progress and Cancel and reports damaged or
+  missing files with sizes; after a No-default confirmation, the repair
+  re-downloads only damaged files into `.<id>.downloading`, moves good files
+  over, validates, and swaps through the `.<id>.repairing` journal, discarding
+  the damaged copy via `.<id>.damaged` and leaving `.previous/` alone.
+  Start-up recovery rolls back or completes it. Bundled installed-mode packages
+  report only. Linux 51/51 CTests (new verify/repair/recovery cases in
+  `tts_host_model_update`); Windows Debug build compiles everything and the
+  catalogue/update tests pass, `tts-host.exe` link blocked by the running Debug
+  Host (LNK1168). Menu and repair dialog not yet viewed on Windows.

@@ -62,6 +62,18 @@ void fetch_url_to_file(const std::string &url, std::uint64_t resume_from_bytes,
 std::filesystem::path catalogue_staging_path(const CatalogueEntry &entry,
                                              const std::filesystem::path &destination_root);
 
+// Fetches one downloadable file of `entry` into `staging`, resuming a partial
+// file, and verifies it against its pinned size and SHA-256. A mismatching file
+// is deleted so the next attempt refetches it. Repair stages only damaged files
+// this way.
+void stage_catalogue_file(const CatalogueEntry &entry, const CatalogueFile &file,
+                          const std::filesystem::path &staging, const HttpFetchFunction &fetch,
+                          const DownloadProgressCallback &progress);
+
+// Writes the entry's host-written files and generated model.json into `staging`.
+void write_catalogue_generated_files(const CatalogueEntry &entry, const std::filesystem::path &staging,
+                                     const ConfigDocument &config);
+
 // Fetches, verifies, and writes `entry` into its staging folder and validates
 // the result as a package, without installing it. Resumes a partial staging
 // folder left by an earlier attempt. Returns the staging path. Model update
