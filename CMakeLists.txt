@@ -180,6 +180,7 @@ add_executable(
   src/local_api_server.cpp
   src/model_catalogue.cpp
   src/model_import.cpp
+  src/model_list.cpp
   src/model_registry.cpp
   src/model_session.cpp
   src/model_update.cpp
@@ -998,6 +999,35 @@ if(BUILD_TESTING)
       tts-host-model-registry-tier-tests
       ${CMAKE_SOURCE_DIR}/schemas
       ${CMAKE_CURRENT_BINARY_DIR}/model-registry-tier-tests
+  )
+
+  # Unified Settings model list rows and details (src/model_list.cpp), built
+  # from hand-made scans so every source/status combination is covered.
+  add_executable(
+    tts-host-model-list-tests
+    src/model_catalogue.cpp
+    src/model_list.cpp
+    src/model_registry.cpp
+    src/sha256.cpp
+    tests/model_list_tests.cpp
+  )
+  target_include_directories(tts-host-model-list-tests PRIVATE include)
+  target_link_libraries(
+    tts-host-model-list-tests
+    PRIVATE
+      nlohmann_json::nlohmann_json
+      ${JSON_SCHEMA_VALIDATOR_TARGET}
+  )
+  if(MSVC)
+    target_compile_options(tts-host-model-list-tests PRIVATE /W4 /permissive-)
+  else()
+    target_compile_options(tts-host-model-list-tests PRIVATE -Wall -Wextra -Wpedantic)
+  endif()
+  add_test(
+    NAME tts_host_model_list
+    COMMAND
+      tts-host-model-list-tests
+      ${CMAKE_CURRENT_BINARY_DIR}/model-list-tests
   )
 
   # Manual catalogue model update (src/model_update.cpp): staged replacement,

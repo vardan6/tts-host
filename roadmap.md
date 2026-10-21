@@ -142,7 +142,8 @@ Synthetic Copy adapter compatibility remains separate open work below.
     both models speaking, model selection, local/catalogue additions, a
     manual update, removal, and verify/repair on supported hardware — see
     [distribution requirements](docs/requirements/product.md#distribution-and-usability).
-  - [ ] **AFK — Unified Settings model list:** one list of installed and
+  - [ ] **AFK — Unified Settings model list:** (implemented; Windows link
+    and Settings check remain) one list of installed and
     not-installed catalogue packages with source/status/size/loaded columns
     and a details pane replacing the registry dump, reusing the More ▾ menu —
     see

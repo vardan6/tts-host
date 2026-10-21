@@ -2,12 +2,14 @@
 
 - Mode: implementation, bundled two-model release follow-ups.
 - Branch: `feature/model-maintenance` (from `main` at `01f1684`, PR #3 merged).
-  "Report Qwen unavailable without a usable GPU" is implemented
-  (`195474d`, pushed): 52/52 Linux CTests pass; Windows build compiles and
-  the affected Windows tests pass; `tts-host.exe` link blocked by the running
-  Debug Host. Its roadmap item stays open until the no-CUDA Windows check.
-- Next: `/next-slice` → "AFK — Unified Settings model list" (clean Windows
-  acceptance is HITL and waits on the user).
+  "Unified Settings model list" is implemented and pushed: 53/53 Linux
+  CTests pass; Windows `settings_window.cpp` compiles, but `tts-host.exe`
+  link is blocked (LNK1168) by the running Debug Host. Its roadmap item stays
+  open until the Windows Settings check. "Report Qwen unavailable without a
+  usable GPU" (`195474d`) stays open until the no-CUDA Windows check.
+- Next: user quits the Debug Host, rebuilds, and checks Settings → Models
+  (rows, columns, details pane, button enabling, More ▾ per row); then
+  `/next-slice` → "AFK — Higher-precision Qwen catalogue variants".
 - Pending user checks on Windows: a full `scripts/release-win.ps1` run
   reusing the existing `cache/release-models` stage (verifies, reuses or
   restages); quit Debug Host, run
@@ -17,9 +19,9 @@
   (repaint fix `1896937`); installer unticked-startup upgrade path in an
   isolated environment (never this machine); on a Windows machine without
   usable CUDA, Qwen as `quality` with `fallbackProfile` speaks with Kokoro and
-  Settings → Models shows Qwen "[unavailable: …]" with the reason.
-- Known gap: a previous version kept after Remove… has no installed row to
-  revert from until the unified model list.
+  Settings → Models shows Qwen "unavailable" with the reason in details.
+- Known gap: a previous-only row (Remove… with keep ticked) offers Delete
+  previous and Open folder; restoring it is not designed.
 - Risk: setup.exe is 1.99 GB, near Inno's 2.1 GB single-file limit; a larger
   bundle needs `DiskSpanning`. The pinned Hugging Face revision may lack the
   Q8_0/bf16 files (only `main` was checked).

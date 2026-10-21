@@ -29,6 +29,7 @@
 #include "tts_host/global_hotkey.hpp"
 #include "tts_host/model_catalogue.hpp"
 #include "tts_host/model_import.hpp"
+#include "tts_host/model_list.hpp"
 #include "tts_host/model_registry.hpp"
 #include "tts_host/selection_capture.hpp"
 #include "tts_host/startup_registration.hpp"
@@ -43,11 +44,11 @@ constexpr int kOutputDeviceComboId = 101;
 constexpr int kServerHostEditId = 102;
 constexpr int kServerPortEditId = 103;
 constexpr int kDefaultProfileComboId = 104;
-constexpr int kModelComboId = 105;
+constexpr int kModelListId = 105;
 constexpr int kLoadModelButtonId = 106;
 constexpr int kUnloadModelButtonId = 107;
 constexpr int kImportModelButtonId = 108;
-constexpr int kCatalogueComboId = 109;
+constexpr int kModelDetailsId = 109;
 constexpr int kDownloadModelButtonId = 110;
 constexpr int kReadSelectionHotkeyEditId = 111;
 constexpr int kCheckHotkeyButtonId = 112;
@@ -141,13 +142,17 @@ struct SettingsState {
   nlohmann::json saved_value;
   std::unique_ptr<ModelSessionManager> owned_sessions;
   ModelSessionManager &sessions;
-  // Model ids in combo-box order; the combo itself shows display names.
-  std::vector<std::string> model_ids;
-  // Catalogue entry ids in combo-box order, mirroring model_ids above.
-  std::vector<std::string> catalogue_ids;
-  // The rejected loads the model combo currently shows; a load during speech
-  // can change them while the window is open.
+  // The unified model list's rows in display order.
+  std::vector<ModelListRow> model_rows;
+  HWND model_list = nullptr;
+  HWND model_details = nullptr;
+  // Set while the list is rebuilt, so its selection notifications do not
+  // redraw the details pane once per row.
+  bool populating_model_list = false;
+  // The rejected loads and resident model the list currently shows; speech
+  // can change both while the window is open.
   std::map<std::string, std::string> shown_load_failures;
+  std::string shown_loaded_id;
   // The lower pane is the one durable place for user-visible settings-window
   // output: model information, progress, successes, and actionable failures.
   HWND activity_log = nullptr;
@@ -166,6 +171,7 @@ struct SettingsState {
   // log. model_task_outcome is written by the worker and read after join.
   std::thread model_task;
   std::atomic<bool> model_task_cancel{false};
+  bool model_task_cancellable = false;
   ModelTaskOutcome model_task_outcome;
   // Closing during a task waits for it to stop, then destroys the window.
   bool close_pending = false;
@@ -679,26 +685,91 @@ void on_open_startup_settings_clicked(SettingsState &state) {
   }
 }
 
-// Fills the combo box with every discovered package and records the matching
-// model ids, which is what load() actually takes. Selection defaults to the
-// first package so the Load button is meaningful without a pick first.
-// A model whose last load was rejected shows as unavailable with the
-// runner's reason until a load of it succeeds
-// (docs/design/architecture.md#load-rejection).
-void populate_model_combo(HWND combo, SettingsState &state, const ModelRegistryScan &scan) {
+// The selected row of the unified model list, or null.
+const ModelListRow *selected_model_row(const SettingsState &state) {
+  if (state.model_list == nullptr) return nullptr;
+  const int index = static_cast<int>(SendMessageW(state.model_list, LVM_GETNEXTITEM, static_cast<WPARAM>(-1),
+                                                  LVNI_SELECTED));
+  if (index < 0 || static_cast<std::size_t>(index) >= state.model_rows.size()) return nullptr;
+  return &state.model_rows[static_cast<std::size_t>(index)];
+}
+
+// Load, Download, and Update apply to the selected row; the registry-changing
+// ones also wait for a running model task. Cancel is enabled only for a task
+// that can stop early (a download or a hash).
+void update_model_buttons(SettingsState &state, HWND window) {
+  const auto *row = selected_model_row(state);
+  const bool idle = !state.model_task.joinable();
+  const auto enable = [&](int id, bool enabled) { EnableWindow(GetDlgItem(window, id), enabled ? TRUE : FALSE); };
+  enable(kLoadModelButtonId, row != nullptr && row->installed);
+  enable(kDownloadModelButtonId, idle && row != nullptr && !row->installed && row->in_catalogue);
+  enable(kUpdateModelButtonId, idle && row != nullptr && row->update_available);
+  enable(kImportModelButtonId, idle);
+  enable(kCancelModelTaskButtonId, !idle && state.model_task_cancellable);
+}
+
+// The details pane shows the selected row, then any folders the registry
+// could not use, which have no row of their own.
+void show_model_details(SettingsState &state, HWND window) {
+  if (state.model_details == nullptr) return;
+  const auto *row = selected_model_row(state);
+  std::string text = row != nullptr ? describe_model_details(*row, state.last_scan) : "Select a model.";
+  if (const auto unsupported = describe_unsupported_entries(state.last_scan); !unsupported.empty())
+    text += "\n\n" + unsupported;
+  std::wstring wide;
+  for (const wchar_t character : utf8_to_wide(text)) {
+    if (character == L'\n') wide += L'\r';
+    wide += character;
+  }
+  SetWindowTextW(state.model_details, wide.c_str());
+  update_model_buttons(state, window);
+}
+
+// Rebuilds the rows from the last scan, the resident model, and the rejected
+// loads, keeping the selected id (the first row when it is gone).
+void refresh_model_list(SettingsState &state, HWND window) {
+  if (state.model_list == nullptr) return;
+  const auto *previous = selected_model_row(state);
+  const auto selected = previous != nullptr ? previous->id : std::string();
+  const auto status = state.sessions.status();
   state.shown_load_failures = state.sessions.load_failures();
-  for (const auto &package : scan.discovered_packages) {
-    auto label = package.display_name + " (" + package.id + ") [" +
-                 describe_package_status(package_status(package)) + "]";
-    if (const auto failure = state.shown_load_failures.find(package.id);
-        failure != state.shown_load_failures.end())
-      label += " [unavailable: " + failure->second + "]";
-    SendMessageW(combo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(utf8_to_wide(label).c_str()));
-    state.model_ids.push_back(package.id);
+  state.shown_loaded_id = status.loaded ? status.model_id : std::string();
+  state.model_rows =
+      build_model_list(state.last_scan, state.shown_loaded_id, state.shown_load_failures, folder_size_on_disk);
+
+  state.populating_model_list = true;
+  SendMessageW(state.model_list, LVM_DELETEALLITEMS, 0, 0);
+  int selected_index = state.model_rows.empty() ? -1 : 0;
+  for (std::size_t index = 0; index < state.model_rows.size(); ++index) {
+    const auto &row = state.model_rows[index];
+    if (row.id == selected) selected_index = static_cast<int>(index);
+    const std::wstring columns[] = {
+        utf8_to_wide(row.display_name),
+        utf8_to_wide(row.source),
+        utf8_to_wide(row.unavailable_reason ? row.status + ", unavailable" : row.status),
+        utf8_to_wide(describe_download_size(row.size_bytes)),
+        row.loaded ? L"yes" : L"",
+    };
+    LVITEMW item{};
+    item.mask = LVIF_TEXT;
+    item.iItem = static_cast<int>(index);
+    item.pszText = const_cast<wchar_t *>(columns[0].c_str());
+    SendMessageW(state.model_list, LVM_INSERTITEMW, 0, reinterpret_cast<LPARAM>(&item));
+    for (int column = 1; column < static_cast<int>(std::size(columns)); ++column) {
+      item.iSubItem = column;
+      item.pszText = const_cast<wchar_t *>(columns[column].c_str());
+      SendMessageW(state.model_list, LVM_SETITEMTEXTW, index, reinterpret_cast<LPARAM>(&item));
+    }
   }
-  if (!state.model_ids.empty()) {
-    SendMessageW(combo, CB_SETCURSEL, 0, 0);
+  if (selected_index >= 0) {
+    LVITEMW item{};
+    item.stateMask = LVIS_SELECTED | LVIS_FOCUSED;
+    item.state = LVIS_SELECTED | LVIS_FOCUSED;
+    SendMessageW(state.model_list, LVM_SETITEMSTATE, selected_index, reinterpret_cast<LPARAM>(&item));
+    SendMessageW(state.model_list, LVM_ENSUREVISIBLE, selected_index, FALSE);
   }
+  state.populating_model_list = false;
+  show_model_details(state, window);
 }
 
 void report_session_status(SettingsState &state) {
@@ -712,14 +783,14 @@ void report_session_status(SettingsState &state) {
                                  utf8_to_wide(status.engine) + L")");
 }
 
-void on_load_model_clicked(SettingsState &state, HWND combo) {
-  const int index = static_cast<int>(SendMessageW(combo, CB_GETCURSEL, 0, 0));
-  if (index < 0 || static_cast<std::size_t>(index) >= state.model_ids.size()) {
-    append_activity_log(state, L"Select a model to load.");
+void on_load_model_clicked(SettingsState &state, HWND window) {
+  const auto *row = selected_model_row(state);
+  if (row == nullptr || !row->installed) {
+    append_activity_log(state, L"Select an installed model to load.");
     return;
   }
 
-  const auto &model_id = state.model_ids[static_cast<std::size_t>(index)];
+  const auto model_id = row->id;
   append_activity_log(state, L"Loading " + utf8_to_wide(model_id) + L"…");
   try {
     state.sessions.load(model_id, state.document);
@@ -727,41 +798,11 @@ void on_load_model_clicked(SettingsState &state, HWND combo) {
     // A model that will not load is ordinary (missing runner, bad weights);
     // report it in the window instead of taking the process down.
     append_activity_log(state, L"Load failed: " + utf8_to_wide(error.what()));
+    refresh_model_list(state, window);
     return;
   }
   report_session_status(state);
-}
-
-// Fills the combo box with every compiled-in catalogue entry
-// (docs/design/architecture.md#download-catalogue), labelled the same way
-// `--list-catalogue` prints them: GET/HAVE, size, licence, and for an
-// installed entry its local/current/update-available status, so the choice
-// before downloading is visible without a separate details view.
-void populate_catalogue_combo(HWND combo, SettingsState &state, const ModelRegistryScan &scan) {
-  for (const auto &entry : model_catalogue()) {
-    const auto *installed = catalogue_entry_package(entry, scan);
-    auto label = std::string(installed ? "HAVE " : "GET  ") + entry.display_name + " (" +
-                 describe_download_size(catalogue_entry_size_bytes(entry)) + ", " +
-                 describe_catalogue_license(entry) + ")";
-    if (installed) {
-      label += " [" + describe_package_status(package_status(*installed)) + "]";
-    }
-    SendMessageW(combo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(utf8_to_wide(label).c_str()));
-    state.catalogue_ids.push_back(entry.id);
-  }
-  if (!state.catalogue_ids.empty()) {
-    SendMessageW(combo, CB_SETCURSEL, 0, 0);
-  }
-}
-
-// Registry-changing buttons are disabled while a model task runs (the More ▾
-// menu disables its registry-changing items itself); Cancel is enabled only
-// for a task that can stop early (a download).
-void set_model_task_controls(HWND window, bool running, bool cancellable) {
-  for (const int id : {kImportModelButtonId, kDownloadModelButtonId, kUpdateModelButtonId}) {
-    EnableWindow(GetDlgItem(window, id), running ? FALSE : TRUE);
-  }
-  EnableWindow(GetDlgItem(window, kCancelModelTaskButtonId), running && cancellable ? TRUE : FALSE);
+  refresh_model_list(state, window);
 }
 
 // Runs `task` on the model-task worker. The 500 ms activity timer shows its
@@ -773,7 +814,7 @@ void start_model_task(SettingsState &state, HWND window, bool cancellable,
     return;
   }
   state.model_task_cancel = false;
-  set_model_task_controls(window, true, cancellable);
+  state.model_task_cancellable = cancellable;
   state.model_task = std::thread([&state, window, task = std::move(task)] {
     try {
       state.model_task_outcome = task();
@@ -784,6 +825,7 @@ void start_model_task(SettingsState &state, HWND window, bool cancellable,
     }
     PostMessageW(window, kModelTaskDoneMessage, 0, 0);
   });
+  update_model_buttons(state, window);
 }
 
 void on_model_task_done(SettingsState &state, HWND window) {
@@ -791,7 +833,8 @@ void on_model_task_done(SettingsState &state, HWND window) {
     return;
   }
   state.model_task.join();
-  set_model_task_controls(window, false, false);
+  state.model_task_cancellable = false;
+  update_model_buttons(state, window);
   if (state.model_task_outcome.changed) {
     refresh_model_views(state, window);
   }
@@ -833,18 +876,23 @@ DownloadProgressCallback model_task_progress(SettingsState &state, std::string v
 const wchar_t *const kDownloadCancelledMessage =
     L" cancelled; the partial download is kept and resumes on the next attempt.";
 
-void on_download_model_clicked(SettingsState &state, HWND combo, HWND window) {
-  const int index = static_cast<int>(SendMessageW(combo, CB_GETCURSEL, 0, 0));
-  if (index < 0 || static_cast<std::size_t>(index) >= state.catalogue_ids.size()) {
-    append_activity_log(state, L"Select a catalogue entry to download.");
-    return;
-  }
-
+// The catalogue entry of the selected row, or null with a prompt logged.
+const CatalogueEntry *selected_catalogue_entry(SettingsState &state, const wchar_t *action) {
+  const auto *row = selected_model_row(state);
   const auto &entries = model_catalogue();
-  const auto &entry_id = state.catalogue_ids[static_cast<std::size_t>(index)];
-  const auto found = std::find_if(entries.begin(), entries.end(),
-                                  [&](const auto &entry) { return entry.id == entry_id; });
+  const auto found = std::find_if(entries.begin(), entries.end(), [&](const auto &entry) {
+    return row != nullptr && entry.id == row->id;
+  });
   if (found == entries.end()) {
+    append_activity_log(state, std::wstring(L"Select a catalogue model to ") + action + L".");
+    return nullptr;
+  }
+  return &*found;
+}
+
+void on_download_model_clicked(SettingsState &state, HWND window) {
+  const auto *found = selected_catalogue_entry(state, L"download");
+  if (found == nullptr) {
     return;
   }
   if (catalogue_entry_installed(*found, state.last_scan)) {
@@ -889,17 +937,9 @@ PackageSwitchGuard session_switch_guard(SettingsState &state) {
   };
 }
 
-void on_update_model_clicked(SettingsState &state, HWND combo, HWND window) {
-  const int index = static_cast<int>(SendMessageW(combo, CB_GETCURSEL, 0, 0));
-  if (index < 0 || static_cast<std::size_t>(index) >= state.catalogue_ids.size()) {
-    append_activity_log(state, L"Select a catalogue entry to update.");
-    return;
-  }
-  const auto &entries = model_catalogue();
-  const auto &entry_id = state.catalogue_ids[static_cast<std::size_t>(index)];
-  const auto found = std::find_if(entries.begin(), entries.end(),
-                                  [&](const auto &entry) { return entry.id == entry_id; });
-  if (found == entries.end()) {
+void on_update_model_clicked(SettingsState &state, HWND window) {
+  const auto *found = selected_catalogue_entry(state, L"update");
+  if (found == nullptr) {
     return;
   }
   const auto *installed = catalogue_entry_package(*found, state.last_scan);
@@ -931,18 +971,18 @@ void on_update_model_clicked(SettingsState &state, HWND combo, HWND window) {
   });
 }
 
-// The model id selected in the Model combo, or empty with a prompt logged.
-std::string selected_model_id(SettingsState &state, HWND combo, const wchar_t *action) {
-  const int index = static_cast<int>(SendMessageW(combo, CB_GETCURSEL, 0, 0));
-  if (index < 0 || static_cast<std::size_t>(index) >= state.model_ids.size()) {
+// The model id selected in the model list, or empty with a prompt logged.
+std::string selected_model_id(SettingsState &state, const wchar_t *action) {
+  const auto *row = selected_model_row(state);
+  if (row == nullptr) {
     append_activity_log(state, std::wstring(L"Select a model to ") + action + L".");
     return {};
   }
-  return state.model_ids[static_cast<std::size_t>(index)];
+  return row->id;
 }
 
-void on_revert_model_clicked(SettingsState &state, HWND combo, HWND window) {
-  const auto model_id = selected_model_id(state, combo, L"revert");
+void on_revert_model_clicked(SettingsState &state, HWND window) {
+  const auto model_id = selected_model_id(state, L"revert");
   if (model_id.empty()) {
     return;
   }
@@ -955,8 +995,8 @@ void on_revert_model_clicked(SettingsState &state, HWND combo, HWND window) {
   }
 }
 
-void on_delete_previous_model_clicked(SettingsState &state, HWND combo, HWND window) {
-  const auto model_id = selected_model_id(state, combo, L"delete the previous version of");
+void on_delete_previous_model_clicked(SettingsState &state, HWND window) {
+  const auto model_id = selected_model_id(state, L"delete the previous version of");
   if (model_id.empty()) {
     return;
   }
@@ -970,8 +1010,8 @@ void on_delete_previous_model_clicked(SettingsState &state, HWND combo, HWND win
   }
 }
 
-void on_remove_superseded_model_clicked(SettingsState &state, HWND combo, HWND window) {
-  const auto model_id = selected_model_id(state, combo, L"remove superseded copies of");
+void on_remove_superseded_model_clicked(SettingsState &state, HWND window) {
+  const auto model_id = selected_model_id(state, L"remove superseded copies of");
   if (model_id.empty()) {
     return;
   }
@@ -1111,8 +1151,8 @@ bool confirm_model_removal(HWND owner, const ModelRemovalPlan &plan, bool &keep_
   return confirmation.confirmed;
 }
 
-void on_remove_model_clicked(SettingsState &state, HWND combo, HWND window) {
-  const auto model_id = selected_model_id(state, combo, L"remove");
+void on_remove_model_clicked(SettingsState &state, HWND window) {
+  const auto model_id = selected_model_id(state, L"remove");
   if (model_id.empty()) {
     return;
   }
@@ -1190,8 +1230,8 @@ void start_model_repair(SettingsState &state, HWND window, const CatalogueEntry 
   });
 }
 
-void on_verify_model_clicked(SettingsState &state, HWND combo, HWND window) {
-  const auto model_id = selected_model_id(state, combo, L"verify");
+void on_verify_model_clicked(SettingsState &state, HWND window) {
+  const auto model_id = selected_model_id(state, L"verify");
   if (model_id.empty()) {
     return;
   }
@@ -1231,12 +1271,17 @@ void open_in_explorer(SettingsState &state, HWND window, const std::filesystem::
   }
 }
 
-void on_open_model_folder_clicked(SettingsState &state, HWND combo, HWND window) {
-  const auto model_id = selected_model_id(state, combo, L"open the folder of");
-  const auto &packages = state.last_scan.discovered_packages;
-  const auto found = std::find_if(packages.begin(), packages.end(),
-                                  [&](const ModelPackageCandidate &package) { return package.id == model_id; });
-  if (found == packages.end()) {
+void on_open_model_folder_clicked(SettingsState &state, HWND window) {
+  const auto model_id = selected_model_id(state, L"open the folder of");
+  // A row with only a kept previous version opens that copy.
+  const auto find = [&](const std::vector<ModelPackageCandidate> &packages) -> const ModelPackageCandidate * {
+    const auto found = std::find_if(packages.begin(), packages.end(),
+                                    [&](const ModelPackageCandidate &package) { return package.id == model_id; });
+    return found == packages.end() ? nullptr : &*found;
+  };
+  const auto *found = find(state.last_scan.discovered_packages);
+  if (found == nullptr) found = find(state.last_scan.previous_packages);
+  if (found == nullptr) {
     return;
   }
   open_in_explorer(state, window, found->package_path);
@@ -1260,10 +1305,8 @@ void on_open_models_folder_clicked(SettingsState &state, HWND window) {
 // Lists the selected model's maintenance actions, enabling only those that
 // apply to it now; registry-changing ones wait for a running model task.
 void on_more_model_actions_clicked(SettingsState &state, HWND window, HWND button) {
-  const HWND combo = GetDlgItem(window, kModelComboId);
-  const int index = static_cast<int>(SendMessageW(combo, CB_GETCURSEL, 0, 0));
-  const bool has_selection = index >= 0 && static_cast<std::size_t>(index) < state.model_ids.size();
-  const auto model_id = has_selection ? state.model_ids[static_cast<std::size_t>(index)] : std::string();
+  const auto *row = selected_model_row(state);
+  const auto model_id = row != nullptr ? row->id : std::string();
   const auto &scan = state.last_scan;
   const auto *installed = [&]() -> const ModelPackageCandidate * {
     for (const auto &package : scan.discovered_packages) {
@@ -1308,7 +1351,7 @@ void on_more_model_actions_clicked(SettingsState &state, HWND window, HWND butto
       writable);
   add(kVerifyModelCommandId, L"Verify and repair…", verifiable);
   AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-  add(kOpenModelFolderCommandId, L"Open folder", installed != nullptr);
+  add(kOpenModelFolderCommandId, L"Open folder", installed != nullptr || has_previous);
   add(kOpenModelsFolderCommandId, L"Open models folder", true);
 
   RECT rect{};
@@ -1318,12 +1361,12 @@ void on_more_model_actions_clicked(SettingsState &state, HWND window, HWND butto
   DestroyMenu(menu);
 
   switch (command) {
-    case kRevertModelCommandId: on_revert_model_clicked(state, combo, window); break;
-    case kDeletePreviousModelCommandId: on_delete_previous_model_clicked(state, combo, window); break;
-    case kRemoveSupersededModelCommandId: on_remove_superseded_model_clicked(state, combo, window); break;
-    case kRemoveModelCommandId: on_remove_model_clicked(state, combo, window); break;
-    case kVerifyModelCommandId: on_verify_model_clicked(state, combo, window); break;
-    case kOpenModelFolderCommandId: on_open_model_folder_clicked(state, combo, window); break;
+    case kRevertModelCommandId: on_revert_model_clicked(state, window); break;
+    case kDeletePreviousModelCommandId: on_delete_previous_model_clicked(state, window); break;
+    case kRemoveSupersededModelCommandId: on_remove_superseded_model_clicked(state, window); break;
+    case kRemoveModelCommandId: on_remove_model_clicked(state, window); break;
+    case kVerifyModelCommandId: on_verify_model_clicked(state, window); break;
+    case kOpenModelFolderCommandId: on_open_model_folder_clicked(state, window); break;
     case kOpenModelsFolderCommandId: on_open_models_folder_clicked(state, window); break;
     default: break;
   }
@@ -1339,7 +1382,7 @@ void on_idle_timer(SettingsState &state) {
     report_session_status(state);
 }
 
-void on_unload_model_clicked(SettingsState &state) {
+void on_unload_model_clicked(SettingsState &state, HWND window) {
   try {
     state.sessions.unload();
   } catch (const std::exception &error) {
@@ -1347,62 +1390,7 @@ void on_unload_model_clicked(SettingsState &state) {
     return;
   }
   report_session_status(state);
-}
-
-// Model manifests are validated by scan_model_registry before their details
-// reach the read-only activity log; the combo box above it is what the user
-// acts on.
-std::wstring format_installed_models(const ModelRegistryScan &scan) {
-  std::wstring text;
-  if (scan.discovered_packages.empty()) {
-    text = L"No compatible installed models were found.";
-  }
-  for (const auto &package : scan.discovered_packages) {
-    if (!text.empty()) {
-      text += L"\r\n\r\n";
-    }
-    const auto &license = package.manifest.at("license");
-    text += utf8_to_wide(package.display_name);
-    text += L" (" + utf8_to_wide(package.id) + L")\r\nStatus: ";
-    text += utf8_to_wide(describe_package_status(package_status(package)));
-    text += package.bundled ? L", bundled" : L"";
-    text += L"\r\nLicence: ";
-    text += utf8_to_wide(license.at("name").get<std::string>());
-    text += L"\r\n";
-    text += utf8_to_wide(license.at("url").get<std::string>());
-  }
-
-  if (!scan.superseded_packages.empty()) {
-    text += L"\r\n\r\nSuperseded copies (not loaded):";
-    for (const auto &package : scan.superseded_packages) {
-      text += L"\r\n";
-      text += utf8_to_wide(package.id) + (package.bundled ? L" [bundled] " : L" [per-user] ");
-      text += package.package_path.wstring();
-    }
-  }
-
-  if (!scan.previous_packages.empty()) {
-    text += L"\r\n\r\nPrevious versions (Revert or Delete previous):";
-    for (const auto &package : scan.previous_packages) {
-      text += L"\r\n";
-      text += utf8_to_wide(package.id) + L" ";
-      text += package.package_path.wstring();
-    }
-  }
-
-  if (!scan.unsupported_entries.empty()) {
-    if (!text.empty()) {
-      text += L"\r\n\r\n";
-    }
-    text += L"Unsupported packages:";
-    for (const auto &entry : scan.unsupported_entries) {
-      text += L"\r\n";
-      text += entry.path.wstring();
-      text += L"\r\n  Reason: ";
-      text += utf8_to_wide(entry.reason);
-    }
-  }
-  return text;
+  refresh_model_list(state, window);
 }
 
 // Folder picker for Import…: the user chooses a package directory (the folder
@@ -1446,55 +1434,18 @@ std::wstring pick_model_package_folder(HWND owner) {
   return chosen;
 }
 
-// A refresh repopulates the combos; these keep the user's pick across it
-// instead of falling back to the first entry.
-std::string combo_selected_id(HWND combo, const std::vector<std::string> &ids) {
-  const int index = static_cast<int>(SendMessageW(combo, CB_GETCURSEL, 0, 0));
-  if (index < 0 || static_cast<std::size_t>(index) >= ids.size()) {
-    return {};
-  }
-  return ids[static_cast<std::size_t>(index)];
-}
-
-void reselect_combo_id(HWND combo, const std::vector<std::string> &ids, const std::string &id) {
-  const auto found = std::find(ids.begin(), ids.end(), id);
-  if (!id.empty() && found != ids.end()) {
-    SendMessageW(combo, CB_SETCURSEL, static_cast<WPARAM>(found - ids.begin()), 0);
-  }
-}
-
-// Re-reads the registry into both model views and records the scan they now
-// reflect. Importing and directory watching are what changes what is
+// Re-reads the registry into the model list and records the scan it now
+// reflects. Importing and directory watching are what changes what is
 // installed while the window is open; the resident session is left alone, so
 // a model loaded before either stays loaded.
-void refresh_model_combo(SettingsState &state, HWND window) {
-  const HWND combo = GetDlgItem(window, kModelComboId);
-  if (combo == nullptr) return;
-  const auto selected = combo_selected_id(combo, state.model_ids);
-  SendMessageW(combo, CB_RESETCONTENT, 0, 0);
-  state.model_ids.clear();
-  populate_model_combo(combo, state, state.last_scan);
-  reselect_combo_id(combo, state.model_ids, selected);
-}
-
 void refresh_model_views(SettingsState &state, HWND window) {
   state.last_scan = scan_model_registry(state.document);
-  refresh_model_combo(state, window);
-  append_activity_log(state, L"Installed models and licences updated:\r\n" +
-                                 format_installed_models(state.last_scan));
-  const HWND catalogue_combo = GetDlgItem(window, kCatalogueComboId);
-  if (catalogue_combo != nullptr) {
-    const auto selected = combo_selected_id(catalogue_combo, state.catalogue_ids);
-    SendMessageW(catalogue_combo, CB_RESETCONTENT, 0, 0);
-    state.catalogue_ids.clear();
-    populate_catalogue_combo(catalogue_combo, state, state.last_scan);
-    reselect_combo_id(catalogue_combo, state.catalogue_ids, selected);
-  }
+  refresh_model_list(state, window);
 }
 
 // Polls modelRegistry.directories when modelRegistry.watchForChanges is true;
 // a no-op scan (nothing added, removed, or changed reason) skips the refresh
-// so the combo selection and display scroll position are not disturbed on
+// so the list selection and scroll position are not disturbed on
 // every 5 s tick.
 void on_directory_watch_timer(SettingsState &state, HWND window) {
   if (!state.document.value["modelRegistry"]["watchForChanges"].get<bool>()) {
@@ -1554,6 +1505,13 @@ LRESULT CALLBACK settings_window_proc(HWND window, UINT message, WPARAM wparam, 
         show_settings_page(*state,
                            static_cast<int>(SendMessageW(state->tabs, TCM_GETCURSEL, 0, 0)));
       }
+      if (state != nullptr && header->hwndFrom == state->model_list && header->code == LVN_ITEMCHANGED &&
+          !state->populating_model_list) {
+        const auto *change = reinterpret_cast<const NMLISTVIEW *>(lparam);
+        if ((change->uChanged & LVIF_STATE) != 0 &&
+            ((change->uOldState ^ change->uNewState) & LVIS_SELECTED) != 0)
+          show_model_details(*state, window);
+      }
       return 0;
     }
     case WM_ACTIVATE: {
@@ -1601,8 +1559,10 @@ LRESULT CALLBACK settings_window_proc(HWND window, UINT message, WPARAM wparam, 
         on_directory_watch_timer(*state, window);
       } else if (wparam == kActivityTimerId) {
         show_new_activity(*state);
-        if (state->sessions.load_failures() != state->shown_load_failures)
-          refresh_model_combo(*state, window);
+        const auto status = state->sessions.status();
+        if (state->sessions.load_failures() != state->shown_load_failures ||
+            (status.loaded ? status.model_id : std::string()) != state->shown_loaded_id)
+          refresh_model_list(*state, window);
       }
       return 0;
     }
@@ -1635,15 +1595,15 @@ LRESULT CALLBACK settings_window_proc(HWND window, UINT message, WPARAM wparam, 
         } else if (LOWORD(wparam) == kDefaultProfileComboId && HIWORD(wparam) == CBN_SELCHANGE) {
           on_default_profile_selected(*state, reinterpret_cast<HWND>(lparam));
         } else if (LOWORD(wparam) == kLoadModelButtonId && HIWORD(wparam) == BN_CLICKED) {
-          on_load_model_clicked(*state, GetDlgItem(window, kModelComboId));
+          on_load_model_clicked(*state, window);
         } else if (LOWORD(wparam) == kUnloadModelButtonId && HIWORD(wparam) == BN_CLICKED) {
-          on_unload_model_clicked(*state);
+          on_unload_model_clicked(*state, window);
         } else if (LOWORD(wparam) == kImportModelButtonId && HIWORD(wparam) == BN_CLICKED) {
           on_import_model_clicked(*state, window);
         } else if (LOWORD(wparam) == kDownloadModelButtonId && HIWORD(wparam) == BN_CLICKED) {
-          on_download_model_clicked(*state, GetDlgItem(window, kCatalogueComboId), window);
+          on_download_model_clicked(*state, window);
         } else if (LOWORD(wparam) == kUpdateModelButtonId && HIWORD(wparam) == BN_CLICKED) {
-          on_update_model_clicked(*state, GetDlgItem(window, kCatalogueComboId), window);
+          on_update_model_clicked(*state, window);
         } else if (LOWORD(wparam) == kCancelModelTaskButtonId && HIWORD(wparam) == BN_CLICKED) {
           on_cancel_model_task_clicked(*state);
         } else if (LOWORD(wparam) == kMoreModelActionsButtonId && HIWORD(wparam) == BN_CLICKED) {
@@ -1701,7 +1661,7 @@ void run_settings_window(ConfigDocument &document,
   // (docs/design/architecture.md#desktop-integration).
   const HWND window =
       CreateWindowExW(0, kClassName, L"TTS Host Settings", WS_OVERLAPPEDWINDOW, CW_USEDEFAULT,
-                      CW_USEDEFAULT, 512, 640, nullptr, nullptr, instance, nullptr);
+                      CW_USEDEFAULT, 512, 720, nullptr, nullptr, instance, nullptr);
   if (!window) {
     throw std::runtime_error("failed to create the settings window");
   }
@@ -1714,10 +1674,10 @@ void run_settings_window(ConfigDocument &document,
   // Page controls are siblings of the tab control rather than its children, so
   // their WM_COMMAND notifications and GetDlgItem lookups stay on this window.
   // WS_CLIPSIBLINGS plus bottom Z-order keep the tab frame behind them.
-  const INITCOMMONCONTROLSEX common_controls{sizeof(INITCOMMONCONTROLSEX), ICC_TAB_CLASSES};
+  const INITCOMMONCONTROLSEX common_controls{sizeof(INITCOMMONCONTROLSEX), ICC_TAB_CLASSES | ICC_LISTVIEW_CLASSES};
   InitCommonControlsEx(&common_controls);
   state.tabs = CreateWindowExW(
-      0, WC_TABCONTROLW, nullptr, WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS, 8, 8, 480, 316, window,
+      0, WC_TABCONTROLW, nullptr, WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS, 8, 8, 480, 396, window,
       reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kSettingsTabsId)), instance, nullptr);
   if (state.tabs == nullptr) {
     throw std::runtime_error("failed to create the settings tabs");
@@ -1863,62 +1823,53 @@ void run_settings_window(ConfigDocument &document,
     throw std::runtime_error("failed to create the Playback reset control");
   }
 
-  // Models page.
-  label(kModelsPage, L"Model:", 24, 48, 148, 24);
-  const HWND model_combo = on_page(kModelsPage, CreateWindowExW(
-      0, L"COMBOBOX", nullptr, WS_CHILD | WS_VISIBLE | WS_VSCROLL | CBS_DROPDOWNLIST, 176, 44, 300,
-      200, window, reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kModelComboId)), instance, nullptr));
-  if (!model_combo) {
-    throw std::runtime_error("failed to create the model-selection control");
+  // Models page: one list of installed and offered models, the actions for
+  // the selected row, and its details
+  // (docs/design/architecture.md#model-removal-repair-and-maintenance-actions).
+  state.model_list = on_page(kModelsPage, CreateWindowExW(
+      WS_EX_CLIENTEDGE, WC_LISTVIEWW, nullptr,
+      WS_CHILD | WS_VISIBLE | WS_TABSTOP | LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS, 24, 40, 452, 150,
+      window, reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kModelListId)), instance, nullptr));
+  if (state.model_list == nullptr) {
+    throw std::runtime_error("failed to create the model list");
+  }
+  SendMessageW(state.model_list, LVM_SETEXTENDEDLISTVIEWSTYLE, LVS_EX_FULLROWSELECT, LVS_EX_FULLROWSELECT);
+  const std::pair<const wchar_t *, int> model_columns[] = {
+      {L"Model", 166}, {L"Source", 64}, {L"Status", 110}, {L"Size", 64}, {L"Loaded", 44}};
+  for (int index = 0; index < static_cast<int>(std::size(model_columns)); ++index) {
+    LVCOLUMNW column{};
+    column.mask = LVCF_TEXT | LVCF_WIDTH;
+    column.pszText = const_cast<wchar_t *>(model_columns[index].first);
+    column.cx = model_columns[index].second;
+    SendMessageW(state.model_list, LVM_INSERTCOLUMNW, index, reinterpret_cast<LPARAM>(&column));
+  }
+
+  // Load, Unload, Download, and Update stay buttons; Revert, Delete previous,
+  // Remove superseded, Remove…, Verify and repair…, and the folder actions
+  // live behind More ▾, which offers only what applies to the selected row.
+  const std::pair<const wchar_t *, int> model_buttons[] = {
+      {L"Load", kLoadModelButtonId},         {L"Unload", kUnloadModelButtonId},
+      {L"Download", kDownloadModelButtonId}, {L"Update", kUpdateModelButtonId},
+      {L"Cancel", kCancelModelTaskButtonId}, {L"Import…", kImportModelButtonId},
+      {L"More ▾", kMoreModelActionsButtonId}};
+  for (int index = 0; index < static_cast<int>(std::size(model_buttons)); ++index) {
+    if (!on_page(kModelsPage, CreateWindowExW(
+            0, L"BUTTON", model_buttons[index].first, WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
+            24 + index * 65, 196, 60, 26, window,
+            reinterpret_cast<HMENU>(static_cast<UINT_PTR>(model_buttons[index].second)), instance, nullptr))) {
+      throw std::runtime_error("failed to create the model action controls");
+    }
+  }
+
+  state.model_details = on_page(kModelsPage, CreateWindowExW(
+      WS_EX_CLIENTEDGE, L"EDIT", nullptr,
+      WS_CHILD | WS_VISIBLE | WS_VSCROLL | ES_AUTOVSCROLL | ES_MULTILINE | ES_READONLY, 24, 228, 452, 164,
+      window, reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kModelDetailsId)), instance, nullptr));
+  if (state.model_details == nullptr) {
+    throw std::runtime_error("failed to create the model details");
   }
   state.last_scan = scan_model_registry(document);
-  populate_model_combo(model_combo, state, state.last_scan);
-
-  const HWND load_button = on_page(kModelsPage, CreateWindowExW(
-      0, L"BUTTON", L"Load", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 176, 76, 90, 26, window,
-      reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kLoadModelButtonId)), instance, nullptr));
-  const HWND unload_button = on_page(kModelsPage, CreateWindowExW(
-      0, L"BUTTON", L"Unload", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 276, 76, 90, 26, window,
-      reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kUnloadModelButtonId)), instance, nullptr));
-  const HWND import_button = on_page(kModelsPage, CreateWindowExW(
-      0, L"BUTTON", L"Import…", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 376, 76, 100, 26, window,
-      reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kImportModelButtonId)), instance, nullptr));
-  if (!load_button || !unload_button || !import_button) {
-    throw std::runtime_error("failed to create the model load/unload/import controls");
-  }
-
-  label(kModelsPage, L"Catalogue:", 24, 128, 148, 24);
-  const HWND catalogue_combo = on_page(kModelsPage, CreateWindowExW(
-      0, L"COMBOBOX", nullptr, WS_CHILD | WS_VISIBLE | WS_VSCROLL | CBS_DROPDOWNLIST, 176, 124, 300,
-      200, window, reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kCatalogueComboId)), instance,
-      nullptr));
-  if (!catalogue_combo) {
-    throw std::runtime_error("failed to create the catalogue-selection control");
-  }
-  populate_catalogue_combo(catalogue_combo, state, state.last_scan);
-
-  const HWND download_button = on_page(kModelsPage, CreateWindowExW(
-      0, L"BUTTON", L"Download", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 176, 156, 100, 26, window,
-      reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kDownloadModelButtonId)), instance, nullptr));
-  const HWND update_button = on_page(kModelsPage, CreateWindowExW(
-      0, L"BUTTON", L"Update", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 286, 156, 100, 26, window,
-      reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kUpdateModelButtonId)), instance, nullptr));
-  const HWND cancel_task_button = on_page(kModelsPage, CreateWindowExW(
-      0, L"BUTTON", L"Cancel", WS_CHILD | WS_VISIBLE | WS_DISABLED | BS_PUSHBUTTON, 396, 156, 80, 26,
-      window, reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kCancelModelTaskButtonId)), instance, nullptr));
-  if (!download_button || !update_button || !cancel_task_button) {
-    throw std::runtime_error("failed to create the download/update model controls");
-  }
-
-  // Revert, Delete previous, Remove superseded, Remove…, and the folder
-  // actions for the model selected above, behind one menu that offers only
-  // what applies (docs/design/architecture.md#model-removal-repair-and-maintenance-actions).
-  label(kModelsPage, L"Selected model:", 24, 208, 148, 24);
-  if (!on_page(kModelsPage, CreateWindowExW(
-          0, L"BUTTON", L"More ▾", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 176, 204, 100, 26, window,
-          reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kMoreModelActionsButtonId)), instance, nullptr))) {
-    throw std::runtime_error("failed to create the model actions control");
-  }
+  refresh_model_list(state, window);
 
   // Server page.
   label(kServerPage, L"Server host:", 24, 48, 148, 24);
@@ -1945,20 +1896,20 @@ void run_settings_window(ConfigDocument &document,
   show_settings_page(state, kGeneralPage);
 
   // Activity log, below the tabs and visible on every page.
-  CreateWindowExW(0, L"STATIC", L"Activity log:", WS_CHILD | WS_VISIBLE, 16, 336,
+  CreateWindowExW(0, L"STATIC", L"Activity log:", WS_CHILD | WS_VISIBLE, 16, 416,
                   240, 24, window, nullptr, instance, nullptr);
   state.activity_log = CreateWindowExW(
       WS_EX_CLIENTEDGE, L"EDIT", nullptr,
-      WS_CHILD | WS_VISIBLE | WS_VSCROLL | ES_AUTOVSCROLL | ES_MULTILINE | ES_READONLY, 16, 360, 472,
+      WS_CHILD | WS_VISIBLE | WS_VSCROLL | ES_AUTOVSCROLL | ES_MULTILINE | ES_READONLY, 16, 440, 472,
       220, window, nullptr, instance, nullptr);
   if (state.activity_log == nullptr) {
     throw std::runtime_error("failed to create the settings activity log");
   }
   // The process-wide record bounds retention; allow its full text to display.
   SendMessageW(state.activity_log, EM_SETLIMITTEXT, 0, 0);
-  // Earlier activity in this Host process, then the current installed models.
+  // Earlier activity in this Host process; installed models and licences are
+  // in the Models page details pane.
   show_new_activity(state);
-  append_activity_log(state, L"Installed models and licences:\r\n" + format_installed_models(state.last_scan));
   // Tray Settings shows the existing resident model and does not unload on close.
   report_session_status(state);
 
