@@ -1,0 +1,9 @@
+eSpeak NG 1.52.0 (espeak-ng.exe, libespeak-ng.dll, espeak-ng-data/)
+
+TTS Host ships the unmodified Windows binaries from the official eSpeak NG
+1.52.0 release (espeak-ng.msi) beside the Kokoro runner, which runs
+espeak-ng.exe as a separate process to convert text to phonemes.
+
+eSpeak NG is licensed under the GNU General Public License, version 3 or
+later; the full text is in espeak-ng-GPL-3.0.txt. Corresponding source:
+https://github.com/espeak-ng/espeak-ng/releases/tag/1.52.0

@@ -43,8 +43,46 @@ int main(int argc, char **argv) {
       require(restarts == 1, "failed chunk did not restart exactly once");
       require(runner.finish() == 0, "recovered process failed");
     }
+    // A rejected request reports its reason without restarting the runner,
+    // discards its partial PCM, and leaves the session usable.
+    {
+      env("TTS_TEST_RUNNER_MODE", "reject");
+      env("TTS_TEST_REQUIRE_LOAD", "1");
+      int restarts = 0;
+      tts_host::RecoveringRunner runner(executable, std::filesystem::path("model"), {}, deadlines,
+          {}, [&](const std::string &) { ++restarts; });
+      bool rejected = false;
+      try { runner.synthesize("reject this", 1.0); }
+      catch (const tts_host::RunnerRequestError &error) {
+        rejected = std::string(error.what()) == "fixture rejected the request";
+      }
+      require(rejected && restarts == 0 && runner.loaded(),
+              "a rejected request restarted the runner or lost its reason");
+      require(runner.synthesize("next sentence", 1.0).pcm ==
+                  tts_host::make_stub_runner_synthesis_frame().payload,
+              "rejected request's partial PCM leaked into the next sentence");
+      require(restarts == 0 && runner.finish() == 0, "runner did not survive a rejection");
+    }
+    // More than a pipe buffer before the control reply must not deadlock.
+    // A death during that stream must discard its PCM before the retry.
+    for (const auto *mode : {"audio-first", "audio-first-partial-once"}) {
+      env("TTS_TEST_RUNNER_MODE", mode);
+      std::filesystem::remove(marker);
+      int restarts = 0;
+      tts_host::RecoveringRunner runner(executable, std::filesystem::path("model"), {},
+          {2s, 2s, 2s, 100ms}, {}, [&](const std::string &) { ++restarts; });
+      for (int i = 0; i != 2; ++i) {
+        const auto chunk = runner.synthesize("streamed sentence", 1.0);
+        require(chunk.pcm == std::vector<std::uint8_t>(256 * 1024, 0x10),
+                "audio before reply was duplicated or lost");
+        require(chunk.format.total_sample_frames == chunk.pcm.size() / 2,
+                "streamed sample count is incorrect");
+      }
+      require(restarts == (std::string(mode) == "audio-first" ? 0 : 1),
+              "streaming recovery restarted the wrong number of times");
+    }
     env("TTS_TEST_REQUIRE_LOAD", "");
-    for (const auto *mode : {"death", "hang", "audio-hang", "load-hang"}) {
+    for (const auto *mode : {"death", "hang", "audio-hang", "audio-first-hang", "load-hang"}) {
       env("TTS_TEST_RUNNER_MODE", mode);
       int restarts = 0;
       const auto model = std::string(mode) == "load-hang"
@@ -78,22 +116,24 @@ int main(int argc, char **argv) {
       }
       require(std::chrono::steady_clock::now() - start < 2s, "shutdown exceeded bound");
     }
-    env("TTS_TEST_RUNNER_MODE", "hang");
-    std::atomic_bool cancelled{false};
-    int restarts = 0;
-    auto pending = std::async(std::launch::async, [&] {
-      tts_host::RunnerDeadlines slow{5s, 5s, 5s, 100ms};
-      tts_host::RecoveringRunner runner(executable, {}, {}, slow,
-          [&] { return cancelled.load(); }, [&](const std::string &) { ++restarts; });
-      try { runner.synthesize("fail", 1.0); }
-      catch (const tts_host::RunnerCancelled &) { return true; }
-      return false;
-    });
-    std::this_thread::sleep_for(100ms);
-    cancelled = true;
-    require(pending.wait_for(1s) == std::future_status::ready && pending.get(),
-            "Stop/Quit did not cancel runner wait promptly");
-    require(restarts == 0, "explicit cancellation retried");
+    for (const auto *mode : {"hang", "audio-first-hang"}) {
+    env("TTS_TEST_RUNNER_MODE", mode);
+      std::atomic_bool cancelled{false};
+      int restarts = 0;
+      auto pending = std::async(std::launch::async, [&] {
+        tts_host::RunnerDeadlines slow{5s, 5s, 5s, 100ms};
+        tts_host::RecoveringRunner runner(executable, {}, {}, slow,
+            [&] { return cancelled.load(); }, [&](const std::string &) { ++restarts; });
+        try { runner.synthesize("fail", 1.0); }
+        catch (const tts_host::RunnerCancelled &) { return true; }
+        return false;
+      });
+      std::this_thread::sleep_for(100ms);
+      cancelled = true;
+      require(pending.wait_for(1s) == std::future_status::ready && pending.get(),
+              "Stop/Quit did not cancel runner wait promptly");
+      require(restarts == 0, "explicit cancellation retried");
+    }
     std::filesystem::remove(marker);
   } catch (const std::exception &error) {
     std::cerr << error.what() << '\n';

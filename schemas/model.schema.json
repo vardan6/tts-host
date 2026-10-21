@@ -58,6 +58,10 @@
         }
       }
     },
+    "revision": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
     "license": {
       "type": "object",
       "additionalProperties": false,

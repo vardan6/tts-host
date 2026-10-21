@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -26,13 +27,14 @@ struct ModelRunnerSelection {
   std::optional<std::filesystem::path> voice_path;
 };
 
+// ADR 0010 layout: <application directory>/runners/<engine>/tts-host-<engine>-runner.
 std::filesystem::path runner_path_for_engine(const std::string &engine,
-                                             const std::filesystem::path &runner_directory);
+                                             const std::filesystem::path &application_directory);
 
 // Resolves a model id against the configured registry
 // (docs/design/architecture.md#model-packages-and-discovery). Throws if the id
 // names no discovered package, or if no runner for the package's engine is
-// installed in runner_directory.
+// installed under runner_directory (the application directory).
 ModelRunnerSelection resolve_model_runner_selection(const std::string &model_id,
                                                     const ConfigDocument &config,
                                                     const std::filesystem::path &runner_directory);
@@ -71,6 +73,11 @@ class ModelSessionManager {
             std::optional<std::chrono::seconds> idle_override = {});
   void load_eager(const ConfigDocument &config, std::function<bool()> cancelled = {});
   void unload();
+  // Runs `switch_package` while no speech holds the runner, after releasing
+  // a resident runner of `model_id` so its files are closed and the next use
+  // reloads from the new folder. Throws without calling it while speech is
+  // active: an utterance must finish or be stopped before replacement.
+  void replace_package(const std::string &model_id, const std::function<void()> &switch_package);
   Lease acquire(const ModelRunnerSelection &selection, std::function<bool()> cancelled = {},
                 std::optional<std::chrono::seconds> idle_override = {});
   bool unload_if_idle(std::chrono::seconds idle_unload_seconds,

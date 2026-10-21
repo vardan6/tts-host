@@ -182,6 +182,7 @@ add_executable(
   src/model_import.cpp
   src/model_registry.cpp
   src/model_session.cpp
+  src/model_update.cpp
   src/recovering_runner.cpp
   src/now_playing_window.cpp
   src/playback_controller.cpp
@@ -191,6 +192,7 @@ add_executable(
   src/synthesis_pipeline.cpp
   src/selection_capture.cpp
   src/settings_window.cpp
+  src/sha256.cpp
   src/startup_choice.cpp
   src/text_normalizer.cpp
   src/text_splitter.cpp
@@ -198,6 +200,24 @@ add_executable(
   src/wav_writer.cpp
   src/main.cpp
 )
+
+# ADR 0010 release layout, also used by the build tree: each runner lives in
+# runners/<engine>/ beside tts-host, with its private libraries next to it
+# (src/model_session.cpp's runner_path_for_engine()). TTS_HOST_APP_DIR is the
+# tts-host output directory, for tests that resolve runners like the host does.
+get_property(TTS_HOST_MULTI_CONFIG GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
+if(TTS_HOST_MULTI_CONFIG)
+  set(TTS_HOST_APP_DIR "${CMAKE_BINARY_DIR}/$<CONFIG>")
+else()
+  set(TTS_HOST_APP_DIR "${CMAKE_BINARY_DIR}")
+endif()
+function(tts_host_runner_layout target engine)
+  set_target_properties(${target} PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${TTS_HOST_APP_DIR}/runners/${engine}")
+  if(NOT WIN32)
+    set_target_properties(${target} PROPERTIES BUILD_RPATH "$ORIGIN")
+  endif()
+endfunction()
 
 add_executable(
   tts-host-stub-runner
@@ -209,6 +229,62 @@ add_executable(
   src/stub_runner_main.cpp
 )
 
+# Optional Qwen runner. TTS_HOST_QWEN_RUNTIME_DIR is the pinned llama.cpp b11029
+# runtime (tools/fetch_qwen_evaluation_runtime.py); its files are copied beside
+# the runner, which loads them from its own directory. A model manifest never
+# supplies the runtime.
+set(TTS_HOST_QWEN_RUNTIME_DIR "" CACHE PATH "Pinned llama.cpp b11029 runtime copied beside the Qwen runner")
+# An unset directory falls back to the fetch tool's repo-local output, so a
+# clean Windows configure does not silently drop the runner.
+set(TTS_HOST_QWEN_DEFAULT_RUNTIME_DIR "${CMAKE_CURRENT_SOURCE_DIR}/cache/qwen-evaluation/b11029/runtime")
+if(WIN32 AND NOT TTS_HOST_QWEN_RUNTIME_DIR
+   AND EXISTS "${TTS_HOST_QWEN_DEFAULT_RUNTIME_DIR}/tts-qwen-runtime.txt")
+  set(TTS_HOST_QWEN_RUNTIME_DIR "${TTS_HOST_QWEN_DEFAULT_RUNTIME_DIR}" CACHE PATH
+      "Pinned llama.cpp b11029 runtime copied beside the Qwen runner" FORCE)
+endif()
+if(NOT TTS_HOST_QWEN_RUNTIME_DIR)
+  message(STATUS "Qwen runner disabled: set TTS_HOST_QWEN_RUNTIME_DIR or run tools/fetch_qwen_evaluation_runtime.py")
+endif()
+if(TTS_HOST_QWEN_RUNTIME_DIR)
+  FetchContent_Declare(qwen_llama_headers
+    URL https://codeload.github.com/ggml-org/llama.cpp/tar.gz/5c53396b89b05666c9d57445b7616a35f6198a16
+    URL_HASH SHA256=93863c965446d6901147d9c316159cba91c3a18669db8d5aebed4536ee5ccf0b
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+  FetchContent_Populate(qwen_llama_headers)
+  add_executable(tts-host-qwen3-gguf-runner
+    src/qwen_runner_main.cpp src/model_registry.cpp src/model_catalogue.cpp src/sha256.cpp
+    src/process_stats.cpp
+    src/runner_audio_output.cpp src/runner_control_io.cpp src/runner_protocol.cpp
+    src/time_stretch.cpp)
+  target_include_directories(tts-host-qwen3-gguf-runner PRIVATE include
+    ${qwen_llama_headers_SOURCE_DIR}/include ${qwen_llama_headers_SOURCE_DIR}/ggml/include
+    ${qwen_llama_headers_SOURCE_DIR}/tools/mtmd)
+  file(TO_CMAKE_PATH "${TTS_HOST_QWEN_RUNTIME_DIR}" QWEN_RUNTIME_PATH)
+  tts_host_runner_layout(tts-host-qwen3-gguf-runner qwen3-gguf)
+  add_custom_command(TARGET tts-host-qwen3-gguf-runner POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory_if_different "${QWEN_RUNTIME_PATH}"
+            $<TARGET_FILE_DIR:tts-host-qwen3-gguf-runner>)
+  target_link_libraries(tts-host-qwen3-gguf-runner PRIVATE
+    nlohmann_json::nlohmann_json ${JSON_SCHEMA_VALIDATOR_TARGET} ${CMAKE_DL_LIBS})
+  if(WIN32)
+    target_link_libraries(tts-host-qwen3-gguf-runner PRIVATE psapi)
+  endif()
+  if(MSVC)
+    target_compile_options(tts-host-qwen3-gguf-runner PRIVATE /W4 /permissive-)
+  else()
+    target_compile_options(tts-host-qwen3-gguf-runner PRIVATE -Wall -Wextra -Wpedantic)
+  endif()
+  if(BUILD_TESTING)
+    add_executable(tts-host-qwen-integration-tests tests/qwen_integration_tests.cpp
+      src/recovering_runner.cpp src/runner_launcher.cpp src/runner_protocol.cpp
+      src/activity_log.cpp src/wav_writer.cpp)
+    target_include_directories(tts-host-qwen-integration-tests PRIVATE include)
+    target_link_libraries(tts-host-qwen-integration-tests PRIVATE nlohmann_json::nlohmann_json)
+    add_dependencies(tts-host-qwen-integration-tests tts-host-qwen3-gguf-runner)
+  endif()
+endif()
+
+tts_host_runner_layout(tts-host-stub-runner stub)
 target_include_directories(tts-host-stub-runner PRIVATE include)
 target_link_libraries(tts-host-stub-runner PRIVATE nlohmann_json::nlohmann_json)
 if(WIN32)
@@ -251,16 +327,11 @@ if(WIN32)
   target_include_directories(tts-host-playback-gap-probe PRIVATE include)
   target_link_libraries(tts-host-playback-gap-probe PRIVATE ole32 uuid)
 endif()
-if(NOT WIN32)
-  set_target_properties(
-    tts-host-kokoro-onnx-runner PROPERTIES
-    BUILD_RPATH "$ORIGIN"
-  )
-endif()
+tts_host_runner_layout(tts-host-kokoro-onnx-runner kokoro-onnx)
 add_custom_command(
   TARGET tts-host-kokoro-onnx-runner POST_BUILD
   COMMAND
-    ${CMAKE_COMMAND} -E copy
+    ${CMAKE_COMMAND} -E copy_if_different
     ${ONNXRUNTIME_RUNTIME_FILE}
     $<TARGET_FILE_DIR:tts-host-kokoro-onnx-runner>/$<IF:$<BOOL:${WIN32}>,onnxruntime.dll,libonnxruntime.so.1>
 )
@@ -273,12 +344,12 @@ if(WIN32)
   add_custom_command(
     TARGET tts-host-kokoro-onnx-runner POST_BUILD
     COMMAND
-      ${CMAKE_COMMAND} -E copy
+      ${CMAKE_COMMAND} -E copy_if_different
       "${ESPEAK_NG_EXECUTABLE}"
       "${ESPEAK_NG_LIBRARY}"
       $<TARGET_FILE_DIR:tts-host-kokoro-onnx-runner>
     COMMAND
-      ${CMAKE_COMMAND} -E copy_directory
+      ${CMAKE_COMMAND} -E copy_directory_if_different
       "${ESPEAK_NG_DATA_DIR}"
       $<TARGET_FILE_DIR:tts-host-kokoro-onnx-runner>/espeak-ng-data
   )
@@ -286,6 +357,11 @@ endif()
 
 target_include_directories(tts-host PRIVATE include ${boost_headers_SOURCE_DIR})
 target_compile_definitions(tts-host PRIVATE BOOST_ERROR_CODE_HEADER_ONLY)
+# Building the Host alone (an IDE startup project) also refreshes its runners.
+add_dependencies(tts-host tts-host-kokoro-onnx-runner)
+if(TARGET tts-host-qwen3-gguf-runner)
+  add_dependencies(tts-host tts-host-qwen3-gguf-runner)
+endif()
 
 target_link_libraries(
   tts-host
@@ -349,29 +425,139 @@ add_custom_target(
   USES_TERMINAL
 )
 
-# Packaging: assembles the self-contained, zip distribution described in
-# docs/design/architecture.md's "Distribution" section (host, its runner(s),
-# schemas, an example config, and a portable.marker) and lets CPack zip it via
-# the conventional `package` target. Reuses the exact runtime-file name/path
-# the post-build copy commands above already produce next to each runner, so
-# the installed layout matches what the host actually looks for at runtime.
-# Currently mirrors today's flat "runner beside tts-host" convention
-# (src/main.cpp's runner_path_for_engine()) rather than a per-engine
-# subdirectory — revisit together if/when that convention changes.
-install(TARGETS tts-host tts-host-kokoro-onnx-runner RUNTIME DESTINATION .)
+# Packaging: the two-model release tree of docs/design/architecture.md's
+# "Distribution" section and ADR 0010, zipped by CPack's `package` target. Each
+# runner sits in runners/<engine>/ with its private libraries, matching the
+# build tree. Build Release first (`cpack -C Release`); the Debug CRT is not
+# redistributable.
+#
+# TTS_HOST_RELEASE=ON is the shipping configuration: it requires the Qwen
+# runtime and TTS_HOST_RELEASE_MODELS_DIR, a directory holding catalogue
+# installs of both bundled packages (scripts/release-win.ps1 stages them with
+# tts-host --download-model, so each carries its catalogue revision). The
+# install step fails on any missing file rather than ship one model.
+option(TTS_HOST_RELEASE "Package the two-model release; fail if any part is missing" OFF)
+set(TTS_HOST_RELEASE_MODELS_DIR "" CACHE PATH
+  "Catalogue installs of kokoro-en-v1 and qwen3-tts-1.7b to bundle")
+set(TTS_HOST_BUNDLED_MODELS kokoro-en-v1 qwen3-tts-1.7b)
+if(TTS_HOST_RELEASE)
+  if(NOT WIN32)
+    message(FATAL_ERROR "TTS_HOST_RELEASE packages the Windows release only")
+  endif()
+  if(NOT TTS_HOST_QWEN_RUNTIME_DIR OR NOT TTS_HOST_RELEASE_MODELS_DIR)
+    message(FATAL_ERROR
+      "TTS_HOST_RELEASE needs TTS_HOST_QWEN_RUNTIME_DIR and TTS_HOST_RELEASE_MODELS_DIR")
+  endif()
+endif()
+
+install(TARGETS tts-host RUNTIME DESTINATION .)
+install(TARGETS tts-host-kokoro-onnx-runner RUNTIME DESTINATION runners/kokoro-onnx)
 install(
   FILES $<TARGET_FILE_DIR:tts-host-kokoro-onnx-runner>/$<IF:$<BOOL:${WIN32}>,onnxruntime.dll,libonnxruntime.so.1>
-  DESTINATION .
+  DESTINATION runners/kokoro-onnx
 )
+install(FILES ${onnxruntime_SOURCE_DIR}/LICENSE ${onnxruntime_SOURCE_DIR}/ThirdPartyNotices.txt
+  DESTINATION licenses/onnxruntime)
+install(FILES LICENSE DESTINATION licenses RENAME TTS-Host-LICENSE.txt)
+install(FILES resources/licenses/README.txt DESTINATION licenses)
 if(WIN32)
-  install(FILES "${ESPEAK_NG_EXECUTABLE}" "${ESPEAK_NG_LIBRARY}" DESTINATION .)
-  install(DIRECTORY "${ESPEAK_NG_DATA_DIR}/" DESTINATION espeak-ng-data)
+  install(FILES "${ESPEAK_NG_EXECUTABLE}" "${ESPEAK_NG_LIBRARY}" DESTINATION runners/kokoro-onnx)
+  install(DIRECTORY "${ESPEAK_NG_DATA_DIR}/" DESTINATION runners/kokoro-onnx/espeak-ng-data)
+  install(FILES resources/licenses/espeak-ng-GPL-3.0.txt resources/licenses/espeak-ng-NOTICE.txt
+    DESTINATION licenses)
+  # App-local MSVC runtime beside every executable: each runner resolves its
+  # imports from its own directory, and a clean machine may lack the VC++
+  # redistributable.
+  set(CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS_SKIP TRUE)
+  include(InstallRequiredSystemLibraries)
+  foreach(destination . runners/kokoro-onnx runners/qwen3-gguf)
+    if(destination STREQUAL "runners/qwen3-gguf" AND NOT TTS_HOST_QWEN_RUNTIME_DIR)
+      continue()
+    endif()
+    install(PROGRAMS ${CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS} DESTINATION ${destination})
+  endforeach()
+endif()
+if(TTS_HOST_QWEN_RUNTIME_DIR)
+  install(TARGETS tts-host-qwen3-gguf-runner RUNTIME DESTINATION runners/qwen3-gguf)
+  # Only what the runner loads: llama, mtmd, ggml with its CPU and CUDA
+  # backends, OpenMP, and the CUDA runtime. The llama.cpp tool DLLs stay out.
+  install(DIRECTORY "${QWEN_RUNTIME_PATH}/" DESTINATION runners/qwen3-gguf
+    FILES_MATCHING
+      PATTERN "llama.dll" PATTERN "mtmd.dll" PATTERN "ggml.dll" PATTERN "ggml-base.dll"
+      PATTERN "ggml-cpu-*.dll" PATTERN "ggml-cuda.dll" PATTERN "libomp.dll"
+      PATTERN "cudart64_*.dll" PATTERN "cublas64_*.dll" PATTERN "cublasLt64_*.dll"
+      PATTERN "libllama.so*" PATTERN "libmtmd.so*" PATTERN "libggml*.so*"
+      PATTERN "tts-qwen-runtime.txt")
+  install(FILES "${qwen_llama_headers_SOURCE_DIR}/LICENSE" DESTINATION licenses
+    RENAME llama.cpp-LICENSE.txt)
+  if(EXISTS "${QWEN_RUNTIME_PATH}/LICENSE-LLVM-OpenMP")
+    install(FILES "${QWEN_RUNTIME_PATH}/LICENSE-LLVM-OpenMP" DESTINATION licenses)
+  endif()
+  if(WIN32)
+    install(FILES resources/licenses/nvidia-cuda-NOTICE.txt DESTINATION licenses)
+  endif()
 endif()
 install(DIRECTORY schemas DESTINATION .)
 install(FILES config.example.json DESTINATION . RENAME config.json)
 install(CODE "file(TOUCH \"\${CMAKE_INSTALL_PREFIX}/portable.marker\")")
-if(EXISTS ${CMAKE_SOURCE_DIR}/models/kokoro-en-v1)
+if(TTS_HOST_RELEASE_MODELS_DIR)
+  file(TO_CMAKE_PATH "${TTS_HOST_RELEASE_MODELS_DIR}" TTS_HOST_RELEASE_MODELS_PATH)
+  foreach(model IN LISTS TTS_HOST_BUNDLED_MODELS)
+    install(DIRECTORY "${TTS_HOST_RELEASE_MODELS_PATH}/${model}" DESTINATION models)
+  endforeach()
+elseif(EXISTS ${CMAKE_SOURCE_DIR}/models/kokoro-en-v1)
   install(DIRECTORY ${CMAKE_SOURCE_DIR}/models/kokoro-en-v1 DESTINATION models)
+endif()
+if(TTS_HOST_RELEASE)
+  # Last install step: every runtime, licence, and bundled package file must be
+  # in the tree, and each package must be a catalogue install whose $schema
+  # resolves inside it.
+  set(TTS_HOST_RELEASE_REQUIRED
+    tts-host.exe
+    runners/kokoro-onnx/tts-host-kokoro-onnx-runner.exe runners/kokoro-onnx/onnxruntime.dll
+    runners/kokoro-onnx/espeak-ng.exe runners/kokoro-onnx/libespeak-ng.dll
+    runners/qwen3-gguf/tts-host-qwen3-gguf-runner.exe runners/qwen3-gguf/llama.dll
+    runners/qwen3-gguf/mtmd.dll runners/qwen3-gguf/ggml.dll runners/qwen3-gguf/ggml-base.dll
+    runners/qwen3-gguf/ggml-cuda.dll runners/qwen3-gguf/ggml-cpu-x64.dll
+    runners/qwen3-gguf/libomp.dll runners/qwen3-gguf/cudart64_12.dll
+    runners/qwen3-gguf/cublas64_12.dll runners/qwen3-gguf/cublasLt64_12.dll
+    vcruntime140.dll runners/kokoro-onnx/msvcp140.dll runners/qwen3-gguf/vcruntime140_1.dll
+    schemas/model.schema.json schemas/config.schema.json config.json
+    licenses/TTS-Host-LICENSE.txt licenses/onnxruntime/LICENSE licenses/espeak-ng-GPL-3.0.txt
+    licenses/llama.cpp-LICENSE.txt licenses/nvidia-cuda-NOTICE.txt)
+  install(CODE "
+    set(prefix \"\${CMAKE_INSTALL_PREFIX}\")
+    foreach(file ${TTS_HOST_RELEASE_REQUIRED})
+      if(NOT EXISTS \"\${prefix}/\${file}\")
+        message(FATAL_ERROR \"Release package is missing \${file}\")
+      endif()
+    endforeach()
+    foreach(model ${TTS_HOST_BUNDLED_MODELS})
+      set(manifest \"\${prefix}/models/\${model}/model.json\")
+      if(NOT EXISTS \"\${manifest}\")
+        message(FATAL_ERROR \"Release package is missing bundled model \${model}\")
+      endif()
+      file(READ \"\${manifest}\" json)
+      string(JSON revision ERROR_VARIABLE error GET \"\${json}\" revision)
+      if(error)
+        message(FATAL_ERROR \"Bundled model \${model} has no catalogue revision; stage it with --download-model\")
+      endif()
+      string(JSON schema GET \"\${json}\" \\$schema)
+      if(NOT EXISTS \"\${prefix}/models/\${model}/\${schema}\")
+        message(FATAL_ERROR \"Bundled model \${model} has \\$schema '\${schema}', which does not resolve in the package\")
+      endif()
+      string(JSON files GET \"\${json}\" files)
+      string(JSON count LENGTH \"\${files}\")
+      math(EXPR last \"\${count} - 1\")
+      foreach(index RANGE \${last})
+        string(JSON key MEMBER \"\${files}\" \${index})
+        string(JSON relative GET \"\${files}\" \${key})
+        if(NOT EXISTS \"\${prefix}/models/\${model}/\${relative}\")
+          message(FATAL_ERROR \"Bundled model \${model} is missing \${relative}\")
+        endif()
+      endforeach()
+    endforeach()
+  ")
 endif()
 
 set(CPACK_PACKAGE_NAME "tts-host")
@@ -550,6 +736,13 @@ if(BUILD_TESTING)
     src/runner_audio_output.cpp src/runner_control_io.cpp src/runner_protocol.cpp src/stub_runner.cpp)
   target_include_directories(tts-host-runner-failure-fixture PRIVATE include)
   target_link_libraries(tts-host-runner-failure-fixture PRIVATE nlohmann_json::nlohmann_json)
+  add_test(NAME tts_host_failure_fixture_exit COMMAND ${CMAKE_COMMAND} -E env
+    TTS_TEST_RUNNER_MODE=normal
+    ${CMAKE_COMMAND}
+    -Drunner=$<TARGET_FILE:tts-host-runner-failure-fixture>
+    -Dscratch=${CMAKE_CURRENT_BINARY_DIR}
+    -P ${CMAKE_SOURCE_DIR}/tests/assert_failure_fixture_exit.cmake)
+  set_tests_properties(tts_host_failure_fixture_exit PROPERTIES TIMEOUT 10)
   add_executable(tts-host-runner-recovery-tests tests/runner_recovery_tests.cpp
     src/runner_launcher.cpp src/recovering_runner.cpp src/activity_log.cpp src/runner_protocol.cpp
     src/stub_runner.cpp)
@@ -560,7 +753,8 @@ if(BUILD_TESTING)
   set_tests_properties(tts_host_runner_recovery PROPERTIES TIMEOUT 15)
 
   add_executable(tts-host-resident-synthesis-tests tests/resident_synthesis_tests.cpp
-    src/model_session.cpp src/model_registry.cpp src/recovering_runner.cpp src/activity_log.cpp
+    src/model_session.cpp src/model_registry.cpp src/model_catalogue.cpp src/sha256.cpp
+    src/recovering_runner.cpp src/activity_log.cpp
     src/synthesis_pipeline.cpp src/runner_launcher.cpp src/runner_protocol.cpp
     src/playback_controller.cpp src/playback_sink.cpp src/audio_conversion.cpp
     src/audio_history.cpp src/text_splitter.cpp src/wav_writer.cpp)
@@ -584,6 +778,8 @@ if(BUILD_TESTING)
   add_executable(
     tts-host-model-session-tests
     src/model_registry.cpp
+    src/model_catalogue.cpp
+    src/sha256.cpp
     src/model_session.cpp
     src/recovering_runner.cpp
     src/activity_log.cpp
@@ -611,7 +807,7 @@ if(BUILD_TESTING)
     NAME tts_host_model_load_unload
     COMMAND
       tts-host-model-session-tests
-      $<TARGET_FILE_DIR:tts-host-stub-runner>
+      ${TTS_HOST_APP_DIR}
       ${CMAKE_SOURCE_DIR}/tests/fixtures/model_session/config.json
   )
 
@@ -622,6 +818,8 @@ if(BUILD_TESTING)
     tts-host-model-import-tests
     src/model_import.cpp
     src/model_registry.cpp
+    src/model_catalogue.cpp
+    src/sha256.cpp
     tests/model_import_tests.cpp
   )
   target_include_directories(tts-host-model-import-tests PRIVATE include)
@@ -661,6 +859,7 @@ if(BUILD_TESTING)
   add_executable(
     tts-host-model-catalogue-tests
     src/model_catalogue.cpp
+    src/sha256.cpp
     tests/model_catalogue_tests.cpp
   )
   target_include_directories(tts-host-model-catalogue-tests PRIVATE include)
@@ -694,6 +893,7 @@ if(BUILD_TESTING)
     src/catalogue_download.cpp
     src/model_catalogue.cpp
     src/model_registry.cpp
+    src/sha256.cpp
     tests/catalogue_download_tests.cpp
   )
   target_include_directories(tts-host-catalogue-download-tests PRIVATE include)
@@ -725,6 +925,8 @@ if(BUILD_TESTING)
   add_executable(
     tts-host-model-registry-scan-diff-tests
     src/model_registry.cpp
+    src/model_catalogue.cpp
+    src/sha256.cpp
     tests/model_registry_scan_diff_tests.cpp
   )
   target_include_directories(tts-host-model-registry-scan-diff-tests PRIVATE include)
@@ -744,6 +946,70 @@ if(BUILD_TESTING)
     COMMAND
       tts-host-model-registry-scan-diff-tests
       ${CMAKE_SOURCE_DIR}/schemas
+  )
+
+  # ADR 0010 two-tier discovery (src/model_registry.cpp): duplicate ids within
+  # a tier and catalogue-match precedence across the bundled and writable tiers.
+  add_executable(
+    tts-host-model-registry-tier-tests
+    src/model_registry.cpp
+    src/model_catalogue.cpp
+    src/sha256.cpp
+    tests/model_registry_tier_tests.cpp
+  )
+  target_include_directories(tts-host-model-registry-tier-tests PRIVATE include)
+  target_link_libraries(
+    tts-host-model-registry-tier-tests
+    PRIVATE
+      nlohmann_json::nlohmann_json
+      ${JSON_SCHEMA_VALIDATOR_TARGET}
+  )
+  if(MSVC)
+    target_compile_options(tts-host-model-registry-tier-tests PRIVATE /W4 /permissive-)
+  else()
+    target_compile_options(tts-host-model-registry-tier-tests PRIVATE -Wall -Wextra -Wpedantic)
+  endif()
+  add_test(
+    NAME tts_host_model_registry_tiers
+    COMMAND
+      tts-host-model-registry-tier-tests
+      ${CMAKE_SOURCE_DIR}/schemas
+      ${CMAKE_CURRENT_BINARY_DIR}/model-registry-tier-tests
+  )
+
+  # Manual catalogue model update (src/model_update.cpp): staged replacement,
+  # one kept previous version, Revert/Delete, and interrupted-commit recovery,
+  # with a fake fetcher in place of WinHTTP.
+  add_executable(
+    tts-host-model-update-tests
+    src/catalogue_download.cpp
+    src/model_catalogue.cpp
+    src/model_registry.cpp
+    src/model_update.cpp
+    src/sha256.cpp
+    tests/model_update_tests.cpp
+  )
+  target_include_directories(tts-host-model-update-tests PRIVATE include)
+  target_link_libraries(
+    tts-host-model-update-tests
+    PRIVATE
+      nlohmann_json::nlohmann_json
+      ${JSON_SCHEMA_VALIDATOR_TARGET}
+  )
+  if(WIN32)
+    target_link_libraries(tts-host-model-update-tests PRIVATE winhttp)
+  endif()
+  if(MSVC)
+    target_compile_options(tts-host-model-update-tests PRIVATE /W4 /permissive-)
+  else()
+    target_compile_options(tts-host-model-update-tests PRIVATE -Wall -Wextra -Wpedantic)
+  endif()
+  add_test(
+    NAME tts_host_model_update
+    COMMAND
+      tts-host-model-update-tests
+      ${CMAKE_SOURCE_DIR}/schemas
+      ${CMAKE_CURRENT_BINARY_DIR}/model-update-tests
   )
 
   add_executable(
@@ -811,6 +1077,19 @@ if(BUILD_TESTING)
     target_compile_options(tts-host-text-splitter-tests PRIVATE -Wall -Wextra -Wpedantic)
   endif()
   add_test(NAME tts_host_text_splitting COMMAND tts-host-text-splitter-tests)
+
+  add_executable(
+    tts-host-time-stretch-tests
+    src/time_stretch.cpp
+    tests/time_stretch_tests.cpp
+  )
+  target_include_directories(tts-host-time-stretch-tests PRIVATE include)
+  if(MSVC)
+    target_compile_options(tts-host-time-stretch-tests PRIVATE /W4 /permissive-)
+  else()
+    target_compile_options(tts-host-time-stretch-tests PRIVATE -Wall -Wextra -Wpedantic)
+  endif()
+  add_test(NAME tts_host_time_stretch COMMAND tts-host-time-stretch-tests)
 
   add_executable(
     tts-host-playback-controller-tests

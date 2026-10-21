@@ -1,3 +1,57 @@
+- 2026-10-17: Qwen catalogue and local import — added `qwen3-tts-1.7b` (Q4_K_M
+  backbone, Q8_0 mmproj, revision-pinned Hugging Face URLs, 1414 MB) to the
+  compiled catalogue. Its reference voice is the public-domain LJ Speech clip
+  LJ001-0001 from a revision-pinned mirror; entries can now declare host-written
+  files, used for the `voiceLicense` provenance notice. Unit tests cover
+  generated-file rules, a Qwen-shaped download validating as `qwen3-gguf`, and
+  Settings-path import of a Qwen package. On Linux, a scratch harness installed
+  the real entry through `download_catalogue_entry` (cached GGUFs, live WAV,
+  real checksums); `--list-models` showed it and Host synthesis transcribed
+  correctly with Whisper. 48/48 CTests pass. Not yet exercised through
+  WinHTTP or Windows Settings.
+- 2026-10-17: Qwen speech-speed control — Qwen has no speed input, so the
+  `qwen3-gguf` runner streams its PCM through a WSOLA time stretch
+  (`time_stretch.cpp`, 30 ms frames, ±10 ms alignment) that keeps pitch and
+  incremental emission; the Host's sentence-boundary re-synthesis is unchanged.
+  Unit tests pin output length round(n/speed), chunking independence, pitch
+  and loudness. 48/48 Linux CTests pass; the real-GPU check scaled 0.5/1.5/2.0
+  within tolerance without restarts (generation length varies 5–20% between
+  runs even at a fixed seed) and now covers over-context rejection. Not yet
+  rebuilt or listened to on Windows.
+- 2026-10-16: Qwen end-to-end evaluation integration — optional native
+  `tts-host-qwen3-gguf-runner` uses pinned llama.cpp b11029 CUDA libraries,
+  Q4_K_M backbone, Q8_0 mmproj, and a declared reference voice. Added validated
+  data-only packages, reproducible runtime/package preparation tools, and
+  concurrent control/audio draining while retaining complete-sentence recovery.
+  47/47 CTests pass on Linux and native Windows Debug. Real GPU Host synthesis
+  produced valid two-sentence WAVs on both platforms; opt-in lifecycle checks
+  passed resident reuse, unload/reload, bounded cancellation without retry, and
+  synthesis afterward. Streaming fixture tests cover pre-reply PCM, partial
+  death/retry, timeout, and cancellation. Native lifecycle smoke timings were
+  4.659 s for 2.56 s audio (2.239 s first PCM), then 4.633 s for 2.96 s audio
+  (1.427 s first PCM); these are not the frozen-corpus bake-off and fail its
+  throughput target. Peak VRAM is explicitly unavailable, not measured zero;
+  synthesis speed remains 1.0 only, with release speed support tracked separately.
+  Evaluation config, package, WAVs and logs are under `build/qwen-evaluation/`;
+  normal model registry/config were not changed and the development Host was
+  restored with login startup disabled. Build/setup and opt-in checks:
+  [README](README.md#qwen-evaluation). Existing planning/acceptance changes and
+  this implementation remain uncommitted.
+
+- 2026-10-16: Provisional Qwen evaluation selection — user approved
+  Qwen3-TTS-12Hz-1.7B-Base with Q4_K_M backbone, Q8_0 mmproj, and llama.cpp
+  CUDA for initial Host integration. Final release defaults remain a bake-off
+  output. Streaming, cancellation, resident reuse, and native Windows feasibility
+  must be verified before committing to the adapter; no Qwen implementation or
+  new runtime acceptance is claimed. See [engine design](docs/design/architecture.md#engines-and-models).
+
+- 2026-10-15: Captured two-model distribution plan on `feature/bundled-models`:
+  Kokoro + Qwen, fully offline Windows installer, user-triggered compiled-catalogue
+  model updates, and local/catalogue additions. Requirements/design updated;
+  roadmap split into dependency-ordered slices. Qwen variant/runtime and model
+  revision/storage/release layout remain open; no implementation or acceptance
+  is claimed.
+
 - 2026-10-14: Merged and closed `roadmap-slices` — PR #2 merged into `main`
   as `13d5aa9` with the user's approval; branch deleted locally and on origin.
   `roadmap.md` trimmed to open work only (completed slices live here and in
@@ -368,3 +422,56 @@
 - 2026-10-08: Playback tab tuning — schema adds `audio.bufferMilliseconds`, `sentencePauseMilliseconds`, `lookaheadSentences`; the Playback tab edits them and **Reset to defaults** restores only that tab. The pipeline now appends each synthesized sentence to retained history at once, keeps up to the configured depth of unheard sentences, discards all of them on a speed change at first launch, and inserts the pause as retained source PCM. Pause and lookahead come from the controller (live after Settings publishes); the buffer applies per utterance. Pipeline and Settings regressions; 46/46 CTests on Windows and Linux. Native view of the new controls not yet done.
 
 - 2026-10-13: Unplanned fixes (uncommitted) — GUI-launched Host has no stderr, so runner launch failed with "could not duplicate a handle for runner inheritance (Windows error 6)"; runner stderr now falls back to `NUL`. New process-wide `activity_log` (bounded, in-memory, timestamped) records speech failures, runner restarts, eager-load failures, tray error dialogs, hotkey warnings, selection-capture results, and Settings messages; Settings replays it on open, polls every 500 ms, and its pane is renamed "Activity log". 46/46 CTests on Windows; `tts-host.exe` not re-linked (was running) and not natively verified.
+
+- 2026-10-16: Guided Windows boundary-gap re-measure — shared stream detected no gaps at the 4 ms threshold; separate calls median 73 ms; user heard no gaps, clicks, or interruptions. Five loopback discontinuities retained as a caveat. Partial desktop acceptance and UI findings recorded in [results](docs/reviews/windows-acceptance-2026-10-16.md); remaining Windows checks stay open.
+
+- 2026-10-16: Windows login startup acceptance — closed at the user's explicit request based on their confirmation; agent did not perform isolated-machine testing or change developer-machine startup registration. See [acceptance record](docs/reviews/windows-acceptance-2026-10-16.md#login-startup--user-confirmed-complete).
+
+- 2026-10-16: Partial Windows desktop acceptance — OneNote direct/saved-target selection and empty-selection feedback, external development-config reload, audible playback controls/seek, close-to-hide, and user-confirmed tray shortcut toggle verified; Ctrl+F8 retained. Queue clearing, tray reopening/Settings agreement, terminal/browser/download checks and visual findings remain open in the [acceptance report](docs/reviews/windows-acceptance-2026-10-16.md).
+
+- 2026-10-16: Additional desktop confirmation — user confirmed tray hide/reopen and copy-first reading across Terminal/Codex, embedded terminal, OneNote, and browser. Development `clipboardOnly` requires manual copy; these results do not establish direct capture in every app. Remaining checks updated in the acceptance report.
+
+- 2026-10-16: Windows acceptance completed — user checked all interactive checklist items and explicitly accepted all as done, closing combined desktop acceptance and accepting the recorded UI findings. Login startup and guided gap acceptance are also complete. No additional agent testing or code fixes claimed; synthetic Copy compatibility remains separate. See [final closure](docs/reviews/windows-acceptance-2026-10-16.md#final-closure--all-checks-accepted).
+
+- 2026-10-16: Qwen evaluation cross-review and fixes — Claude Opus 5.5 reviewed `5e03455..5af176b` (7 findings, [report](docs/reviews/code-review-2026-10-16-qwen-evaluation.md)). Fixed #1–#5: ADR 0002 adds a synthesize rejection reply (end-of-stream frame, then JSON-RPC `error`), so Qwen speed ≠ 1.0, prompt overflow, generation limit, and empty output keep the model resident and report their reason instead of restarting and reloading. Multi-language `qwen3-gguf` manifests are rejected, and the first I/O failure is reported. #6 deferred; #7 folded into the release-layout decision. Linux: 47/47 CTests and the real-GPU Qwen integration test pass. Windows not rebuilt.
+
+- 2026-10-16: Select bundled Qwen package — user skipped the English bake-off. [ADR 0009](docs/adr/0009-qwen-release-selection-without-bake-off.md) fixes Qwen3-TTS 1.7B Base Q4_K_M/Q8_0 on llama.cpp b11029 CUDA as the release package: selectable, not a profile default (misses RTF ≤ 1.0; VRAM unmeasured). Requirements, design, README, and roadmap updated; distribution slices no longer wait on a bake-off.
+
+- 2026-10-17: Decide model revision and replacement storage — user accepted all recommendations. [ADR 0010](docs/adr/0010-model-revisions-storage-and-release-layout.md): file-fingerprint revisions in `model.json` (local imports unversioned), per-user Windows installer, read-only bundled models plus per-user storage, catalogue-match-wins precedence, one previous version kept for Revert, per-runner `runners/<engine>/` folders with private libraries (resolves Qwen review #7), CUDA-only Qwen. Requirements, design, and roadmap updated; update slice split in two.
+
+- 2026-10-17: Model revisions and two-tier discovery — catalogue installs write the ADR 0010 fingerprint (`sha256sum`-format listing hashed again) as `revision`; import drops it. The registry scans the executable's read-only `models/` plus the configured writable directories. Within a tier, a later copy of the same id is unsupported (previously both were accepted with no warning). Across tiers the catalogue match wins, otherwise per-user, and the loser is listed as superseded. `--list-models`, `--list-catalogue`, and Settings label packages local/current/update available. SHA-256 moved to `src/sha256.cpp`. Linux: 49/49 CTests (new tier test). Windows `tts-host` compiles; Settings labels not yet viewed on Windows.
+
+- 2026-10-17: Manual catalogue model update — Settings Update/Revert/Delete previous/Remove superseded and matching `--update-model`/`--revert-model`/`--delete-previous-model`/`--remove-superseded-model`. Downloads stage in `.<id>.downloading`. A journaled commit moves the old folder to `.previous/<id>@<revision>` (one kept), and a bundled package's update goes to the per-user directory. Revert swaps the two versions, or removes the per-user copy when the bundled copy is the previous version. Startup recovery completes or rolls back an interrupted commit or revert. The package switch runs under the session speech lock, unloading a resident runner of that model. The registry skips dot-prefixed folders. Linux 50/50 CTests; the 8 model tests also pass natively on Windows, and `tts-host` builds. Settings buttons not yet clicked on Windows; the "unavailable selected voice" report is not separately tested, since the catalogue's voices are the same across revisions.
+
+- 2026-10-19: Two-model release package — runners build and ship in `runners/<engine>/` (engine-ID folders; ADR 0010 amended) with private libraries beside them; the Qwen runner loads llama.cpp/ggml/CUDA from its own directory (`TTS_QWEN_RUNTIME_DIR` and `AddDllDirectory` removed). `TTS_HOST_RELEASE=ON` packages both catalogue-staged models, app-local MSVC runtime, and `licenses/`, and fails on any missing file (checked by removing one Qwen file). `scripts/release-win.ps1` built the 2.3 GB zip; from a clean extracted copy both models list `[current]` and synthesize. Network was not disabled. Linux 50/50 and Windows Debug 50/50 CTests.
+- 2026-10-19: Offline Windows installer — Inno Setup 6 `installer/tts-host.iss` (1.99 GB setup.exe, near Inno's 2.1 GB single-file limit). Silent per-user install into a temp folder with startup unticked: no `portable.marker`, per-user config seeded, both models `[current, bundled]` and synthesize, uninstall removes the app and keeps per-user data and another copy's Run entry. Upgrade-over-existing and the interactive startup tick not exercised.
+
+- 2026-10-19: Windows test-fixture abort dialogs — catch runner failure-fixture exceptions and report stderr/nonzero exit so cancellation pipe errors do not invoke the Debug CRT abort dialog. Added a deterministic invalid-control-input regression. Windows Debug: fixture-exit, synthesis-pipeline, runner-recovery, and resident-synthesis CTests pass (4/4). Product behavior and release acceptance next step unchanged.
+- 2026-10-19: Debug Qwen runner build — load of the downloaded Qwen 1.7B package failed with "No runner installed for engine 'qwen3-gguf'" because Debug `build/` was configured without `TTS_HOST_QWEN_RUNTIME_DIR`; reconfigured it with the pinned b11029 runtime and built `tts-host-qwen3-gguf-runner` into `build\Debug\runners\qwen3-gguf\` with its runtime. Configuration only, no code change; the reload is not yet verified.
+
+- 2026-10-19: Console-window fix implemented — Windows speech runners now launch with `CREATE_NO_WINDOW`; runner inheritance/protocol/audio CTest passes (1/1). Host compilation succeeded but link failed with LNK1168 because the running Debug Host locks its executable. Quit from tray, rebuild, and verify desktop startup/model loading without a terminal; deployment and visual acceptance remain pending.
+- 2026-10-19: Qwen runner always built on Windows — configure falls back to `cache/qwen-evaluation/b11029/runtime` when `TTS_HOST_QWEN_RUNTIME_DIR` is unset (checked with it forced empty); `tts-host` depends on its runners; runtime copies are if-different, so rebuilding while a runner holds its DLLs succeeds (previously "Permission denied"). Your Debug Host loaded the 1.7B model (runner resident, ~3 GB). Windows Debug runner CTests 5/5.
+- 2026-10-19: Console-window fix verified — user confirmed the rebuilt Debug Host starts and loads models without a terminal window.
+- 2026-10-19: Settings model-combo selection kept across refresh — Delete previous / Remove superseded (and every `refresh_model_views` caller) reset the Model and Catalogue combos to the first entry (Kokoro); the loaded session was untouched. Selection is now restored by id. Compiles; link blocked by LNK1168 (Host running); user verification pending; uncommitted. "has no kept previous version" is correct when no Update has run.
+
+- 2026-10-19: Activity-log scrolling repaint fix — read-only EDIT controls now receive opaque text backgrounds rather than the labels transparent background, erasing old glyphs during scrolling. Windows compilation passes; linking blocked by running Host (LNK1168); visual verification pending.
+- 2026-10-19: Model maintenance planning captured — grilled Remove, Verify and repair, Open folder, and a More ▾ menu (no force-reinstall; bundled installed-mode packages not removable or repairable in-app); design section and requirement added, three roadmap slices queued for a new branch after this branch is reviewed and merged.
+- 2026-10-19: Bundled-models cross-review triaged and planned — Codex review of `main..feature/bundled-models` (51/51 CTests) gave five findings, all confirmed against code. #1 interrupted-Revert recovery and #4 installer negative startup answer must be fixed before merge, with #5 stale architecture examples; #2 GPU-unavailable reporting (needs an ADR 0002 decision) and #3 stale release stage are queued after merge. Design states the #3/#4 intent; no code changed.
+- 2026-10-19: Bundled-models pre-merge fixes — #1: interrupted-Revert recovery
+  now validates the restored package before finishing; if it does not
+  validate, the working copy goes back in place, the restored version returns
+  to its `.previous/` slot, and recovery reports it. New tests inject a crash
+  after the second and third revert renames, including an invalid (schema 2)
+  previous package; the invalid case fails on the old code. #4: the installer
+  shares one ownership check between uninstall and an unticked startup box,
+  which now removes this copy's Run entry; `StartupApproved` is untouched.
+  The script compiles with ISCC against a dummy tree; it was not run in an
+  isolated Windows environment. #5: architecture Qwen manifest example and
+  runner-layout sentence corrected. 51/51 Linux CTests pass; Windows build not
+  run.
+- 2026-10-21: Qwen quality and model options planned — after the user judged
+  bundled Q4_K_M Qwen clearly worse than Kokoro, captured catalogue-only Q8_0
+  and bf16 variants (design), a listening comparison with a cleaner reference
+  clip, CustomVoice/VoiceDesign llama.cpp research, and a per-model options
+  plan in `roadmap.md`; the deferred sampling-parameters item folded into the
+  last. 1.7B is the largest Qwen3-TTS release. No code changed.

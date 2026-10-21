@@ -3,10 +3,12 @@
 #include "tts_host/runner_protocol.hpp"
 
 #include <chrono>
+#include <atomic>
 #include <functional>
 #include <cstdint>
 #include <deque>
 #include <filesystem>
+#include <optional>
 #include <stdexcept>
 #include <vector>
 
@@ -47,7 +49,10 @@ class RunnerSession {
 
   // Sends a request and returns the runner's next control message. This
   // protocol version has no concurrent requests, so replies are matched by
-  // arrival order rather than by id.
+  // arrival order rather than by id. During synthesize, both pipes are
+  // drained concurrently: audio may precede the reply containing its final
+  // sample count. The following read_audio_stream_until_end consumes the
+  // completed, buffered audio.
   nlohmann::json send_request(const nlohmann::json &request,
                               std::chrono::milliseconds timeout = std::chrono::milliseconds::zero());
 
@@ -66,6 +71,9 @@ class RunnerSession {
   void check_wait() const;
   std::vector<std::uint8_t> read_some(std::uintptr_t handle);
   void write_all(const std::string &bytes);
+  std::vector<RunnerAudioFrame> receive_audio_stream();
+  std::optional<std::vector<RunnerAudioFrame>> pending_audio_;
+  std::atomic_bool abort_io_{false};
   RunnerDeadlines deadlines_;
   std::function<bool()> cancelled_;
   std::chrono::steady_clock::time_point operation_deadline_;

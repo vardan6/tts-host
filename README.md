@@ -196,8 +196,69 @@ To see what the built-in download catalogue offers and what you already have:
 ```
 
 The catalogue is compiled into the binary with each file's HTTPS URL, pinned
-SHA-256, licence, and size, but downloading from it is not implemented yet —
-use the fetch script above.
+SHA-256, licence, and size. It offers Kokoro and the Qwen3-TTS 1.7B Base
+package (Q4_K_M backbone, Q8_0 mmproj, and the public-domain LJ Speech clip
+LJ001-0001 as its reference voice). The settings window downloads entries on
+Windows; other platforms list them only — use the fetch script above for
+Kokoro, and the Qwen evaluation steps below for Qwen.
+
+When an installed catalogue model shows `update available`, the settings
+window's Update button (or `--update-model <id>`) downloads the catalogue
+revision into staging and swaps it in only after it verifies. The replaced
+version is kept, one per model, under `.previous/` in the model directory:
+Revert (`--revert-model <id>`) swaps back and Delete previous
+(`--delete-previous-model <id>`) removes it. Remove superseded
+(`--remove-superseded-model <id>`) deletes per-user copies that a newer
+bundled copy shadows. Stop speech before updating or reverting the model
+that is speaking.
+
+## Qwen evaluation
+
+The optional `qwen3-gguf` runner runs Qwen Base GGUF packages with CUDA. The
+build copies the pinned runtime beside it into `runners/qwen3-gguf/`, where it
+loads it from. On Windows, prepare the runtime once (Python is a development
+tool only); configure finds it at `cache/qwen-evaluation/b11029/runtime` when
+`TTS_HOST_QWEN_RUNTIME_DIR` is unset, and otherwise reports the runner disabled:
+
+```powershell
+python tools/fetch_qwen_evaluation_runtime.py --cache cache/qwen-evaluation/b11029 --out cache/qwen-evaluation/b11029/runtime
+cmake -S . -B build
+cmake --build build --config Debug --parallel
+```
+
+Building `tts-host` also builds its runners. Runtime files are copied only when
+they differ, so rebuilding while a runner has them loaded succeeds.
+
+Package local Qwen Base backbone/mmproj files and a reference recording whose
+use is permitted. Include a text file recording that reference's provenance
+and licence; the model's Apache-2.0 licence does not grant rights to an arbitrary
+recording:
+
+```powershell
+python tools/package_qwen_evaluation.py --model path/to/model.gguf --mmproj path/to/mmproj.gguf --voice path/to/reference.wav --voice-license path/to/reference-license.txt --out path/to/models/qwen-evaluation --id qwen-evaluation
+```
+
+Point a separate evaluation config's `modelRegistry.directories` at that
+`models` directory, set `startup.launchOnLogin` to `false`, then use `--model qwen-evaluation` with the
+normal `--synthesize`, `--out`, and `--stats` options. The package has one
+reference voice; `--language` on the packaging tool selects its primary `en`
+or `ru` language. Speech speed 0.5–2.0 is applied by a pitch-preserving time
+stretch in the runner.
+
+The opt-in real-model check verifies resident reuse, speed scaling, over-context
+rejection without restart, unload/reload, cancellation, and subsequent synthesis, writing
+a WAV without playing it:
+
+```powershell
+./build/Debug/tts-host-qwen-integration-tests.exe ./build/Debug/tts-host-qwen3-gguf-runner.exe path/to/models/qwen-evaluation/model.json qwen-check.wav
+```
+
+Peak VRAM is reported as **unavailable**, not measured zero. Runner first-PCM
+latency and complete-sentence audible latency differ; making Qwen a profile
+default still needs the full latency, throughput, memory, and listening checks
+(ADR 0009). Linux developers
+can point the same CMake option at a matching b11029 shared-library runtime;
+its CUDA libraries must be resolvable by the system loader.
 
 ## Speak something
 
@@ -294,21 +355,38 @@ server and has no effect yet.
 
 ## Package a release
 
-The `package` target assembles the self-contained, zip-distributable release
-described in `docs/design/architecture.md`'s "Distribution" section: `tts-host`,
-the Kokoro runner and its ONNX Runtime library, the espeak-ng data, `schemas/`,
-`config.json`, a `portable.marker`, and the bundled Kokoro model if
-`models/kokoro-en-v1/` exists locally. Build first — CPack's `package` target
-does not rebuild for you:
+The Windows release is a zip of the tree in `docs/design/architecture.md`'s
+"Distribution" section: `tts-host.exe`, `runners/kokoro-onnx/` (runner, ONNX
+Runtime, espeak-ng), `runners/qwen3-gguf/` (runner, llama.cpp, ggml, CUDA
+runtime), the MSVC runtime beside each executable, `schemas/`, `licenses/`,
+`config.json`, `portable.marker`, and both bundled models. One script builds
+and checks it:
 
-```sh
-cmake --build build-linux --parallel
-cmake --build build-linux --target package           # Linux/macOS
-cmake --build build --config Debug --target package  # Windows
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/release-win.ps1
 ```
 
-The zip lands in `build-linux/dist/` on Linux/macOS and `build/dist/` on
-Windows. There is no installer yet; unzip and run.
+It reuses or fetches the pinned Qwen runtime, configures `build-release` with
+`TTS_HOST_RELEASE=ON`, builds Release, stages `kokoro-en-v1` and
+`qwen3-tts-1.7b` once into `cache/release-models` through the download
+catalogue (about 1.7 GB), and packages them into `build-release/dist/`.
+Packaging fails if any runner, library, licence, or model file is missing.
+Then it extracts the zip into a temporary folder and has each model synthesize
+a sentence there. Last, it compiles the per-user installer
+`build-release/dist/tts-host-<version>-setup.exe` from the same tree with
+[Inno Setup 6](https://jrsoftware.org/isinfo.php) (`winget install
+JRSoftware.InnoSetup`). `-SkipVerify` skips the extracted-copy check and
+`-SkipInstaller` the installer.
+
+The installer needs no administrator rights. It installs into
+`%LOCALAPPDATA%\Programs\TTS Host`, creates `%LOCALAPPDATA%\TTS Host\config.json`
+on first install, and offers start at sign-in, pre-ticked. Upgrades and
+uninstall keep everything in `%LOCALAPPDATA%\TTS Host`, including downloaded and
+updated models.
+
+A plain `cmake --build <dir> --target package` still zips whatever the build
+has, with Kokoro from `models/kokoro-en-v1/` if present. That is a development
+convenience, not a release.
 
 ## Other targets
 
@@ -392,8 +470,8 @@ Not built yet:
 - Playback and the desktop UI on Linux and macOS — both are Windows-only, and
   other platforms fail with a clear not-implemented error
 - An installer
-- Russian and Armenian models; the English model bake-off (Kokoro vs. Qwen3-TTS
-  and alternatives) that settles the fast/quality defaults
+- Russian and Armenian models; promoting Qwen3-TTS to a fast/quality default
+  (it is bundled but not a default — ADR 0009)
 
 ## Documentation
 

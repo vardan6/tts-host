@@ -294,9 +294,22 @@ nlohmann::json make_runner_synthesize_response(const RunnerSynthesizeRequest &re
                       {"totalSampleFrames", total_sample_frames}}}};
 }
 
+nlohmann::json make_runner_synthesize_error_response(const RunnerSynthesizeRequest &request,
+                                                     std::string message) {
+  return {{"jsonrpc", "2.0"},
+          {"id", request.id},
+          {"error", {{"code", -32000}, {"message", std::move(message)}}}};
+}
+
 RunnerSynthesizeResponse parse_runner_synthesize_response(const nlohmann::json &message) {
   require_jsonrpc_2_0(message);
   const auto &id = required_member(message, "id");
+  if (message.contains("error")) {
+    const auto &error = message.at("error");
+    if (!error.is_object() || !error.contains("message") || !error.at("message").is_string())
+      throw RunnerProtocolError("runner synthesize error has invalid fields");
+    throw RunnerRequestError(error.at("message").get<std::string>());
+  }
   const auto &result = required_member(message, "result");
   const auto &sample_rate_hz = required_member(result, "sampleRateHz");
   const auto &channels = required_member(result, "channels");
@@ -355,6 +368,9 @@ RunnerStatsResponse parse_runner_stats_response(const nlohmann::json &message) {
   const auto &peak_vram_bytes = required_member(result, "peakVramBytes");
   const auto &time_to_first_chunk_ms = required_member(result, "timeToFirstChunkMs");
   const auto &sample_count = required_member(result, "sampleCount");
+  const auto measurement = result.value("vramMeasurement", std::string("peak"));
+  if (measurement != "peak" && measurement != "unavailable")
+    throw RunnerProtocolError("runner stats response has invalid VRAM measurement status");
   if (id.is_null() || (!id.is_string() && !id.is_number_integer() && !id.is_number_unsigned()) ||
       !peak_rss_bytes.is_number_unsigned() || !peak_vram_bytes.is_number_unsigned() ||
       !time_to_first_chunk_ms.is_number() || !sample_count.is_number_unsigned()) {
@@ -364,7 +380,8 @@ RunnerStatsResponse parse_runner_stats_response(const nlohmann::json &message) {
           .peak_rss_bytes = peak_rss_bytes.get<std::uint64_t>(),
           .peak_vram_bytes = peak_vram_bytes.get<std::uint64_t>(),
           .time_to_first_chunk_ms = time_to_first_chunk_ms.get<double>(),
-          .sample_count = sample_count.get<std::uint64_t>()};
+          .sample_count = sample_count.get<std::uint64_t>(),
+          .vram_measurement = measurement};
 }
 
 std::vector<std::uint8_t> frame_runner_audio_message(const RunnerAudioFrame &frame) {

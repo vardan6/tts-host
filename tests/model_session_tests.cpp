@@ -121,7 +121,9 @@ int main(int argc, char **argv) {
       std::ofstream(package / "model.json") << manifest.dump();
       std::ofstream(package / tts_host::path_from_utf8(model_name)) << "model";
       std::ofstream(package / tts_host::path_from_utf8(voice_name)) << "voice";
-      std::filesystem::copy_file(stub_runner, root / stub_runner.filename());
+      const auto unicode_runner = tts_host::runner_path_for_engine("stub", root);
+      std::filesystem::create_directories(unicode_runner.parent_path());
+      std::filesystem::copy_file(stub_runner, unicode_runner);
       auto unicode_config = config;
       unicode_config.paths.config_path = root / "config.json";
       unicode_config.value["modelRegistry"]["directories"] =
@@ -147,7 +149,7 @@ int main(int argc, char **argv) {
       // DLL/API-version mismatch; its runner still compiles in that build.
       const auto kokoro = tts_host::runner_path_for_engine("kokoro-onnx", runner_directory);
       std::filesystem::copy_file(kokoro, root / kokoro.filename());
-      std::filesystem::copy_file(runner_directory / "libonnxruntime.so.1",
+      std::filesystem::copy_file(kokoro.parent_path() / "libonnxruntime.so.1",
                                  root / "libonnxruntime.so.1");
       std::filesystem::copy_file(std::filesystem::path(argv[2]).parent_path() /
                                     "../kokoro_runner/placeholder.onnx", selected.model_path,
@@ -166,6 +168,62 @@ int main(int argc, char **argv) {
       require(kokoro_session.finish() == 0, "Kokoro Unicode model/voice load failed");
 #endif
 
+    }
+
+    // A Qwen load needs all package assets, so the descriptor, rather than
+    // just the GGUF backbone, crosses the existing engine-specific load path.
+    {
+      const auto root = std::filesystem::temp_directory_path() /
+          ("tts-qwen-package-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+      struct Cleanup {
+        std::filesystem::path path;
+        ~Cleanup() { std::error_code ec; std::filesystem::remove_all(path, ec); }
+      } cleanup{root};
+      const auto package = root / "models" / "qwen";
+      std::filesystem::create_directories(package);
+      auto manifest = tts_host::scan_model_registry(config).discovered_packages.front().manifest;
+      manifest["$schema"] = tts_host::path_to_utf8(std::filesystem::absolute(
+          std::filesystem::path(argv[2]).parent_path() / "../../../schemas/model.schema.json"));
+      manifest["id"] = "qwen-test";
+      manifest["engine"] = "qwen3-gguf";
+      manifest["files"] = {{"model", "model.gguf"}, {"mmproj", "mmproj.gguf"},
+          {"voice", "reference.wav"}, {"voiceLicense", "reference-license.txt"}};
+      std::ofstream(package / "model.gguf") << "GGUFfixture";
+      std::ofstream(package / "mmproj.gguf") << "GGUFfixture";
+      std::ofstream(package / "reference.wav") << "reference";
+      std::ofstream(package / "reference-license.txt") << "test fixture";
+      const auto save = [&] { std::ofstream(package / "model.json") << manifest.dump(); };
+      save();
+      const auto qwen_runner = tts_host::runner_path_for_engine("qwen3-gguf", root);
+      std::filesystem::create_directories(qwen_runner.parent_path());
+      std::filesystem::copy_file(stub_runner, qwen_runner);
+      auto qwen_config = config;
+      qwen_config.paths.config_path = root / "config.json";
+      qwen_config.value["modelRegistry"]["directories"] = nlohmann::json::array({"models"});
+      const auto selected = tts_host::resolve_model_runner_selection("qwen-test", qwen_config, root);
+      require(selected.model_path == package / "model.json" &&
+              selected.voice_path == package / "reference.wav",
+              "Qwen resolution did not pass its package descriptor and voice");
+      const auto rejects = [&](const std::string &needle) {
+        try { tts_host::validate_model_package(package); }
+        catch (const std::exception &error) {
+          require(std::string(error.what()).find(needle) != std::string::npos,
+                  "Qwen validation reported an unexpected error");
+          return;
+        }
+        throw std::runtime_error("invalid Qwen package was accepted");
+      };
+      manifest["files"].erase("mmproj"); save(); rejects("requires /files/mmproj");
+      manifest["files"]["mmproj"] = "absent.gguf"; save(); rejects("non-empty file");
+      manifest["files"]["mmproj"] = "mmproj.gguf"; save();
+      std::ofstream(package / "mmproj.gguf", std::ios::trunc) << "wrong";
+      rejects("requires GGUF");
+      std::ofstream(package / "mmproj.gguf", std::ios::trunc) << "GGUFfixture";
+      manifest["files"]["voice"] = "../outside.wav"; save(); rejects("escapes the package root");
+      manifest["files"]["voice"] = "reference.wav";
+      manifest["files"].erase("voiceLicense"); save(); rejects("requires /files/voiceLicense");
+      manifest["files"]["voiceLicense"] = "reference-license.txt";
+      manifest["languages"] = {"en", "ru"}; save(); rejects("exactly one language");
     }
 
     tts_host::ModelSessionManager sessions(runner_directory);

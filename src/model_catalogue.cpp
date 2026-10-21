@@ -2,14 +2,26 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <map>
 #include <set>
+#include <utility>
 #include <stdexcept>
 #include <string>
 #include <vector>
 
+#include "tts_host/sha256.hpp"
+
 namespace tts_host {
 
 namespace {
+
+constexpr const char *kLjSpeechReferenceNotice =
+    "Qwen reference voice: LJ Speech Dataset clip LJ001-0001, read by Linda Johnson\n"
+    "for LibriVox. The LJ Speech Dataset is in the public domain\n"
+    "(https://keithito.com/LJ-Speech-Dataset/). Fetched from the pinned mirror\n"
+    "https://huggingface.co/datasets/flexthink/ljspeech at revision\n"
+    "7367bcc33648be329bbef057cc97d0b83cadee11, SHA-256\n"
+    "4d2bd83ff0f7fe33491b03193abdf623f1b4cc2d8103972b33638d3607d86dc5.\n";
 
 // Kokoro-82M is also bundled with the application, so this entry is not how a
 // user first gets speech -- it is how the bundled package is restored or
@@ -42,6 +54,47 @@ const std::vector<CatalogueEntry> &curated_entries() {
                   "d583ccff3cdca2f7fae535cb998ac07e9fcb90f09737b9a41fa2734ec44a8f0b",
                   522240,
               },
+          },
+          {},
+      },
+      // The bundled Qwen package (docs/adr/0009-qwen-release-selection-without-bake-off.md),
+      // also offered here so it can be installed into another model directory.
+      // Base clones a reference voice; the public-domain clip is fetched from a
+      // revision-pinned mirror, and the host writes its provenance notice.
+      CatalogueEntry{
+          "qwen3-tts-1.7b",
+          "Qwen3-TTS 1.7B Base (English)",
+          "qwen3-gguf",
+          {"en"},
+          CatalogueLicense{"Apache-2.0", "https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-Base", false},
+          {
+              CatalogueFile{
+                  "model.gguf",
+                  "model",
+                  "https://huggingface.co/ggml-org/Qwen3-TTS-12Hz-1.7B-Base-GGUF/resolve/"
+                  "ca27d74bc954b73dadab5b71ca265d87fc861a7c/Qwen3-TTS-12Hz-1.7B-Base-Q4_K_M.gguf",
+                  "8d18c94acb2addd042f97da63c98be144eafa76d0d9495177eab65130cf85129",
+                  1035965280,
+              },
+              CatalogueFile{
+                  "mmproj.gguf",
+                  "mmproj",
+                  "https://huggingface.co/ggml-org/Qwen3-TTS-12Hz-1.7B-Base-GGUF/resolve/"
+                  "ca27d74bc954b73dadab5b71ca265d87fc861a7c/mmproj-Qwen3-TTS-12Hz-1.7B-Base-Q8_0.gguf",
+                  "6fd65188839bcd6ecc91b277ad471e22a0edfada4699a0fe82f1165c18cfcce2",
+                  446422912,
+              },
+              CatalogueFile{
+                  "reference.wav",
+                  "voice",
+                  "https://huggingface.co/datasets/flexthink/ljspeech/resolve/"
+                  "7367bcc33648be329bbef057cc97d0b83cadee11/wavs/LJ001-0001.wav",
+                  "4d2bd83ff0f7fe33491b03193abdf623f1b4cc2d8103972b33638d3607d86dc5",
+                  425830,
+              },
+          },
+          {
+              CatalogueGeneratedFile{"reference-license.txt", "voiceLicense", kLjSpeechReferenceNotice},
           },
       },
   };
@@ -162,6 +215,25 @@ void validate_catalogue(const std::vector<CatalogueEntry> &entries) {
         reject(entry.id, "file " + file.relative_path + " declares a zero download size");
       }
     }
+    for (const auto &file : entry.generated_files) {
+      if (escapes_package_root(file.relative_path)) {
+        reject(entry.id, "generated file path " +
+                             (file.relative_path.empty() ? "<empty>" : file.relative_path) +
+                             " escapes the package root");
+      }
+      if (!seen_paths.insert(file.relative_path).second) {
+        reject(entry.id, "file path " + file.relative_path + " appears more than once");
+      }
+      if (file.manifest_key.empty()) {
+        reject(entry.id, "generated file " + file.relative_path + " declares no manifest key");
+      }
+      if (!seen_manifest_keys.insert(file.manifest_key).second) {
+        reject(entry.id, "manifest key " + file.manifest_key + " appears more than once");
+      }
+      if (file.contents.empty()) {
+        reject(entry.id, "generated file " + file.relative_path + " is empty");
+      }
+    }
     if (!seen_manifest_keys.count("model")) {
       reject(entry.id, "no file declares the required manifest key \"model\"");
     }
@@ -169,10 +241,68 @@ void validate_catalogue(const std::vector<CatalogueEntry> &entries) {
 }
 
 bool catalogue_entry_installed(const CatalogueEntry &entry, const ModelRegistryScan &scan) {
-  return std::any_of(scan.discovered_packages.begin(), scan.discovered_packages.end(),
-                     [&entry](const ModelPackageCandidate &package) {
-                       return package.id == entry.id;
-                     });
+  return catalogue_entry_package(entry, scan) != nullptr;
+}
+
+const ModelPackageCandidate *catalogue_entry_package(const CatalogueEntry &entry,
+                                                     const ModelRegistryScan &scan) {
+  const auto found = std::find_if(scan.discovered_packages.begin(), scan.discovered_packages.end(),
+                                  [&entry](const ModelPackageCandidate &package) {
+                                    return package.id == entry.id;
+                                  });
+  return found == scan.discovered_packages.end() ? nullptr : &*found;
+}
+
+std::string catalogue_entry_revision(const CatalogueEntry &entry) {
+  std::vector<std::pair<std::string, std::string>> rows;
+  for (const auto &file : entry.files) {
+    rows.emplace_back(file.relative_path, file.sha256);
+  }
+  for (const auto &file : entry.generated_files) {
+    rows.emplace_back(file.relative_path, sha256_hex(file.contents));
+  }
+  std::sort(rows.begin(), rows.end());
+
+  std::string listing;
+  for (const auto &[path, sha256] : rows) {
+    listing += sha256 + "  " + path + "\n";
+  }
+  return sha256_hex(listing);
+}
+
+std::optional<std::string> catalogue_revision_for(const std::string &id) {
+  static const std::map<std::string, std::string> revisions = [] {
+    std::map<std::string, std::string> result;
+    for (const auto &entry : model_catalogue()) {
+      result.emplace(entry.id, catalogue_entry_revision(entry));
+    }
+    return result;
+  }();
+  const auto found = revisions.find(id);
+  if (found == revisions.end()) {
+    return std::nullopt;
+  }
+  return found->second;
+}
+
+PackageStatus package_status(const ModelPackageCandidate &package) {
+  const auto expected = catalogue_revision_for(package.id);
+  if (!package.revision || !expected) {
+    return PackageStatus::local;
+  }
+  return *package.revision == *expected ? PackageStatus::current : PackageStatus::update_available;
+}
+
+std::string describe_package_status(PackageStatus status) {
+  switch (status) {
+    case PackageStatus::current:
+      return "current";
+    case PackageStatus::update_available:
+      return "update available";
+    case PackageStatus::local:
+      break;
+  }
+  return "local";
 }
 
 std::string describe_catalogue_license(const CatalogueEntry &entry) {

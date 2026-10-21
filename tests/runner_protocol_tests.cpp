@@ -183,6 +183,13 @@ int main() {
                 parsed_synthesis_response.sample_format == "pcm_s16le" &&
                 parsed_synthesis_response.total_sample_frames == 4,
             "stub runner returned unexpected synthesis metadata");
+    try {
+      tts_host::parse_runner_synthesize_response(tts_host::make_runner_synthesize_error_response(
+          tts_host::parse_runner_synthesize_request(synthesize), "speed unsupported"));
+      throw std::runtime_error("synthesize rejection was accepted as a result");
+    } catch (const tts_host::RunnerRequestError &error) {
+      require(std::string(error.what()) == "speed unsupported", "rejection lost its reason");
+    }
 
     const auto speed_request = tts_host::make_runner_synthesize_request(7, "At speed.", 1.5);
     const auto parsed_speed_request = tts_host::parse_runner_synthesize_request(speed_request);
@@ -206,6 +213,18 @@ int main() {
                 parsed_stats_response.time_to_first_chunk_ms == 42.5 &&
                 parsed_stats_response.sample_count == 4,
             "stats response did not round-trip");
+
+    {
+      auto unavailable = stats_response;
+      unavailable["result"]["vramMeasurement"] = "unavailable";
+      require(tts_host::parse_runner_stats_response(unavailable).vram_measurement == "unavailable",
+              "unknown GPU memory was treated as a measured zero");
+      unavailable["result"]["vramMeasurement"] = "estimated";
+      bool rejected = false;
+      try { tts_host::parse_runner_stats_response(unavailable); }
+      catch (const tts_host::RunnerProtocolError &) { rejected = true; }
+      require(rejected, "invalid GPU memory measurement status accepted");
+    }
 
     const auto stub_audio = tts_host::make_stub_runner_synthesis_frame();
     require(stub_audio.sequence_number == 0 && stub_audio.sample_count == 4 &&

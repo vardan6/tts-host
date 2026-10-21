@@ -11,11 +11,12 @@
 namespace tts_host {
 
 std::filesystem::path runner_path_for_engine(const std::string &engine,
-                                             const std::filesystem::path &runner_directory) {
+                                             const std::filesystem::path &application_directory) {
+  const auto directory = application_directory / "runners" / path_from_utf8(engine);
 #ifdef _WIN32
-  return runner_directory / ("tts-host-" + engine + "-runner.exe");
+  return directory / path_from_utf8("tts-host-" + engine + "-runner.exe");
 #else
-  return runner_directory / ("tts-host-" + engine + "-runner");
+  return directory / path_from_utf8("tts-host-" + engine + "-runner");
 #endif
 }
 
@@ -43,6 +44,9 @@ ModelRunnerSelection resolve_model_runner_selection(
   selection.engine = package->engine;
   selection.runner_path = std::move(runner_path);
   selection.model_path = package->package_path / path_from_utf8(files.at("model").get<std::string>());
+  // Qwen needs the backbone, mmproj, and reference voice. Pass its validated
+  // manifest as the engine's load descriptor without executing package code.
+  if (package->engine == "qwen3-gguf") selection.model_path = package->manifest_path;
   if (files.contains("voice")) {
     selection.voice_path = package->package_path / path_from_utf8(files.at("voice").get<std::string>());
   }
@@ -143,6 +147,14 @@ void ModelSessionManager::unload() {
   std::unique_lock lock(operation_mutex_, std::try_to_lock);
   if (!lock) throw std::runtime_error("Model is in use; stop speech before unloading it");
   unload_locked();
+}
+
+void ModelSessionManager::replace_package(const std::string &model_id,
+                                          const std::function<void()> &switch_package) {
+  std::unique_lock lock(operation_mutex_, std::try_to_lock);
+  if (!lock) throw std::runtime_error("Model is in use; stop speech before replacing " + model_id);
+  if (selection_ && selection_->model_id == model_id) unload_locked();
+  switch_package();
 }
 
 ModelSessionManager::Lease::Lease(ModelSessionManager &owner, std::unique_lock<std::mutex> lock)

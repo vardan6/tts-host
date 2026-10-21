@@ -1,0 +1,10 @@
+NVIDIA CUDA runtime libraries (runners/qwen3-gguf/cudart64_12.dll,
+cublas64_12.dll, cublasLt64_12.dll)
+
+These files are NVIDIA CUDA Toolkit 12.4 redistributable components, shipped
+unmodified as published with llama.cpp release b11029
+(cudart-llama-bin-win-cuda-12.4-x64.zip). They are distributed under the
+NVIDIA CUDA Toolkit End User License Agreement, Attachment A
+(redistributable software): https://docs.nvidia.com/cuda/eula/index.html
+
+Copyright (c) NVIDIA Corporation. All rights reserved.

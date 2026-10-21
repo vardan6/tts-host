@@ -71,8 +71,8 @@ end-of-stream flag. One request is active per runner initially. The protocol
 ADR defines the exact wire contract.
 
 `stats` reports peak RSS, VRAM, time-to-first-chunk, and sample count. It exists
-in the first protocol version because the model bake-off must measure those
-numbers, and building it later means building throwaway tooling first.
+in the first protocol version because default-model selection must measure
+those numbers, and building it later means building throwaway tooling first.
 
 A stub runner emitting synthetic audio with no model is a permanent in-repo
 fixture and the basis of the end-to-end test.
@@ -162,10 +162,12 @@ but the PCM currently submitted to WASAPI finishes unchanged. At the next host
 sentence boundary, the controller discards any unplayed lookahead and
 re-synthesizes those still-pending chunks with the new value. This avoids
 pitch-changing PCM resampling and needs no unreliable audio-to-word alignment.
+An engine with a native speed input uses it (Kokoro); one without stretches its
+own output in the runner while preserving pitch (Qwen).
 The setting travels as the typed runner `synthesize.params.speed` field; do not
 create a generic unvalidated engine-options map. Model-specific voice, accent,
-pronunciation, and sampling controls wait until the bake-off identifies real
-shipping capabilities and their typed contracts.
+pronunciation, and sampling controls wait until a shipped engine needs them and
+their typed contracts are defined.
 
 ### Utterance audio stream
 
@@ -381,7 +383,9 @@ models/
   qwen3-tts-1.7b/
     model.json
     model.gguf
-    voices/
+    mmproj.gguf
+    reference.wav
+    reference-license.txt
   kokoro-en-v1/
     model.json
     model.onnx
@@ -395,15 +399,18 @@ Illustrative manifest:
   "$schema": "../../schemas/model.schema.json",
   "schemaVersion": 1,
   "id": "qwen3-tts-1.7b",
-  "displayName": "Qwen3 TTS 1.7B",
+  "displayName": "Qwen3-TTS 1.7B Base (English)",
   "engine": "qwen3-gguf",
-  "languages": ["en", "ru"],
+  "languages": ["en"],
   "files": {
-    "model": "model.gguf"
+    "model": "model.gguf",
+    "mmproj": "mmproj.gguf",
+    "voice": "reference.wav",
+    "voiceLicense": "reference-license.txt"
   },
   "license": {
     "name": "Apache-2.0",
-    "url": "https://huggingface.co/Qwen"
+    "url": "https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-Base"
   }
 }
 ```
@@ -425,6 +432,14 @@ also report built-in voices using the same host-facing representation.
 Request-provided speaker prompts or cloning samples are synthesis inputs, not
 installed voices, and are never added to a model package implicitly.
 
+For the `qwen3-gguf` evaluation adapter, `files` must declare non-empty local
+`model` and `mmproj` GGUF files, `voice` reference audio, and `voiceLicense`
+provenance/licence text. Registry validation checks their containment,
+existence, and GGUF magic; the runner checks decoder/model compatibility on
+load. Its protocol `modelPath` names the package's `model.json` descriptor so
+the runner can validate and resolve all assets together; `voicePath`, if
+present, must match the declared reference. Packages remain data-only.
+
 ### Download catalogue
 
 The curated catalogue of downloadable models, with pinned checksums, is compiled
@@ -437,7 +452,8 @@ change faster than releases.
 
 Catalogue entries may carry any licence provided the terms are displayed before
 download and non-commercial ones are badged; the project links to weights rather
-than redistributing them. Manual installation by placing a folder in `models/`
+than redistributing optional packages. The two bundled models must separately
+meet redistribution terms. Manual installation by placing a folder in `models/`
 always works regardless of the catalogue.
 
 The outbound HTTPS fetch is WinHTTP, not Boost.Beast (the loopback API server's
@@ -445,7 +461,131 @@ client, above) -- Windows-first per product direction, so other platforms throw
 a clear not-implemented error until they get their own fetch client. A
 downloaded entry has no manifest on the remote host, so the host generates
 `model.json` itself from the catalogue entry's own metadata before installing
-through the same path a manual import takes.
+through the same path a manual import takes. An entry may also declare small
+host-written text files, such as a provenance notice the remote host does not
+serve; they follow the same containment and manifest-key rules.
+
+The Qwen entry is the ADR 0009 package with Hugging Face URLs pinned to a
+repository revision. Base clones a reference voice, so the entry downloads the
+public-domain [LJ Speech](https://keithito.com/LJ-Speech-Dataset/) clip
+LJ001-0001 from a revision-pinned mirror, and the host writes its
+`voiceLicense` provenance notice.
+
+Higher-precision builds of the same model are separate catalogue-only
+packages, never bundled (ADR 0009 keeps Q4_K_M):
+`qwen3-tts-1.7b-q8` (Q8_0 backbone and mmproj, about 2.3 GB) and
+`qwen3-tts-1.7b-bf16` (bf16 backbone and mmproj, about 4.1 GB), from the same
+ggml-org repository pinned to a revision that has those files, with the same
+reference voice and `qwen3-gguf` runner. 1.7B is the largest Qwen3-TTS
+release; these trade speed and VRAM for less quantization loss.
+
+### Model installation and updates
+
+Bundled, locally imported, and catalogue-downloaded models use the same
+validated data-only package and registry contracts. Local import and catalogue
+addition already have Settings paths; extend those paths for Qwen rather than
+introducing a second registry or downloader. Unsupported engine packages remain
+visible with an actionable reason and never install executable runner code.
+
+Model updates are user-triggered replacements using the build's compiled,
+checksum-pinned catalogue. Catalogue freshness remains tied to application
+releases; no new upstream polling or signed remote catalogue is introduced.
+Package content revisions are separate from stable model IDs so Settings can
+show installed/current/update-available. The representation, storage tiers,
+duplicate-ID precedence, and previous-version retention are fixed by
+[ADR 0010](../adr/0010-model-revisions-storage-and-release-layout.md): a
+host-computed file fingerprint in `model.json`, read-only bundled models plus a
+writable per-user tier in installed mode, catalogue-match-wins precedence, and
+one previous version kept for Revert. Local imports carry no revision and are
+never offered updates.
+
+The revision is the SHA-256 of `<file sha256>  <relative path>\n` lines
+(`sha256sum` format) sorted by path, over every downloaded and host-written
+file, `model.json` excluded. Catalogue install writes it as the manifest's
+`revision`; import drops any revision the source carried. The bundled tier is
+the executable's `models/`. It is absent in portable mode and is never scanned
+twice when a configured directory names it, and a missing bundled tier is not
+an error. Configured `modelRegistry.directories` form the writable tier.
+Within a tier the first copy of an id by path wins and later copies are
+reported unsupported. Across tiers the losing copy is listed as superseded
+and never loaded. Settings and `--list-models`/`--list-catalogue` label each
+package local, current, or update available.
+
+Download and validate replacement content in staging before committing it.
+Serialize replacement with model loading, and release any resident runner's
+handles before switching the package. An active utterance must finish or be
+explicitly stopped before replacement; never switch weights underneath it.
+Preserve the working package on validation, download, or commit failure and
+recover an interrupted replacement on the next start. Keep configuration
+references stable, rescan after success, and report unavailable selected voices
+rather than silently choosing a different voice. Replacement applies equally to
+bundled packages; installed-mode updates go to the per-user tier and never write
+the application's `models/`.
+
+Staging is the dot-prefixed `.<id>.downloading` folder beside the installed
+one, the same folder a first download uses, so a retry resumes it. The
+registry skips every dot-prefixed entry, which keeps staging, journals, and
+`.previous/` out of discovery. A commit removes the older previous version,
+writes the journal `.<id>.updating` naming the old folder's `.previous/` name,
+renames the old folder there and the staged one into place, then deletes the
+journal. On start, a journal left behind means the commit was cut short:
+recovery installs the staged folder if it validates and otherwise moves the
+old one back. Revert swaps the installed and kept versions through
+`.previous/.<id>.reverting`, so the version reverted from becomes the previous
+one, and puts both back if the restored package does not validate. A start
+that finds the parked folder finishes the revert only if the restored package
+validates; otherwise it returns that package to its `.previous/` slot, puts the
+parked one back, and reports it. A kept
+version is listed by its manifest identity only, because a relative `$schema`
+no longer resolves one folder deeper. The package switch runs inside the
+session manager's speech lock: it is refused while an utterance holds the
+runner, and a resident runner of that model is unloaded first, which also
+closes the files Windows would otherwise refuse to rename. Configuration
+references the stable id, so profiles keep working across an update or
+revert.
+
+### Model removal, repair, and maintenance actions
+
+Agreed 2026-10-19; applies to every platform's native Settings, built on
+Windows first. There is no separate force-update or reinstall action: a
+pinned catalogue revision re-downloads identical bytes, so a full
+re-download is Remove followed by Download, and damage is handled by Repair.
+
+- **Remove…** deletes a per-user, imported, or superseded package. A
+  confirmation shows the space freed and deletes the kept `.previous/`
+  version too, unless the user ticks to keep it. Profiles that reference the
+  id are listed before removal and are reported unavailable afterwards, never
+  switched silently. Removal takes the same speech lock as update: refused
+  during an utterance, resident runner unloaded first. Removing a per-user
+  copy that shadowed a bundled one makes the bundled copy active again, and
+  the confirmation says so. In installed mode a bundled package is read-only
+  ([ADR 0010](../adr/0010-model-revisions-storage-and-release-layout.md)):
+  Remove is disabled with "Bundled with the app". Portable mode has no
+  read-only tier, so every package is removable; removing the last one warns
+  that nothing will be left to speak with.
+- **Verify and repair…** applies to catalogue packages only (imports have no
+  pinned checksums). It hashes every file against the compiled catalogue
+  entry, reports damaged or missing files with their size, and on
+  confirmation downloads only those into the `.<id>.downloading` staging
+  folder, carries the good files over without a second full copy, validates,
+  and commits through a journal so an interrupted repair recovers on the next
+  start like an update. The damaged copy is discarded, not kept as the previous
+  version, and an existing `.previous/` version is left untouched. Hashing a
+  multi-gigabyte package runs on the model-task worker with progress and
+  Cancel. A damaged bundled package in installed mode is reported only, with
+  "reinstall or upgrade the application" as the action, because the Host
+  never writes the application's `models/`.
+- **Open folder** reveals the selected package folder (a superseded row opens
+  that copy); **Open models folder** opens the writable tier. Manual deletion
+  there is picked up by directory watching; a package whose runner is resident
+  cannot be deleted on Windows, so Settings says to unload it first.
+- **Layout:** Load, Unload, Download, and Update stay buttons. Revert, Delete
+  previous, Remove superseded, Remove…, Verify and repair…, and Open folder
+  live behind one **More ▾** menu that lists only the actions valid for the
+  selected package. Actions that cannot apply are disabled, never answered
+  with a refusal in the log. A later unified model list (installed and
+  not-installed catalogue rows, source/status/size/loaded columns, a details
+  pane replacing the registry dump in the activity log) reuses the same menu.
 
 ## Engines and models
 
@@ -454,14 +594,77 @@ through the same path a manual import takes.
   Apache-2.0 permits bundling. It is also the first engine implemented, because
   it is small, CPU-only, loads in about a second, and exercises the runner
   protocol without simultaneously debugging a GPU path.
-- **Qwen3-TTS** — the quality default from the bake-off onward, for English and
-  Russian, downloaded in-app. Whether it runs via llama.cpp GGUF or upstream
-  PyTorch, and at what quantization, is decided by measurement in roadmap
-  slice 2, not in advance; GGUF is quantized by definition, which is precisely
-  what the comparison has to weigh.
+- **Qwen3-TTS** — the second bundled local model, alongside Kokoro: 1.7B Base,
+  Q4_K_M/Q8_0 GGUF on llama.cpp b11029 CUDA, chosen without a bake-off per
+  [ADR 0009](../adr/0009-qwen-release-selection-without-bake-off.md). It is
+  selectable but not a profile default until it meets the default-model
+  criteria. English and Russian are
+  intended uses; native-language acceptance remains separate. Ship weights,
+  voices/tokenizer assets, and runtime dependencies together so neither
+  installation nor first synthesis needs networking or a user-installed Python.
+  Additional Qwen variants may be offered through the catalogue once supported.
 - **LuxTTS** — optional lightweight voice-cloning comparison.
 - **MMS Armenian** — offline Armenian fallback, non-commercial licence shown
   clearly before download.
+
+The evaluation selection below became the release package
+([ADR 0009](../adr/0009-qwen-release-selection-without-bake-off.md)); the
+bake-off it was meant to precede was not run.
+
+Evaluation selection (approved by the user 2026-10-16):
+start with **Qwen3-TTS-12Hz-1.7B-Base**, **Q4_K_M backbone** and **Q8_0
+mmproj**, using a pinned **llama.cpp CUDA** build and a packaged, licensed
+speaker-reference clip. Base uses a reference voice rather than CustomVoice's
+named built-in speakers. This matches the closest-to-real-time local pilot:
+1.22 RTF versus PyTorch BF16 CustomVoice at 3.28 (0.6B) and 3.66 (1.7B), as
+recorded in `progress.md` (September 18). Those WSL pilots differ in model
+family and execution path, so they motivate integration order rather than
+establish runtime superiority or satisfy native Windows acceptance. All missed
+the RTF limit; integration alone is not expected to fix throughput.
+
+Current upstream evidence:
+- [llama.cpp TTS usage](https://github.com/ggml-org/llama.cpp/blob/master/tools/tts/README.md)
+  documents Qwen Base synthesis and speaker-reference input.
+- [Published GGUF files](https://huggingface.co/ggml-org/Qwen3-TTS-12Hz-1.7B-Base-GGUF/tree/main)
+  list the Q4_K_M backbone (1.04 GB) and Q8_0 mmproj (446 MB); file sizes are
+  not peak VRAM measurements.
+- [Upstream demo source](https://github.com/ggml-org/llama.cpp/blob/master/tools/tts/tts.cpp)
+  describes itself as experimental and retrieves output after generation.
+  The adapter uses the incremental library API instead of wrapping that CLI;
+  a whole-WAV subprocess wrapper would not demonstrate first-chunk latency.
+- [Qwen upstream](https://github.com/QwenLM/Qwen3-TTS) supplies PyTorch
+  CustomVoice and Base APIs. PyTorch is not shipped (ADR 0009); any later
+  default-model measurement must identify model family, voice, precision,
+  runtime, and cold/warm conditions explicitly.
+
+The trusted Qwen evaluation runner uses llama.cpp **b11029**, commit
+`5c53396b89b05666c9d57445b7616a35f6198a16`. Its optional CMake target uses
+pinned headers and an application-owned runtime directory configured with
+`TTS_HOST_QWEN_RUNTIME_DIR` (on Windows, unset falls back to the preparation
+tool's `cache/qwen-evaluation/b11029/runtime`); a model cannot select libraries
+or an executable.
+The Windows preparation tool pins the CUDA 12.4 x64 runtime archives by
+SHA-256. Development and release builds both place the runner and these
+libraries in `runners/qwen3-gguf/` (see [Distribution](#distribution) and
+[ADR 0010](../adr/0010-model-revisions-storage-and-release-layout.md)).
+See [evaluation setup](../../README.md#qwen-evaluation).
+
+The adapter keeps weights resident between requests, resets generation state
+per sentence, and emits incremental PCM through the common runner protocol.
+Stop uses the Host's bounded process cancellation and discards incomplete
+sentences; engine failures use its existing one-restart recovery. A prompt
+exceeding the context or a generation limit without end-of-speech is a request
+rejection (ADR 0002): the reason is reported and the model stays resident
+without a restart. Evaluation packages expose one declared
+reference voice and declare exactly one language, `en` or `ru`, which every
+request uses. Qwen has no speed input, so the runner applies the requested
+speed with a streaming, pitch-preserving WSOLA time stretch of the generated
+PCM (`time_stretch.cpp`); output is independent of how PCM arrives, so
+incremental emission is kept. `stats` reports
+RSS, time to first emitted PCM, and sample count, with VRAM measurement marked
+unavailable. These limits must be addressed or accounted for before release
+acceptance; first emitted runner PCM does not bypass the Host's complete-sentence
+playback buffer or prove its audible latency target.
 
 Note that ONNX is a format and runtime, not a quality tier: the same weights in
 ONNX and PyTorch produce the same audio. Quantization, not format, is where
@@ -538,7 +741,12 @@ Three UI surfaces, divided by task:
   The record is bounded, in memory only, and never holds selected or spoken
   text. Download progress is transient: each file's progress replaces its own
   newest entry and is shown at most every 250 ms, so a download cannot evict
-  earlier messages; start, completion, and failure stay separate entries. Restart-requiring settings are marked. It opens independently of the tray (`tts-host --settings`), so a
+  earlier messages; start, completion, and failure stay separate entries.
+  Download, Update, and Import run one at a time off the window's message
+  loop, which stays responsive; registry-changing buttons are disabled
+  meanwhile. Cancel stops a download at its next read and keeps the partial
+  file for resume. Closing Settings mid-operation cancels a download, or waits
+  for an import's copy, before the window goes. Restart-requiring settings are marked. It opens independently of the tray (`tts-host --settings`), so a
   platform with no usable tray still has a full path to configuration.
 
 The global hotkey and selection capture belong to the host: it is already
@@ -662,7 +870,8 @@ marker (`kStartupChoiceMarkerName` in `include/tts_host/startup_choice.hpp`)
 is Host state in the data directory, not configuration. `compile-win.ps1`
 development launches pre-create the marker so the developer machine is never
 asked or registered (see `PROJECT.md`). The installer asks the same question and
-writes the marker; uninstall removes the registration it owns.
+writes the marker; a negative answer, like uninstall, removes the registration
+this copy owns and leaves another copy's entry alone.
 
 ## Distribution
 
@@ -673,32 +882,65 @@ it slower to start and harder to inspect, update, and repair.
 ```text
 tts-host/
   tts-host.exe
-  runtimes/
   runners/
+    kokoro-onnx/   runner + ONNX Runtime + espeak-ng
+    qwen3-gguf/    runner + llama.cpp, ggml, CUDA libraries
   schemas/
   models/
     kokoro-en-v1/
+    qwen3-tts-1.7b/
+  licenses/
   config.json
-  portable.marker
+  portable.marker  (portable archive only)
 ```
 
-Producing the zip is implemented today via CMake's `package` target (CPack,
-`ZIP` generator; see `CMakeLists.txt`) — run it after a normal build. Its
-current output is flatter than the tree above: the runner and its private
-runtime library sit directly beside `tts-host`, matching the flat
-`tts-host-<engine>-runner` naming convention `src/main.cpp` resolves against,
-not yet the separate `runtimes/`/`runners/` split shown here. Reconciling the
-two is pending a decision on per-engine runner isolation (raised but not yet
-confirmed) — do not silently pick one shape when next touching this area.
+Each runner finds its private libraries beside itself (Windows
+executable-directory DLL search, Linux rpath `$ORIGIN`); no runner carries a
+compiled-in runtime path or changes the process DLL search. Only the CUDA
+llama.cpp build ships; without a usable NVIDIA GPU, Qwen is listed unavailable
+with a reason. See
+[ADR 0010](../adr/0010-model-revisions-storage-and-release-layout.md).
 
-The first release ships the zip only. An installer — shortcuts, start-at-login,
-uninstall entry — comes with the cross-platform release work. Its startup choice
+A runner folder is named by its engine ID and holds
+`tts-host-<engine>-runner`. The development build uses the same tree, so the
+host resolves runners identically in both. The MSVC runtime DLLs ship
+app-local beside every executable, because each runner resolves its imports
+from its own folder and a clean machine may lack the VC++ redistributable.
+
+CMake's `package` target (CPack, `ZIP`) produces the zip from a Release build.
+`TTS_HOST_RELEASE=ON` makes it the shipping package: it needs the pinned
+llama.cpp runtime and a staging directory of catalogue installs of both bundled
+packages, so each carries its catalogue revision. Its last install step fails
+on any missing runner, runtime library, licence, or package file, and on a
+staged package whose revision or files differ from the compiled catalogue; the
+persistent stage is restaged rather than reused when stale.
+`scripts/release-win.ps1` stages the packages, builds, packages, and has both
+models synthesize from a freshly extracted copy.
+
+The portable zip remains a release format. The Windows installer must also
+ship both Kokoro and the ADR 0009 Qwen package plus their complete
+runtimes; installation and first synthesis are offline. Packaging must fail
+if either required package or dependency is missing rather than silently ship a
+single-model distribution. The installer is per-user, into
+`%LOCALAPPDATA%\Programs\TTS Host` without elevation, and installs the same
+tree minus `portable.marker`. Its startup choice
 follows [Login startup](#login-startup): pre-ticked from
-`startup.launchOnLogin`, written to the OS registration, removed on uninstall. Unzip-and-run
+`startup.launchOnLogin`, written to the OS registration, removed on uninstall.
+
+The installer is an Inno Setup 6 script, `installer/tts-host.iss`, compiled
+by `scripts/release-win.ps1` from the same release tree. It seeds the per-user
+`config.json` once, so an upgrade keeps the user's settings, and refreshes the
+`schemas/` beside it on every install. An upgrade replaces `runners/`,
+`models/`, `schemas/`, and `licenses/` in the application folder wholesale.
+The per-user data directory, with its downloaded, updated, and imported
+packages, is never touched by an upgrade or an uninstall. The startup answer
+writes the same Run command the Host writes and the first-run marker, so the
+Host does not ask again. Uninstall deletes the Run entry only when it starts
+this copy. Unzip-and-run
 needs no code signing, whereas an unsigned installer triggers SmartScreen, which
 is worse for a non-developer than a folder they double-click.
 
-Updates are manual replacement. The host checks for a newer release and links to
+Application updates are manual replacement. The host checks for a newer release and links to
 it; it does not swap its own files while holding loaded models and a live
 service.
 

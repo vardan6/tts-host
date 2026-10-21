@@ -8,12 +8,16 @@
 #include <commctrl.h>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <cwchar>
 #include <fstream>
+#include <functional>
+#include <memory>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -27,6 +31,7 @@
 #include "tts_host/selection_capture.hpp"
 #include "tts_host/startup_registration.hpp"
 #include "tts_host/model_session.hpp"
+#include "tts_host/model_update.hpp"
 #include "tts_host/playback_sink.hpp"
 
 namespace tts_host {
@@ -55,6 +60,11 @@ constexpr int kAudioBufferComboId = 120;
 constexpr int kSentencePauseComboId = 121;
 constexpr int kLookaheadComboId = 122;
 constexpr int kResetPlaybackButtonId = 123;
+constexpr int kUpdateModelButtonId = 124;
+constexpr int kRevertModelButtonId = 125;
+constexpr int kDeletePreviousModelButtonId = 126;
+constexpr int kRemoveSupersededModelButtonId = 127;
+constexpr int kCancelModelTaskButtonId = 128;
 constexpr int kSettingsHotkeyProbeId = 2;
 
 // Tab order of the Settings pages; docs/design/architecture.md#desktop-integration.
@@ -83,6 +93,23 @@ constexpr UINT kDirectoryWatchTimerIntervalMs = 5000;
 constexpr UINT_PTR kActivityTimerId = 3;
 constexpr UINT kActivityTimerIntervalMs = 500;
 
+// Posted by the model-task worker when it finishes, so the UI thread joins it
+// and refreshes the model views.
+constexpr UINT kModelTaskDoneMessage = WM_APP + 1;
+
+// What a finished model task reports: the activity message, and whether it
+// changed what is installed.
+struct ModelTaskOutcome {
+  std::wstring message;
+  bool changed = false;
+};
+
+// Thrown from a download progress callback when the user cancels; the fetcher
+// leaves the partial file for the next attempt to resume.
+struct ModelTaskCancelled : std::runtime_error {
+  ModelTaskCancelled() : std::runtime_error("cancelled") {}
+};
+
 // Edits the tray-owned document and retains the last successfully saved value.
 // Tray sessions outlive this window; standalone Settings owns its own manager.
 struct SettingsState {
@@ -91,6 +118,12 @@ struct SettingsState {
       : document(config), saved_value(config.value),
         owned_sessions(shared_sessions ? nullptr : std::make_unique<ModelSessionManager>(runner_directory)),
         sessions(shared_sessions ? *shared_sessions : *owned_sessions) {}
+  // A tray quit can end the window mid-task: stop the worker before the state
+  // it reports into goes away.
+  ~SettingsState() {
+    model_task_cancel = true;
+    if (model_task.joinable()) model_task.join();
+  }
 
   ConfigDocument &document;
   nlohmann::json saved_value;
@@ -112,6 +145,15 @@ struct SettingsState {
   // can tell a real change from scan_model_registry re-validating the same
   // packages on every poll.
   ModelRegistryScan last_scan;
+  // Download, update, and import run here, one at a time, so a 1 GB transfer
+  // does not stop the message loop. The worker gets copies of the document
+  // and scan; it shares only the thread-safe session manager and activity
+  // log. model_task_outcome is written by the worker and read after join.
+  std::thread model_task;
+  std::atomic<bool> model_task_cancel{false};
+  ModelTaskOutcome model_task_outcome;
+  // Closing during a task waits for it to stop, then destroys the window.
+  bool close_pending = false;
 };
 
 void refresh_model_views(SettingsState &state, HWND window);
@@ -627,7 +669,8 @@ void on_open_startup_settings_clicked(SettingsState &state) {
 // first package so the Load button is meaningful without a pick first.
 void populate_model_combo(HWND combo, SettingsState &state, const ModelRegistryScan &scan) {
   for (const auto &package : scan.discovered_packages) {
-    const auto label = package.display_name + " (" + package.id + ")";
+    const auto label = package.display_name + " (" + package.id + ") [" +
+                       describe_package_status(package_status(package)) + "]";
     SendMessageW(combo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(utf8_to_wide(label).c_str()));
     state.model_ids.push_back(package.id);
   }
@@ -669,14 +712,18 @@ void on_load_model_clicked(SettingsState &state, HWND combo) {
 
 // Fills the combo box with every compiled-in catalogue entry
 // (docs/design/architecture.md#download-catalogue), labelled the same way
-// `--list-catalogue` prints them: GET/HAVE, size, and licence, so the choice
+// `--list-catalogue` prints them: GET/HAVE, size, licence, and for an
+// installed entry its local/current/update-available status, so the choice
 // before downloading is visible without a separate details view.
 void populate_catalogue_combo(HWND combo, SettingsState &state, const ModelRegistryScan &scan) {
   for (const auto &entry : model_catalogue()) {
-    const bool installed = catalogue_entry_installed(entry, scan);
-    const auto label = std::string(installed ? "HAVE " : "GET  ") + entry.display_name + " (" +
-                        describe_download_size(catalogue_entry_size_bytes(entry)) + ", " +
-                        describe_catalogue_license(entry) + ")";
+    const auto *installed = catalogue_entry_package(entry, scan);
+    auto label = std::string(installed ? "HAVE " : "GET  ") + entry.display_name + " (" +
+                 describe_download_size(catalogue_entry_size_bytes(entry)) + ", " +
+                 describe_catalogue_license(entry) + ")";
+    if (installed) {
+      label += " [" + describe_package_status(package_status(*installed)) + "]";
+    }
     SendMessageW(combo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(utf8_to_wide(label).c_str()));
     state.catalogue_ids.push_back(entry.id);
   }
@@ -684,6 +731,80 @@ void populate_catalogue_combo(HWND combo, SettingsState &state, const ModelRegis
     SendMessageW(combo, CB_SETCURSEL, 0, 0);
   }
 }
+
+// Registry-changing buttons are disabled while a model task runs; Cancel is
+// enabled only for a task that can stop early (a download).
+void set_model_task_controls(HWND window, bool running, bool cancellable) {
+  for (const int id : {kImportModelButtonId, kDownloadModelButtonId, kUpdateModelButtonId,
+                       kRevertModelButtonId, kDeletePreviousModelButtonId,
+                       kRemoveSupersededModelButtonId}) {
+    EnableWindow(GetDlgItem(window, id), running ? FALSE : TRUE);
+  }
+  EnableWindow(GetDlgItem(window, kCancelModelTaskButtonId), running && cancellable ? TRUE : FALSE);
+}
+
+// Runs `task` on the model-task worker. The 500 ms activity timer shows its
+// progress; kModelTaskDoneMessage hands the outcome back to this thread.
+void start_model_task(SettingsState &state, HWND window, bool cancellable,
+                      std::function<ModelTaskOutcome()> task) {
+  if (state.model_task.joinable()) {
+    append_activity_log(state, L"Another model operation is still running.");
+    return;
+  }
+  state.model_task_cancel = false;
+  set_model_task_controls(window, true, cancellable);
+  state.model_task = std::thread([&state, window, task = std::move(task)] {
+    try {
+      state.model_task_outcome = task();
+    } catch (const std::exception &error) {
+      state.model_task_outcome = {L"Model operation failed: " + utf8_to_wide(error.what()), false};
+    } catch (...) {
+      state.model_task_outcome = {L"Model operation failed.", false};
+    }
+    PostMessageW(window, kModelTaskDoneMessage, 0, 0);
+  });
+}
+
+void on_model_task_done(SettingsState &state, HWND window) {
+  if (!state.model_task.joinable()) {
+    return;
+  }
+  state.model_task.join();
+  set_model_task_controls(window, false, false);
+  if (state.model_task_outcome.changed) {
+    refresh_model_views(state, window);
+  }
+  append_activity_log(state, state.model_task_outcome.message);
+  if (state.close_pending) {
+    DestroyWindow(window);
+  }
+}
+
+void on_cancel_model_task_clicked(SettingsState &state) {
+  if (state.model_task.joinable() && !state.model_task_cancel.exchange(true)) {
+    append_activity_log(state, L"Cancelling the download…");
+  }
+}
+
+// Progress for the worker: replaces the file's activity entry at most every
+// 250 ms (2026-10-14 review, finding 4) and stops the transfer on Cancel.
+DownloadProgressCallback model_task_progress(SettingsState &state) {
+  auto throttle = std::make_shared<DownloadProgressThrottle>(std::chrono::milliseconds(250));
+  return [&state, throttle](const DownloadProgress &progress) {
+    if (state.model_task_cancel) {
+      throw ModelTaskCancelled();
+    }
+    if (!throttle->should_report(progress, std::chrono::steady_clock::now())) {
+      return;
+    }
+    record_transient_activity("download:" + progress.relative_path,
+                              progress.relative_path + ": " + std::to_string(progress.bytes_downloaded) +
+                                  " / " + std::to_string(progress.bytes_total) + " bytes");
+  };
+}
+
+const wchar_t *const kDownloadCancelledMessage =
+    L" cancelled; the partial download is kept and resumes on the next attempt.";
 
 void on_download_model_clicked(SettingsState &state, HWND combo, HWND window) {
   const int index = static_cast<int>(SendMessageW(combo, CB_GETCURSEL, 0, 0));
@@ -712,30 +833,128 @@ void on_download_model_clicked(SettingsState &state, HWND combo, HWND window) {
   const auto destination_root = resolve_registry_directory(
       state.document.paths.config_path, directories.front().get<std::string>());
 
+  append_activity_log(state, L"Downloading " + utf8_to_wide(found->display_name) + L"…");
+  const CatalogueEntry &entry = *found;
+  start_model_task(state, window, true,
+                   [&state, &entry, destination_root, config = state.document,
+                    progress = model_task_progress(state)]() -> ModelTaskOutcome {
+    const auto name = utf8_to_wide(entry.display_name);
+    try {
+      download_catalogue_entry(entry, destination_root, config, fetch_url_to_file, progress);
+      return {L"Downloaded " + name, true};
+    } catch (const ModelTaskCancelled &) {
+      return {L"Download of " + name + kDownloadCancelledMessage, false};
+    } catch (const std::exception &error) {
+      // Transport failures and checksum mismatches are ordinary (flaky
+      // network, corrupted partial file); report them in the window instead
+      // of taking the process down.
+      return {L"Download failed: " + utf8_to_wide(error.what()), false};
+    }
+  });
+}
+
+// Package switches go through the shared session manager, so an active
+// utterance refuses them and a resident runner of the model is released first
+// (docs/design/architecture.md#model-installation-and-updates).
+PackageSwitchGuard session_switch_guard(SettingsState &state) {
+  return [&state](const std::string &model_id, const std::function<void()> &switch_package) {
+    state.sessions.replace_package(model_id, switch_package);
+  };
+}
+
+void on_update_model_clicked(SettingsState &state, HWND combo, HWND window) {
+  const int index = static_cast<int>(SendMessageW(combo, CB_GETCURSEL, 0, 0));
+  if (index < 0 || static_cast<std::size_t>(index) >= state.catalogue_ids.size()) {
+    append_activity_log(state, L"Select a catalogue entry to update.");
+    return;
+  }
+  const auto &entries = model_catalogue();
+  const auto &entry_id = state.catalogue_ids[static_cast<std::size_t>(index)];
+  const auto found = std::find_if(entries.begin(), entries.end(),
+                                  [&](const auto &entry) { return entry.id == entry_id; });
+  if (found == entries.end()) {
+    return;
+  }
+  const auto *installed = catalogue_entry_package(*found, state.last_scan);
+  if (installed == nullptr) {
+    append_activity_log(state, utf8_to_wide(found->id) + L" is not installed; use Download.");
+    return;
+  }
+  if (package_status(*installed) != PackageStatus::update_available) {
+    append_activity_log(state, utf8_to_wide(found->id) + L" has no update: it is " +
+                                   utf8_to_wide(describe_package_status(package_status(*installed))) + L".");
+    return;
+  }
+
+  append_activity_log(state, L"Updating " + utf8_to_wide(found->display_name) + L"…");
+  const CatalogueEntry &entry = *found;
+  start_model_task(state, window, true,
+                   [&state, &entry, scan = state.last_scan, config = state.document,
+                    progress = model_task_progress(state)]() -> ModelTaskOutcome {
+    const auto name = utf8_to_wide(entry.display_name);
+    try {
+      update_catalogue_package(entry, scan, config, fetch_url_to_file, progress,
+                               session_switch_guard(state));
+      return {L"Updated " + name + L". The previous version is kept for Revert.", true};
+    } catch (const ModelTaskCancelled &) {
+      return {L"Update of " + name + kDownloadCancelledMessage, false};
+    } catch (const std::exception &error) {
+      return {L"Update failed; the installed version is unchanged: " + utf8_to_wide(error.what()), false};
+    }
+  });
+}
+
+// The model id selected in the Model combo, or empty with a prompt logged.
+std::string selected_model_id(SettingsState &state, HWND combo, const wchar_t *action) {
+  const int index = static_cast<int>(SendMessageW(combo, CB_GETCURSEL, 0, 0));
+  if (index < 0 || static_cast<std::size_t>(index) >= state.model_ids.size()) {
+    append_activity_log(state, std::wstring(L"Select a model to ") + action + L".");
+    return {};
+  }
+  return state.model_ids[static_cast<std::size_t>(index)];
+}
+
+void on_revert_model_clicked(SettingsState &state, HWND combo, HWND window) {
+  const auto model_id = selected_model_id(state, combo, L"revert");
+  if (model_id.empty()) {
+    return;
+  }
   try {
-    append_activity_log(state, L"Downloading " + utf8_to_wide(found->display_name) + L"…");
-    // One replaceable entry per file, repainted at most every 250 ms, keeps
-    // the bounded log for actionable messages (2026-10-14 review, finding 4).
-    DownloadProgressThrottle throttle(std::chrono::milliseconds(250));
-    download_catalogue_entry(
-        *found, destination_root, state.document, fetch_url_to_file,
-        [&state, &throttle](const DownloadProgress &progress) {
-          if (!throttle.should_report(progress, std::chrono::steady_clock::now())) {
-            return;
-          }
-          record_transient_activity("download:" + progress.relative_path,
-                                    progress.relative_path + ": " +
-                                        std::to_string(progress.bytes_downloaded) + " / " +
-                                        std::to_string(progress.bytes_total) + " bytes");
-          show_new_activity(state);
-        });
+    revert_model_package(model_id, scan_model_registry(state.document), session_switch_guard(state));
     refresh_model_views(state, window);
-    append_activity_log(state, L"Downloaded " + utf8_to_wide(found->display_name));
+    append_activity_log(state, L"Reverted " + utf8_to_wide(model_id) + L" to its previous version.");
   } catch (const std::exception &error) {
-    // Transport failures and checksum mismatches are ordinary (flaky network,
-    // corrupted partial file); report them in the window instead of taking
-    // the process down.
-    append_activity_log(state, L"Download failed: " + utf8_to_wide(error.what()));
+    append_activity_log(state, L"Revert failed: " + utf8_to_wide(error.what()));
+  }
+}
+
+void on_delete_previous_model_clicked(SettingsState &state, HWND combo, HWND window) {
+  const auto model_id = selected_model_id(state, combo, L"delete the previous version of");
+  if (model_id.empty()) {
+    return;
+  }
+  try {
+    const auto removed = delete_previous_model_versions(model_id, scan_model_registry(state.document));
+    refresh_model_views(state, window);
+    append_activity_log(state, removed ? L"Deleted the previous version of " + utf8_to_wide(model_id) + L"."
+                                       : utf8_to_wide(model_id) + L" has no kept previous version.");
+  } catch (const std::exception &error) {
+    append_activity_log(state, L"Delete failed: " + utf8_to_wide(error.what()));
+  }
+}
+
+void on_remove_superseded_model_clicked(SettingsState &state, HWND combo, HWND window) {
+  const auto model_id = selected_model_id(state, combo, L"remove superseded copies of");
+  if (model_id.empty()) {
+    return;
+  }
+  try {
+    const auto removed = remove_superseded_model_copies(model_id, scan_model_registry(state.document));
+    refresh_model_views(state, window);
+    append_activity_log(state, removed ? L"Removed superseded copies of " + utf8_to_wide(model_id) + L"."
+                                       : utf8_to_wide(model_id) + L" has no removable superseded copy.");
+  } catch (const std::exception &error) {
+    append_activity_log(state, L"Remove failed: " + utf8_to_wide(error.what()));
   }
 }
 
@@ -773,10 +992,31 @@ std::wstring format_installed_models(const ModelRegistryScan &scan) {
     }
     const auto &license = package.manifest.at("license");
     text += utf8_to_wide(package.display_name);
-    text += L" (" + utf8_to_wide(package.id) + L")\r\nLicence: ";
+    text += L" (" + utf8_to_wide(package.id) + L")\r\nStatus: ";
+    text += utf8_to_wide(describe_package_status(package_status(package)));
+    text += package.bundled ? L", bundled" : L"";
+    text += L"\r\nLicence: ";
     text += utf8_to_wide(license.at("name").get<std::string>());
     text += L"\r\n";
     text += utf8_to_wide(license.at("url").get<std::string>());
+  }
+
+  if (!scan.superseded_packages.empty()) {
+    text += L"\r\n\r\nSuperseded copies (not loaded):";
+    for (const auto &package : scan.superseded_packages) {
+      text += L"\r\n";
+      text += utf8_to_wide(package.id) + (package.bundled ? L" [bundled] " : L" [per-user] ");
+      text += package.package_path.wstring();
+    }
+  }
+
+  if (!scan.previous_packages.empty()) {
+    text += L"\r\n\r\nPrevious versions (Revert or Delete previous):";
+    for (const auto &package : scan.previous_packages) {
+      text += L"\r\n";
+      text += utf8_to_wide(package.id) + L" ";
+      text += package.package_path.wstring();
+    }
   }
 
   if (!scan.unsupported_entries.empty()) {
@@ -835,6 +1075,23 @@ std::wstring pick_model_package_folder(HWND owner) {
   return chosen;
 }
 
+// A refresh repopulates the combos; these keep the user's pick across it
+// instead of falling back to the first entry.
+std::string combo_selected_id(HWND combo, const std::vector<std::string> &ids) {
+  const int index = static_cast<int>(SendMessageW(combo, CB_GETCURSEL, 0, 0));
+  if (index < 0 || static_cast<std::size_t>(index) >= ids.size()) {
+    return {};
+  }
+  return ids[static_cast<std::size_t>(index)];
+}
+
+void reselect_combo_id(HWND combo, const std::vector<std::string> &ids, const std::string &id) {
+  const auto found = std::find(ids.begin(), ids.end(), id);
+  if (!id.empty() && found != ids.end()) {
+    SendMessageW(combo, CB_SETCURSEL, static_cast<WPARAM>(found - ids.begin()), 0);
+  }
+}
+
 // Re-reads the registry into both model views and records the scan they now
 // reflect. Importing and directory watching are what changes what is
 // installed while the window is open; the resident session is left alone, so
@@ -843,17 +1100,21 @@ void refresh_model_views(SettingsState &state, HWND window) {
   state.last_scan = scan_model_registry(state.document);
   const HWND combo = GetDlgItem(window, kModelComboId);
   if (combo != nullptr) {
+    const auto selected = combo_selected_id(combo, state.model_ids);
     SendMessageW(combo, CB_RESETCONTENT, 0, 0);
     state.model_ids.clear();
     populate_model_combo(combo, state, state.last_scan);
+    reselect_combo_id(combo, state.model_ids, selected);
   }
   append_activity_log(state, L"Installed models and licences updated:\r\n" +
                                  format_installed_models(state.last_scan));
   const HWND catalogue_combo = GetDlgItem(window, kCatalogueComboId);
   if (catalogue_combo != nullptr) {
+    const auto selected = combo_selected_id(catalogue_combo, state.catalogue_ids);
     SendMessageW(catalogue_combo, CB_RESETCONTENT, 0, 0);
     state.catalogue_ids.clear();
     populate_catalogue_combo(catalogue_combo, state, state.last_scan);
+    reselect_combo_id(catalogue_combo, state.catalogue_ids, selected);
   }
 }
 
@@ -878,16 +1139,17 @@ void on_import_model_clicked(SettingsState &state, HWND window) {
   }
 
   append_activity_log(state, L"Importing " + folder + L"…");
-  try {
-    const auto imported = import_model_package(std::filesystem::path(folder), state.document);
-    refresh_model_views(state, window);
-    append_activity_log(state, L"Imported " + utf8_to_wide(imported.display_name) + L" (" +
-                                   utf8_to_wide(imported.id) + L")");
-  } catch (const std::exception &error) {
-    // Invalid, incomplete, and duplicate packages are ordinary user mistakes:
-    // report the registry's actionable reason in the window.
-    append_activity_log(state, L"Import failed: " + utf8_to_wide(error.what()));
-  }
+  start_model_task(state, window, false, [folder, config = state.document]() -> ModelTaskOutcome {
+    try {
+      const auto imported = import_model_package(std::filesystem::path(folder), config);
+      return {L"Imported " + utf8_to_wide(imported.display_name) + L" (" + utf8_to_wide(imported.id) + L")",
+              true};
+    } catch (const std::exception &error) {
+      // Invalid, incomplete, and duplicate packages are ordinary user
+      // mistakes: report the registry's actionable reason in the window.
+      return {L"Import failed: " + utf8_to_wide(error.what()), false};
+    }
+  });
 }
 
 LRESULT CALLBACK settings_window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
@@ -898,6 +1160,16 @@ LRESULT CALLBACK settings_window_proc(HWND window, UINT message, WPARAM wparam, 
     // COLOR_BTNFACE-grey the window itself is painted with below.
     case WM_CTLCOLORSTATIC: {
       const HDC dc = reinterpret_cast<HDC>(wparam);
+      // Read-only EDIT controls also send WM_CTLCOLORSTATIC. They need an
+      // opaque background so scrolling erases the previous text pixels.
+      wchar_t class_name[16]{};
+      GetClassNameW(reinterpret_cast<HWND>(lparam), class_name, 16);
+      if (lstrcmpiW(class_name, L"EDIT") == 0) {
+        SetTextColor(dc, GetSysColor(COLOR_WINDOWTEXT));
+        SetBkColor(dc, GetSysColor(COLOR_BTNFACE));
+        SetBkMode(dc, OPAQUE);
+        return reinterpret_cast<LRESULT>(GetSysColorBrush(COLOR_BTNFACE));
+      }
       SetBkMode(dc, TRANSPARENT);
       return reinterpret_cast<LRESULT>(GetSysColorBrush(COLOR_BTNFACE));
     }
@@ -917,6 +1189,27 @@ LRESULT CALLBACK settings_window_proc(HWND window, UINT message, WPARAM wparam, 
         refresh_start_at_login(*state, window);
       }
       return DefWindowProcW(window, message, wparam, lparam);
+    }
+    case WM_CLOSE: {
+      // A running model task stops first (a download at its next read, an
+      // import when its copy ends); kModelTaskDoneMessage then closes.
+      auto *state = reinterpret_cast<SettingsState *>(GetWindowLongPtrW(window, GWLP_USERDATA));
+      if (state != nullptr && state->model_task.joinable()) {
+        if (!state->close_pending) {
+          state->close_pending = true;
+          state->model_task_cancel = true;
+          append_activity_log(*state, L"Settings closes when the running model operation stops…");
+        }
+        return 0;
+      }
+      return DefWindowProcW(window, message, wparam, lparam);
+    }
+    case kModelTaskDoneMessage: {
+      auto *state = reinterpret_cast<SettingsState *>(GetWindowLongPtrW(window, GWLP_USERDATA));
+      if (state != nullptr) {
+        on_model_task_done(*state, window);
+      }
+      return 0;
     }
     case WM_DESTROY:
       KillTimer(window, kIdleTimerId);
@@ -973,6 +1266,16 @@ LRESULT CALLBACK settings_window_proc(HWND window, UINT message, WPARAM wparam, 
           on_import_model_clicked(*state, window);
         } else if (LOWORD(wparam) == kDownloadModelButtonId && HIWORD(wparam) == BN_CLICKED) {
           on_download_model_clicked(*state, GetDlgItem(window, kCatalogueComboId), window);
+        } else if (LOWORD(wparam) == kUpdateModelButtonId && HIWORD(wparam) == BN_CLICKED) {
+          on_update_model_clicked(*state, GetDlgItem(window, kCatalogueComboId), window);
+        } else if (LOWORD(wparam) == kCancelModelTaskButtonId && HIWORD(wparam) == BN_CLICKED) {
+          on_cancel_model_task_clicked(*state);
+        } else if (LOWORD(wparam) == kRevertModelButtonId && HIWORD(wparam) == BN_CLICKED) {
+          on_revert_model_clicked(*state, GetDlgItem(window, kModelComboId), window);
+        } else if (LOWORD(wparam) == kDeletePreviousModelButtonId && HIWORD(wparam) == BN_CLICKED) {
+          on_delete_previous_model_clicked(*state, GetDlgItem(window, kModelComboId), window);
+        } else if (LOWORD(wparam) == kRemoveSupersededModelButtonId && HIWORD(wparam) == BN_CLICKED) {
+          on_remove_superseded_model_clicked(*state, GetDlgItem(window, kModelComboId), window);
         } else if (LOWORD(wparam) == kCheckHotkeyButtonId && HIWORD(wparam) == BN_CLICKED) {
           on_check_hotkey_clicked(*state, window, GetDlgItem(window, kReadSelectionHotkeyEditId));
         } else if (LOWORD(wparam) == kStartAtLoginCheckboxId && HIWORD(wparam) == BN_CLICKED) {
@@ -1225,8 +1528,29 @@ void run_settings_window(ConfigDocument &document,
   const HWND download_button = on_page(kModelsPage, CreateWindowExW(
       0, L"BUTTON", L"Download", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 176, 156, 100, 26, window,
       reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kDownloadModelButtonId)), instance, nullptr));
-  if (!download_button) {
-    throw std::runtime_error("failed to create the download-model control");
+  const HWND update_button = on_page(kModelsPage, CreateWindowExW(
+      0, L"BUTTON", L"Update", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 286, 156, 100, 26, window,
+      reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kUpdateModelButtonId)), instance, nullptr));
+  const HWND cancel_task_button = on_page(kModelsPage, CreateWindowExW(
+      0, L"BUTTON", L"Cancel", WS_CHILD | WS_VISIBLE | WS_DISABLED | BS_PUSHBUTTON, 396, 156, 80, 26,
+      window, reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kCancelModelTaskButtonId)), instance, nullptr));
+  if (!download_button || !update_button || !cancel_task_button) {
+    throw std::runtime_error("failed to create the download/update model controls");
+  }
+
+  // Versions of the model selected above (ADR 0010: one previous version kept).
+  label(kModelsPage, L"Selected model:", 24, 208, 148, 24);
+  const HWND revert_button = on_page(kModelsPage, CreateWindowExW(
+      0, L"BUTTON", L"Revert", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 176, 204, 90, 26, window,
+      reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kRevertModelButtonId)), instance, nullptr));
+  const HWND delete_previous_button = on_page(kModelsPage, CreateWindowExW(
+      0, L"BUTTON", L"Delete previous", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 276, 204, 110, 26, window,
+      reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kDeletePreviousModelButtonId)), instance, nullptr));
+  const HWND remove_superseded_button = on_page(kModelsPage, CreateWindowExW(
+      0, L"BUTTON", L"Remove superseded", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 176, 236, 210, 26, window,
+      reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kRemoveSupersededModelButtonId)), instance, nullptr));
+  if (!revert_button || !delete_previous_button || !remove_superseded_button) {
+    throw std::runtime_error("failed to create the model version controls");
   }
 
   // Server page.

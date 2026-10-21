@@ -340,9 +340,10 @@ void run_synthesis_pipeline(const std::string &spoken_text, const CliOptions &op
   }
 
   if (stats.has_value()) {
-    std::cout << "Stats: peak RSS " << stats->peak_rss_bytes << " bytes, peak VRAM "
-              << stats->peak_vram_bytes << " bytes, time to first chunk "
-              << stats->time_to_first_chunk_ms << " ms, sample count " << stats->sample_count
+    std::cout << "Stats: peak RSS " << stats->peak_rss_bytes << " bytes, peak VRAM ";
+    if (stats->vram_measurement == "unavailable") std::cout << "unavailable";
+    else std::cout << stats->peak_vram_bytes << " bytes";
+    std::cout << ", time to first chunk " << stats->time_to_first_chunk_ms << " ms, sample count " << stats->sample_count
               << '\n';
   }
 }

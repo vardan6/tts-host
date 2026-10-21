@@ -16,6 +16,13 @@ class RunnerProtocolError : public std::runtime_error {
   using std::runtime_error::runtime_error;
 };
 
+// A runner rejected one synthesize request but stays loaded and usable.
+// Retrying the same request cannot succeed, so the Host does not restart.
+class RunnerRequestError : public std::runtime_error {
+ public:
+  using std::runtime_error::runtime_error;
+};
+
 inline constexpr int kRunnerProtocolVersion = 1;
 inline constexpr std::size_t kRunnerAudioFrameHeaderBytes = 20;
 inline constexpr std::size_t kMaximumRunnerAudioFramePayloadBytes = 16 * 1024 * 1024;
@@ -93,6 +100,11 @@ nlohmann::json make_runner_synthesize_response(const RunnerSynthesizeRequest &re
                                                std::uint32_t channels,
                                                std::string sample_format,
                                                std::uint64_t total_sample_frames);
+// Rejection reply for a synthesize request; the runner sends it after an
+// end-of-stream audio frame so the Host's audio channel stays aligned.
+nlohmann::json make_runner_synthesize_error_response(const RunnerSynthesizeRequest &request,
+                                                     std::string message);
+// Throws RunnerRequestError for a rejection reply.
 RunnerSynthesizeResponse parse_runner_synthesize_response(const nlohmann::json &message);
 
 struct RunnerStatsRequest {
@@ -109,6 +121,9 @@ struct RunnerStatsResponse {
   std::uint64_t peak_vram_bytes;
   double time_to_first_chunk_ms;
   std::uint64_t sample_count;
+  // Older CPU runners omit this, meaning a measured peak (including zero).
+  // A GPU runner must distinguish an unavailable measurement from zero use.
+  std::string vram_measurement = "peak";
 };
 
 RunnerStatsRequest parse_runner_stats_request(const nlohmann::json &message);

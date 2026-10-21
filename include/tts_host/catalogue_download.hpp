@@ -9,6 +9,7 @@
 #include "tts_host/config_loader.hpp"
 #include "tts_host/model_catalogue.hpp"
 #include "tts_host/model_import.hpp"
+#include "tts_host/sha256.hpp"
 
 namespace tts_host {
 
@@ -55,14 +56,26 @@ void fetch_url_to_file(const std::string &url, std::uint64_t resume_from_bytes,
                        const std::filesystem::path &destination, std::uint64_t total_bytes,
                        const DownloadProgressCallback &progress);
 
-// Lowercase hex SHA-256 of a file's bytes, used to verify a fetched file
-// against the catalogue's pinned checksum before it is trusted.
-std::string sha256_hex_of_file(const std::filesystem::path &path);
+// Where stage_catalogue_entry assembles `entry` inside `destination_root`. A
+// dot-prefixed sibling of the installed folder, so the registry skips it and
+// renaming it into place is one directory rename on the same volume.
+std::filesystem::path catalogue_staging_path(const CatalogueEntry &entry,
+                                             const std::filesystem::path &destination_root);
+
+// Fetches, verifies, and writes `entry` into its staging folder and validates
+// the result as a package, without installing it. Resumes a partial staging
+// folder left by an earlier attempt. Returns the staging path. Model update
+// stages this way so a failure never touches the working package.
+std::filesystem::path stage_catalogue_entry(const CatalogueEntry &entry,
+                                            const std::filesystem::path &destination_root,
+                                            const ConfigDocument &config, const HttpFetchFunction &fetch,
+                                            const DownloadProgressCallback &progress);
 
 // Downloads every file of `entry` into `destination_root` (one of
 // modelRegistry.directories, chosen by the caller), verifies each against its
-// pinned SHA-256, writes a generated model.json -- the catalogue carries the
-// metadata, but the remote host serves only weight files -- and installs the
+// pinned SHA-256, writes the entry's generated files and a generated
+// model.json -- the catalogue carries the metadata, but the remote host serves
+// only weight files -- and installs the
 // verified package. A file already fully present on disk from a prior,
 // interrupted attempt is resumed rather than refetched; a file that fails
 // checksum verification is deleted so the next attempt refetches it from
