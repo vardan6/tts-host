@@ -518,3 +518,10 @@
   configured `fallbackProfile`, shows the last load result in Settings, and
   records every message in the Activity log; no startup probe. ADR 0002
   amended; design section "Load rejection" added.
+- 2026-10-21: Report Qwen unavailable without a usable GPU (implemented) —
+  runners reject `load` with a message (Qwen GPU/package errors, Kokoro
+  package errors, stub via `TTS_STUB_RUNNER_REJECT_LOAD`/`_MODEL`); no
+  restart/retry; speech loads before the first sentence and applies a
+  configured `fallbackProfile` on rejection; Settings shows
+  "[unavailable: reason]" until a load succeeds; reasons and fallbacks go to
+  the Activity log. No-CUDA Windows check pending.

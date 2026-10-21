@@ -241,9 +241,17 @@ int main() {
               {"load", "unload", "synthesize", "stats"});
         } else if (method == "load") {
           const auto request = tts_host::parse_runner_load_request(message);
-          if (!runner) runner = std::make_unique<tts_host::QwenRunner>();
-          runner->load(request);
-          response = tts_host::make_runner_load_response(request);
+          // A load that fails here fails again after a restart (no usable
+          // GPU, bad package files, too little memory), so reject it and stay
+          // alive with nothing loaded instead of exiting (ADR 0002).
+          try {
+            if (!runner) runner = std::make_unique<tts_host::QwenRunner>();
+            runner->load(request);
+            response = tts_host::make_runner_load_response(request);
+          } catch (const std::exception &error) {
+            if (runner) runner->unload();
+            response = tts_host::make_runner_load_error_response(request, error.what());
+          }
         } else if (method == "unload") {
           const auto request = tts_host::parse_runner_unload_request(message);
           if (runner) runner->unload();

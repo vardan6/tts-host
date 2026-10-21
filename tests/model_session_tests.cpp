@@ -1,3 +1,4 @@
+#include "tts_host/activity_log.hpp"
 #include "tts_host/model_session.hpp"
 #include "tts_host/model_registry.hpp"
 #include "tts_host/path_encoding.hpp"
@@ -5,6 +6,7 @@
 #include "tts_host/runner_protocol.hpp"
 
 #include <chrono>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -31,6 +33,14 @@ tts_host::ConfigDocument load_fixture_config(const std::filesystem::path &config
   document.value = nlohmann::json::parse(input);
   document.paths.config_path = config_path;
   return document;
+}
+
+void set_env(const char *key, const char *value) {
+#ifdef _WIN32
+  _putenv_s(key, value);
+#else
+  if (*value) setenv(key, value, 1); else unsetenv(key);
+#endif
 }
 
 void expect_load_error(tts_host::ModelSessionManager &sessions,
@@ -247,6 +257,33 @@ int main(int argc, char **argv) {
     expect_load_error(sessions, config, "no-runner-package", "No runner installed for engine");
     require(sessions.status().loaded && sessions.status().model_id == "stub-package",
             "a missing engine runner unloaded the resident model");
+
+    // A rejected load leaves nothing loaded and is kept, with the runner's
+    // reason, as that model's last load result until a load of it succeeds
+    // (docs/design/architecture.md#load-rejection).
+    {
+      set_env("TTS_STUB_RUNNER_REJECT_LOAD", "no usable GPU");
+      const auto before = tts_host::activity_since(0);
+      const auto after_sequence = before.empty() ? 0 : before.back().sequence;
+      bool rejected = false;
+      try { sessions.load("stub-package", config); }
+      catch (const tts_host::RunnerLoadRejected &error) {
+        rejected = std::string(error.what()) == "no usable GPU";
+      }
+      set_env("TTS_STUB_RUNNER_REJECT_LOAD", "");
+      require(rejected && !sessions.status().loaded, "a rejected load reported a loaded model");
+      const auto failures = sessions.load_failures();
+      require(failures.size() == 1 && failures.at("stub-package") == "no usable GPU",
+              "a rejected load was not recorded as the model's last load result");
+      bool logged = false;
+      for (const auto &entry : tts_host::activity_since(after_sequence))
+        logged |= entry.text == "Stub Package is unavailable: no usable GPU";
+      require(logged, "a rejected load's reason was not recorded in the activity log");
+
+      sessions.load("stub-package", config);
+      require(sessions.status().loaded && sessions.load_failures().empty(),
+              "a successful load did not clear the model's rejected load");
+    }
 
     sessions.unload();
     require(!sessions.status().loaded, "unloading left a model loaded");

@@ -2,13 +2,12 @@
 
 - Mode: implementation, bundled two-model release follow-ups.
 - Branch: `feature/model-maintenance` (from `main` at `01f1684`, PR #3 merged).
-  "Reject stale staged release models" is done (`0f6d3a1`); 52/52 Linux
-  CTests pass; Windows build compiles, `tts-host.exe` link blocked by the
-  running Debug Host.
-- Next: `/next-slice` → "AFK — Report Qwen unavailable without a usable
-  GPU" (load rejection decided 2026-10-21; see the design's "Load rejection"
-  section). Applying `fallbackProfile` after a rejected load is new code:
-  today it applies only at runner resolution (`src/main.cpp`).
+  "Report Qwen unavailable without a usable GPU" is implemented
+  (uncommitted): 52/52 Linux CTests pass; Windows build compiles and the
+  affected Windows tests pass; `tts-host.exe` link blocked by the running
+  Debug Host. Its roadmap item stays open until the no-CUDA Windows check.
+- Next: commit the slice, then `/next-slice` → "AFK — Unified Settings model
+  list" (clean Windows acceptance is HITL and waits on the user).
 - Pending user checks on Windows: a full `scripts/release-win.ps1` run
   reusing the existing `cache/release-models` stage (verifies, reuses or
   restages); quit Debug Host, run
@@ -16,17 +15,16 @@
   Remove… (dialog, keep-previous tick, Cancel default), and Verify and
   repair… (corrupt a per-user file; No is the default); scroll the activity log
   (repaint fix `1896937`); installer unticked-startup upgrade path in an
-  isolated environment (never this machine).
+  isolated environment (never this machine); on a Windows machine without
+  usable CUDA, Qwen as `quality` with `fallbackProfile` speaks with Kokoro and
+  Settings → Models shows Qwen "[unavailable: …]" with the reason.
 - Known gap: a previous version kept after Remove… has no installed row to
   revert from until the unified model list.
 - Risk: setup.exe is 1.99 GB, near Inno's 2.1 GB single-file limit; a larger
   bundle needs `DiskSpanning`. The pinned Hugging Face revision may lack the
   Q8_0/bf16 files (only `main` was checked).
-- Open questions: in `roadmap.md` (Qwen default, per-model options). The user
-  has not yet confirmed that a rejected load uses a configured
-  `fallbackProfile` (captured that way, from the existing Configuration rule);
-  confirm before implementing. Linux Qwen with runner-folder loading is
-  unverified.
+- Open questions: in `roadmap.md` (Qwen default, per-model options). Linux
+  Qwen with runner-folder loading is unverified.
 - Blockers: running Debug Host locks its executable (LNK1168); do not
   terminate it without asking. Developer Run entry left for the user per
   `PROJECT.md`.
@@ -38,3 +36,5 @@
   `build/` (`cmake --build build --config Debug`) without launching the app.
 - Discarded as noise: the `harness-guard` hook blocks shell commands with a
   segment starting with the Qwen model name; put such text in a file instead.
+  In this shell `grep` is rewritten to `rg`; use `/usr/bin/grep` for grep
+  syntax (`\|`, `-r` on directories).

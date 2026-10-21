@@ -32,6 +32,7 @@ endfunction()
 
 write_stub_package(en-package en)
 write_stub_package(ru-package ru)
+write_stub_package(gpu-package de)
 
 set(config "${work}/config.json")
 file(WRITE "${config}"
@@ -54,9 +55,10 @@ file(WRITE "${config}"
   \"profiles\": {
     \"fast\": { \"model\": \"en-package\", \"device\": \"cpu\", \"loadPolicy\": \"eager\" },
     \"quality\": { \"model\": \"missing-gpu-package\", \"device\": \"auto\", \"loadPolicy\": \"onDemand\", \"fallbackProfile\": \"fast\" },
-    \"russian\": { \"model\": \"ru-package\", \"device\": \"cpu\", \"loadPolicy\": \"onDemand\" }
+    \"russian\": { \"model\": \"ru-package\", \"device\": \"cpu\", \"loadPolicy\": \"onDemand\" },
+    \"gpu\": { \"model\": \"gpu-package\", \"device\": \"auto\", \"loadPolicy\": \"onDemand\", \"fallbackProfile\": \"fast\" }
   },
-  \"languageDefaults\": { \"en\": \"quality\", \"ru\": \"russian\" }
+  \"languageDefaults\": { \"en\": \"quality\", \"ru\": \"russian\", \"de\": \"gpu\" }
 }
 ")
 
@@ -67,7 +69,7 @@ file(WRITE "${work}/cyrillic.txt" "Привет, мир, это проверка
 # the caller expects.
 function(synthesize input_file expect_success output_variable)
   execute_process(
-    COMMAND "${exe}" --headless --stdin --out "${work}/out.wav" --config "${config}" ${ARGN}
+    COMMAND ${launch} "${exe}" --headless --stdin --out "${work}/out.wav" --config "${config}" ${ARGN}
     INPUT_FILE "${input_file}"
     RESULT_VARIABLE exit_code
     OUTPUT_VARIABLE stdout_text
@@ -105,3 +107,21 @@ expect_output("${explicit_output}" "Language: ru (explicit), profile russian, mo
 
 synthesize("${work}/latin.txt" FALSE unconfigured_output --language hy)
 expect_output("${unconfigured_output}" "languageDefaults has no entry for language: hy")
+
+# A runner that rejects its load (no usable GPU) hands the request to the
+# profile's fallbackProfile; with no profile, the runner's reason is the error
+# (docs/design/architecture.md#load-rejection). The stub rejects only
+# gpu-package, so the fallback model loads normally.
+set(launch "${CMAKE_COMMAND}" -E env "TTS_STUB_RUNNER_REJECT_LOAD=no usable GPU"
+    "TTS_STUB_RUNNER_REJECT_MODEL=gpu-package")
+synthesize("${work}/latin.txt" TRUE rejected_output --language de)
+expect_output("${rejected_output}"
+              "Profile gpu is unavailable (no usable GPU); using fallback profile fast, model en-package")
+
+synthesize("${work}/latin.txt" FALSE rejected_model_output --model gpu-package)
+expect_output("${rejected_model_output}" "no usable GPU")
+string(FIND "${rejected_model_output}" "fallback" fallback_at)
+if(NOT fallback_at EQUAL -1)
+  message(FATAL_ERROR "An explicit --model fell back after a rejected load:\n${rejected_model_output}")
+endif()
+set(launch "")
