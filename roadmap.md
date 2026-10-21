@@ -149,8 +149,7 @@ Synthetic Copy adapter compatibility remains separate open work below.
     see
     [maintenance design](docs/design/architecture.md#model-removal-repair-and-maintenance-actions).
 - Qwen quality and model options, after the unified model list:
-  - [ ] **AFK — Higher-precision Qwen catalogue variants:** (implemented; Q4_K_M
-    and Q8_0 measured, bf16 Windows download and measurement remain) add the Q8_0 and
+  - [x] **AFK — Higher-precision Qwen catalogue variants:** add the Q8_0 and
     bf16 packages with pinned URLs, sizes, and SHA-256; download and synthesize
     each on Windows and record RTF and peak VRAM if measurable — see
     [catalogue design](docs/design/architecture.md#download-catalogue) and
