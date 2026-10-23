@@ -21,7 +21,7 @@ struct ModelListRow {
   std::string display_name;
   // "bundled", "per-user", or "catalogue" (offered, not installed).
   std::string source;
-  // "current", "update available", "local", "not installed", or
+  // "current", "update available", "local", "damaged", "not installed", or
   // "previous version only".
   std::string status;
   // The last rejected load's message, until a load of the id succeeds
@@ -32,13 +32,15 @@ struct ModelListRow {
   std::uintmax_t size_bytes = 0;
   bool loaded = false;
   bool installed = false;
+  // Installed but its files cannot load; only Verify and repair, Open folder.
+  bool damaged = false;
   bool in_catalogue = false;
   bool update_available = false;
 };
 
 using FolderSize = std::function<std::uintmax_t(const std::filesystem::path &)>;
 
-// Installed packages in scan order, then not-installed catalogue entries in
+// Installed packages in scan order, then damaged ones, then not-installed catalogue entries in
 // catalogue order, then ids with only a previous version. `loaded_id` is
 // empty when nothing is resident.
 std::vector<ModelListRow> build_model_list(const ModelRegistryScan &scan, const std::string &loaded_id,

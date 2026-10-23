@@ -42,6 +42,10 @@ struct ModelRegistryScan {
   // .previous/ (ADR 0010); never loaded. Only identity fields and manifest
   // are filled in.
   std::vector<ModelPackageCandidate> previous_packages;
+  // Packages whose manifest is valid but whose files cannot load (a missing,
+  // empty, or non-GGUF Qwen asset). Also listed in unsupported_entries with
+  // the reason; never loaded, kept only so Verify and repair can reach them.
+  std::vector<ModelPackageCandidate> damaged_packages;
 };
 
 // Scans the configured directories (the writable tier) and, when it is a

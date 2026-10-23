@@ -1,17 +1,16 @@
 # Active Context
 
 - Mode: implementation; the bundled two-model release block is complete.
-- Branch: `feature/model-maintenance`, pushed. The 2026-10-24 roadmap closures
-  are uncommitted.
-- State: the unified Settings list passed the user's desktop checks. The Qwen
-  comparison closed with no change, but the user rated every variant poor and
-  about 5× too slow and is considering dropping Qwen (Open decisions in
-  `roadmap.md`).
-- Next: the user decides whether Qwen stays. That gates the named-speaker
-  path and per-model options slices. Otherwise `/next-slice` picks from the
-  remaining roadmap (Synthetic Copy compatibility, history planning,
-  Russian/Armenian acceptance). The branch is also ready for review/merge to
-  `main` when the user wants.
+- Branch: `feature/model-maintenance`, pushed. Uncommitted: the 2026-10-24
+  roadmap closures, the review file with its triage, and the four review fixes.
+- State: all four model-maintenance review fixes are in and pass both builds'
+  tests. The user is considering dropping Qwen (Open decisions in `roadmap.md`).
+- Next: `/review-triage` the follow-up cross-review findings #5–#7 in
+  `docs/reviews/code-review-2026-10-24-model-maintenance.md` (startup protocol
+  errors skip recovery; no recovery route for older or local damaged packages;
+  damaged copies ignore tier precedence). The UI fixes passed the user's desktop
+  check. Merge to `main` waits on that triage; then the Qwen keep/drop decision
+  gates the remaining Qwen slices.
 - Blockers/environment: the running Host locks its executable; do not
   terminate it without permission, and do not link over it. Use a separate
   output folder for build checks. Developer launches use
@@ -26,3 +25,7 @@
   - Kokoro showing `local` was a missing revision stamp from the developer
     fetch script.
   - The port 7861 failure was an existing Debug Host, not a test failure.
+  - `cli_language_selection` failing in `build-gpu-fallback` is its "fallback"
+    check matching the folder name, not a regression.
+  - The harness guard blocks Bash heredocs or scripts that contain "Qwen" text;
+    edit such files with the Edit tool.

@@ -2,6 +2,7 @@
 #include "tts_host/path_encoding.hpp"
 #include "tts_host/activity_log.hpp"
 #include <iostream>
+#include <utility>
 
 namespace tts_host {
 RecoveringRunner::RecoveringRunner(std::filesystem::path executable,
@@ -34,9 +35,40 @@ void RecoveringRunner::start() {
   if (state_callback_) state_callback_(true);
 }
 
+void RecoveringRunner::drop_session() {
+  session_.reset();
+  if (state_callback_) state_callback_(false);
+}
+
+void RecoveringRunner::recover_or_throw(const RunnerLaunchError &error, bool retried, const std::string &what) {
+  drop_session();
+  if (cancelled_ && cancelled_()) throw RunnerCancelled();
+  if (retried) throw RunnerLaunchError(
+      std::string("runner failed again after one restart: ") + error.what() +
+      "; check the model/runner installation and available memory, or choose another model");
+  const auto message = "Restarting runner and retrying " + what + " once: " + error.what();
+  record_activity(message);
+  if (log_) log_(message); else std::cerr << message << '\n';
+}
+
+// A start that needed its restart spends the first chunk's: one restart per
+// unplayed chunk (ADR 0002). A rejected load is never retried.
 void RecoveringRunner::prepare() {
-  try { if (!session_) start(); }
-  catch (...) { session_.reset(); if (state_callback_) state_callback_(false); throw; }
+  for (bool retried = false;; retried = true) {
+    try {
+      if (!session_) start();
+      return;
+    } catch (const RunnerCancelled &) {
+      drop_session();
+      throw;
+    } catch (const RunnerLaunchError &error) {
+      recover_or_throw(error, retried, "its start");
+      restart_spent_ = true;
+    } catch (...) {
+      drop_session();
+      throw;
+    }
+  }
 }
 
 void RecoveringRunner::unload() {
@@ -49,11 +81,12 @@ void RecoveringRunner::unload() {
   }
   session_->finish();
   session_.reset();
+  restart_spent_ = false;
   if (state_callback_) state_callback_(false);
 }
 
 SynthesizedChunk RecoveringRunner::synthesize(const std::string &text, double speed) {
-  for (int attempt = 0; attempt != 2; ++attempt) {
+  for (int attempt = std::exchange(restart_spent_, false) ? 1 : 0; attempt != 2; ++attempt) {
     try {
       if (cancelled_ && cancelled_()) throw RunnerCancelled();
       if (!session_) start();
@@ -68,19 +101,10 @@ SynthesizedChunk RecoveringRunner::synthesize(const std::string &text, double sp
         chunk.pcm.insert(chunk.pcm.end(), frame.payload.begin(), frame.payload.end());
       return chunk;
     } catch (const RunnerCancelled &) {
-      session_.reset();
-      if (state_callback_) state_callback_(false);
+      drop_session();
       throw;
     } catch (const RunnerLaunchError &error) {
-      session_.reset();
-      if (state_callback_) state_callback_(false);
-      if (cancelled_ && cancelled_()) throw RunnerCancelled();
-      if (attempt != 0) throw RunnerLaunchError(
-          std::string("runner failed again after one restart: ") + error.what() +
-          "; check the model/runner installation and available memory, or choose another model");
-      const auto message = std::string("Restarting runner and retrying unplayed chunk once: ") + error.what();
-      record_activity(message);
-      if (log_) log_(message); else std::cerr << message << '\n';
+      recover_or_throw(error, attempt != 0, "unplayed chunk");
     }
   }
   throw RunnerLaunchError("runner recovery exhausted");

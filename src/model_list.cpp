@@ -53,6 +53,17 @@ std::vector<ModelListRow> build_model_list(const ModelRegistryScan &scan, const 
     row.installed = true;
     finish(row);
   }
+  for (const auto &package : scan.damaged_packages) {
+    if (has_row(rows, package.id)) continue;
+    ModelListRow row;
+    row.id = package.id;
+    row.display_name = package.display_name;
+    row.source = package.bundled ? "bundled" : "per-user";
+    row.status = "damaged";
+    row.size_bytes = folder_size(package.package_path);
+    row.damaged = true;
+    finish(row);
+  }
   for (const auto &entry : model_catalogue()) {
     if (has_row(rows, entry.id)) continue;
     ModelListRow row;
@@ -93,6 +104,12 @@ std::string describe_model_details(const ModelListRow &row, const ModelRegistryS
   if (row.unavailable_reason) text += "Unavailable: " + *row.unavailable_reason + "\n";
 
   const auto *installed = find_package(scan.discovered_packages, row.id);
+  if (installed == nullptr && row.damaged) installed = find_package(scan.damaged_packages, row.id);
+  if (installed != nullptr && row.damaged) {
+    for (const auto &unsupported : scan.unsupported_entries) {
+      if (unsupported.path == installed->package_path) text += "Damaged: " + unsupported.reason + "\n";
+    }
+  }
   const auto *entry = catalogue_entry_for(row.id);
   const auto *described = installed != nullptr ? installed : find_package(scan.previous_packages, row.id);
   if (described != nullptr) {
