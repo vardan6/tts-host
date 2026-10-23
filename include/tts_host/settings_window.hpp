@@ -1,6 +1,7 @@
 #pragma once
 
 #include <filesystem>
+#include <functional>
 
 #include "tts_host/config_loader.hpp"
 
@@ -16,9 +17,9 @@ class ModelSessionManager;
 // current config and the path to write changes back to; this slice edits
 // audio.outputDevice, hotkeys.readSelection, server.host/server.port, and languageDefaults.en
 // (docs/requirements/product.md#configuration-and-controls) -- server.host/port
-// and languageDefaults.en require a restart to take effect
-// (docs/design/architecture.md#live-reload), which the window says but does
-// not enforce.
+// require a restart to take effect (docs/design/architecture.md#live-reload).
+// Model Load saves a default for the package's languages after success;
+// publish_config applies model/default-profile choices to tray speech immediately.
 //
 // Tray Settings uses the Host's resident ModelSessionManager; independent
 // --settings owns a temporary manager for that window. Load/Unload reports
@@ -44,6 +45,8 @@ class ModelSessionManager;
 // (docs/design/architecture.md#model-removal-repair-and-maintenance-actions).
 void run_settings_window(ConfigDocument &document,
                          const std::filesystem::path &runner_directory,
-                         ModelSessionManager *sessions = nullptr);
+                         ModelSessionManager *sessions = nullptr,
+                         const std::function<void(const ConfigDocument &)> &publish_config = {},
+                         const std::function<void(bool)> &probe_hotkey = {});
 
 }  // namespace tts_host

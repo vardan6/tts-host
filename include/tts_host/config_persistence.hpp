@@ -1,9 +1,15 @@
 #pragma once
 
 #include <functional>
+#include <vector>
 #include "tts_host/config_loader.hpp"
 
 namespace tts_host {
+
+// Return a candidate configuration selecting this model for its languages.
+// Keep existing named profiles intact; Settings owns the selected-model profile.
+ConfigDocument with_selected_model(const ConfigDocument &document, const std::string &model_id,
+                                   const std::vector<std::string> &languages);
 
 // Optional I/O overrides support deterministic disk-failure regressions.
 struct ConfigSaveOperations {

@@ -139,6 +139,8 @@ struct SettingsState {
   }
 
   ConfigDocument &document;
+  std::function<void(const ConfigDocument &)> publish_config;
+  std::function<void(bool)> probe_hotkey;
   nlohmann::json saved_value;
   std::unique_ptr<ModelSessionManager> owned_sessions;
   ModelSessionManager &sessions;
@@ -159,6 +161,8 @@ struct SettingsState {
   // Sequence of the newest process-wide activity entry already shown.
   std::uint64_t activity_shown = 0;
   HWND tabs = nullptr;
+  struct ControlLayout { HWND control; RECT bounds; };
+  std::vector<ControlLayout> control_layout;
   // Every page control with its tab index; switching tabs shows one page.
   std::vector<std::pair<HWND, int>> page_controls;
   // The scan the model views currently reflect, so the directory-watch timer
@@ -453,6 +457,7 @@ void on_default_profile_selected(SettingsState &state, HWND combo) {
   SendMessageW(combo, CB_GETLBTEXT, index, reinterpret_cast<LPARAM>(buffer));
   state.document.value["languageDefaults"]["en"] = wide_to_utf8(buffer);
   save_config(state);
+  if (state.publish_config) state.publish_config(state.document);
 }
 
 std::string edit_text(HWND edit) {
@@ -585,15 +590,17 @@ void on_check_hotkey_clicked(SettingsState &state, HWND window, HWND edit) {
 
   // Registering then immediately unregistering is Windows' only reliable
   // availability check: there is no API that enumerates every application's
-  // global hotkeys. The tray releases its own registration before opening this
-  // window, so changing an already-active TTS Host binding does not self-report
-  // as a conflict.
-  if (!RegisterHotKey(window, kSettingsHotkeyProbeId,
-                      hotkey->modifiers | MOD_NOREPEAT, hotkey->virtual_key)) {
+  // global hotkeys. Release the tray binding only for this synchronous probe,
+  // so the current shortcut remains usable while Settings is open.
+  if (state.probe_hotkey) state.probe_hotkey(true);
+  const bool available = RegisterHotKey(window, kSettingsHotkeyProbeId,
+      hotkey->modifiers | MOD_NOREPEAT, hotkey->virtual_key) != FALSE;
+  if (available) UnregisterHotKey(window, kSettingsHotkeyProbeId);
+  if (state.probe_hotkey) state.probe_hotkey(false);
+  if (!available) {
     append_activity_log(state, L"Shortcut unavailable: Windows or another application is using it.");
     return;
   }
-  UnregisterHotKey(window, kSettingsHotkeyProbeId);
   state.document.value["hotkeys"]["readSelection"] = configured;
   save_config(state);
   append_activity_log(state, L"Shortcut available and saved. Close Settings to apply.");
@@ -791,6 +798,11 @@ void on_load_model_clicked(SettingsState &state, HWND window) {
   }
 
   const auto model_id = row->id;
+  const auto package = std::find_if(state.last_scan.discovered_packages.begin(),
+      state.last_scan.discovered_packages.end(),
+      [&](const auto &entry) { return entry.id == model_id; });
+  if (package == state.last_scan.discovered_packages.end()) return;
+  auto candidate = with_selected_model(state.document, model_id, package->languages);
   append_activity_log(state, L"Loading " + utf8_to_wide(model_id) + L"…");
   try {
     state.sessions.load(model_id, state.document);
@@ -801,7 +813,14 @@ void on_load_model_clicked(SettingsState &state, HWND window) {
     refresh_model_list(state, window);
     return;
   }
+  // Only a usable model becomes the saved speech default. A failed save keeps
+  // the last saved configuration and is reported by the Settings handler.
+  state.document.value = std::move(candidate.value);
+  save_config(state);
+  if (state.publish_config) state.publish_config(state.document);
+  populate_default_profile_combo(GetDlgItem(window, kDefaultProfileComboId), state.document);
   report_session_status(state);
+  append_activity_log(state, L"Saved as the default speech model for its languages.");
   refresh_model_list(state, window);
 }
 
@@ -1477,8 +1496,78 @@ void on_import_model_clicked(SettingsState &state, HWND window) {
   });
 }
 
+// Keep original coordinates so repeated resize cycles never accumulate rounding.
+void resize_settings(SettingsState &state, HWND window) {
+  RECT client{};
+  GetClientRect(window, &client);
+  const int dx = client.right - 504;
+  const int dy = client.bottom - 680;
+  const int list_growth = dy / 3;
+  const int page_growth = 2 * dy / 3;
+  for (const auto &[control, original] : state.control_layout) {
+    RECT bounds = original;
+    if (control == state.tabs) {
+      bounds.right += dx;
+      bounds.bottom += page_growth;
+    } else if (control == state.model_list) {
+      bounds.right += dx;
+      bounds.bottom += list_growth;
+    } else if (control == state.model_details) {
+      bounds.right += dx;
+      bounds.top += list_growth;
+      bounds.bottom += page_growth;
+    } else if (original.top >= 416) {
+      bounds.top += page_growth;
+      bounds.bottom += control == state.activity_log ? dy : page_growth;
+      bounds.right += dx;
+    } else if (original.top == 196 &&
+               std::find(state.page_controls.begin(), state.page_controls.end(),
+                         std::make_pair(control, kModelsPage)) != state.page_controls.end()) {
+      const int index = (original.left - 24) / 65;
+      bounds.left += dx * index / 7;
+      bounds.right += dx * (index + 1) / 7;
+      bounds.top += list_growth;
+      bounds.bottom += list_growth;
+    } else if (GetDlgCtrlID(control) == kCheckHotkeyButtonId) {
+      bounds.left += dx;
+      bounds.right += dx;
+    } else if (original.left >= 176 || original.right >= 476) {
+      bounds.right += dx;
+    }
+    SetWindowPos(control, nullptr, bounds.left, bounds.top,
+                 bounds.right - bounds.left, bounds.bottom - bounds.top,
+                 SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW);
+  }
+  RedrawWindow(window, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN);
+}
+
+LRESULT CALLBACK model_list_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam,
+                                 UINT_PTR, DWORD_PTR) {
+  const LRESULT result = DefSubclassProc(window, message, wparam, lparam);
+  if (message == WM_NOTIFY) {
+    const auto *header = reinterpret_cast<const NMHDR *>(lparam);
+    if (header->code == HDN_ITEMCHANGEDW || header->code == HDN_ITEMCHANGEDA ||
+        header->code == HDN_ENDTRACKW || header->code == HDN_ENDTRACKA) {
+      RedrawWindow(window, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE);
+    }
+  }
+  return result;
+}
+
 LRESULT CALLBACK settings_window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
   switch (message) {
+    case WM_GETMINMAXINFO: {
+      RECT minimum{0, 0, 504, 680};
+      AdjustWindowRectEx(&minimum, WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN, FALSE, 0);
+      auto *limits = reinterpret_cast<MINMAXINFO *>(lparam);
+      limits->ptMinTrackSize = {minimum.right - minimum.left, minimum.bottom - minimum.top};
+      return 0;
+    }
+    case WM_SIZE: {
+      auto *state = reinterpret_cast<SettingsState *>(GetWindowLongPtrW(window, GWLP_USERDATA));
+      if (state != nullptr && wparam != SIZE_MINIMIZED) resize_settings(*state, window);
+      return 0;
+    }
     // STATIC labels and the read-only licence display send this to ask what
     // brush to paint their background with; without a handler DefWindowProc
     // answers with the white COLOR_WINDOW brush, which visibly mismatches the
@@ -1630,7 +1719,9 @@ LRESULT CALLBACK settings_window_proc(HWND window, UINT message, WPARAM wparam, 
 }  // namespace
 
 void run_settings_window(ConfigDocument &document,
-                         const std::filesystem::path &runner_directory, ModelSessionManager *sessions) {
+                         const std::filesystem::path &runner_directory, ModelSessionManager *sessions,
+                         const std::function<void(const ConfigDocument &)> &publish_config,
+                         const std::function<void(bool)> &probe_hotkey) {
   const wchar_t *kClassName = L"TtsHostSettingsWindow";
   const HINSTANCE instance = GetModuleHandleW(nullptr);
 
@@ -1655,13 +1746,18 @@ void run_settings_window(ConfigDocument &document,
   }
 
   SettingsState state(document, runner_directory, sessions);
+  state.publish_config = publish_config;
+  state.probe_hotkey = probe_hotkey;
 
   // A tabbed top-level window: General, Playback, Models, and Server pages
   // above the always-visible activity log
   // (docs/design/architecture.md#desktop-integration).
+  RECT initial_bounds{0, 0, 504, 680};
+  AdjustWindowRectEx(&initial_bounds, WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN, FALSE, 0);
   const HWND window =
-      CreateWindowExW(0, kClassName, L"TTS Host Settings", WS_OVERLAPPEDWINDOW, CW_USEDEFAULT,
-                      CW_USEDEFAULT, 512, 720, nullptr, nullptr, instance, nullptr);
+      CreateWindowExW(0, kClassName, L"TTS Host Settings", WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN, CW_USEDEFAULT,
+                      CW_USEDEFAULT, initial_bounds.right - initial_bounds.left,
+                      initial_bounds.bottom - initial_bounds.top, nullptr, nullptr, instance, nullptr);
   if (!window) {
     throw std::runtime_error("failed to create the settings window");
   }
@@ -1833,7 +1929,10 @@ void run_settings_window(ConfigDocument &document,
   if (state.model_list == nullptr) {
     throw std::runtime_error("failed to create the model list");
   }
-  SendMessageW(state.model_list, LVM_SETEXTENDEDLISTVIEWSTYLE, LVS_EX_FULLROWSELECT, LVS_EX_FULLROWSELECT);
+  SetWindowSubclass(state.model_list, model_list_proc, 0, 0);
+  SendMessageW(state.model_list, LVM_SETEXTENDEDLISTVIEWSTYLE,
+               LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER,
+               LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER);
   const std::pair<const wchar_t *, int> model_columns[] = {
       {L"Model", 166}, {L"Source", 64}, {L"Status", 110}, {L"Size", 64}, {L"Loaded", 44}};
   for (int index = 0; index < static_cast<int>(std::size(model_columns)); ++index) {
@@ -1917,6 +2016,30 @@ void run_settings_window(ConfigDocument &document,
   // UI font in one pass now that they exist.
   EnumChildWindows(window, apply_shell_ui_font, reinterpret_cast<LPARAM>(shell_ui_font()));
 
+  for (HWND control = GetWindow(window, GW_CHILD); control != nullptr;
+       control = GetWindow(control, GW_HWNDNEXT)) {
+    RECT bounds{};
+    GetWindowRect(control, &bounds);
+    // A combo's window rectangle excludes its dropdown; retain that height
+    // when SetWindowPos resizes the field or its menu collapses to one row.
+    wchar_t class_name[32]{};
+    GetClassNameW(control, class_name, 32);
+    if (lstrcmpiW(class_name, L"COMBOBOX") == 0) {
+      RECT dropped{};
+      SendMessageW(control, CB_GETDROPPEDCONTROLRECT, 0, reinterpret_cast<LPARAM>(&dropped));
+      bounds.bottom = bounds.top + dropped.bottom - dropped.top;
+    }
+    MapWindowPoints(nullptr, window, reinterpret_cast<POINT *>(&bounds), 2);
+    state.control_layout.push_back({control, bounds});
+  }
+  // New child windows can be inserted below the tab frame. Put the frame
+  // behind the complete set of page controls, after creating every sibling.
+  // Only the frame needs WS_CLIPSIBLINGS: clipping the fields against a
+  // higher tab frame would leave the entire page blank.
+  SetWindowPos(state.tabs, HWND_BOTTOM, 0, 0, 0, 0,
+               SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+  resize_settings(state, window);
+
   SetTimer(window, kIdleTimerId, kIdleTimerIntervalMs, nullptr);
   SetTimer(window, kActivityTimerId, kActivityTimerIntervalMs, nullptr);
   if (state.document.value["modelRegistry"]["watchForChanges"].get<bool>()) {
@@ -1948,7 +2071,9 @@ void run_settings_window(ConfigDocument &document,
 
 namespace tts_host {
 
-void run_settings_window(ConfigDocument &, const std::filesystem::path &, ModelSessionManager *) {
+void run_settings_window(ConfigDocument &, const std::filesystem::path &, ModelSessionManager *,
+                         const std::function<void(const ConfigDocument &)> &,
+                         const std::function<void(bool)> &) {
   throw std::runtime_error(
       "the settings window is not implemented on this platform yet (Windows only, see "
       "docs/adr/0007-native-ui-per-platform.md)");
