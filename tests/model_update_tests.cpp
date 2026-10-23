@@ -623,6 +623,97 @@ int main(int argc, char **argv) {
     }
 
     {
+      // Damaged in both tiers: maintenance takes the per-user copy by tier
+      // precedence, even when the bundled path sorts first.
+      const auto qwen = qwen_version();
+      const auto root = work / "repair-qwen-both-tiers";
+      const auto user = root / "z-user";
+      const auto bundled = root / "a-bundled";
+      std::filesystem::create_directories(user);
+      std::filesystem::create_directories(bundled);
+      const auto config = make_config(root, schemas, user, bundled);
+      FakeNetwork network;
+      for (const auto &directory : {bundled, user}) {
+        tts_host::download_catalogue_entry(qwen, directory, config, network.fetcher(), nullptr);
+        std::filesystem::remove(directory / "demo-qwen" / "reference.wav");
+      }
+      const auto scan = tts_host::scan_model_registry(config);
+      require(scan.damaged_packages.size() == 2 && !scan.damaged_packages.front().bundled,
+              "the per-user damaged copy did not take precedence");
+      const auto report = tts_host::verify_catalogue_package(qwen, scan, nullptr);
+      require(!report.bundled && report.damaged.size() == 1, "Verify chose the bundled damaged copy");
+      tts_host::repair_catalogue_package(qwen, report, config, network.fetcher(), nullptr, nullptr);
+      const auto after = tts_host::scan_model_registry(config);
+      require(after.discovered_packages.size() == 1 && !after.discovered_packages.front().bundled &&
+                  std::filesystem::exists(user / "demo-qwen" / "reference.wav") &&
+                  !std::filesystem::exists(bundled / "demo-qwen" / "reference.wav"),
+              "the per-user damaged copy was not repaired, or the bundled one was written");
+    }
+
+    {
+      // A damaged older revision is recovered by updating it: per-user is
+      // replaced and the damaged copy discarded, not kept for Revert; bundled
+      // stays and the update goes to the per-user directory. A damaged
+      // per-user package, local or catalogued, can be removed; bundled cannot.
+      const auto old_qwen = qwen_version();
+      auto new_qwen = old_qwen;
+      new_qwen.files[0] = tts_host::CatalogueFile{"model.gguf", "model", "https://example.invalid/GGUFweights2",
+                                                  tts_host::sha256_hex("GGUFweights2"), 12};
+      for (const bool bundled_tier : {false, true}) {
+        const auto root = work / (std::string("update-damaged-qwen") + (bundled_tier ? "-bundled" : ""));
+        const auto user = root / "user";
+        const auto bundled = root / "app-models";
+        std::filesystem::create_directories(user);
+        std::filesystem::create_directories(bundled);
+        const auto config = make_config(root, schemas, user, bundled);
+        FakeNetwork network;
+        const auto directory = bundled_tier ? bundled : user;
+        tts_host::download_catalogue_entry(old_qwen, directory, config, network.fetcher(), nullptr);
+        std::filesystem::remove(directory / "demo-qwen" / "reference.wav");
+        const auto scan = tts_host::scan_model_registry(config);
+        require(tts_host::damaged_package("demo-qwen", scan) != nullptr, "fixture is not damaged");
+
+        bool removal_refused = false;
+        try {
+          const auto plan = tts_host::plan_model_removal("demo-qwen", scan, config);
+          require(!bundled_tier && !plan.last_package && plan.package_path == user / "demo-qwen",
+                  "a damaged removal plan targets the wrong copy or warns it is the last model");
+        } catch (const std::runtime_error &) {
+          removal_refused = true;
+        }
+        require(removal_refused == bundled_tier, "removal of a damaged package ignored its tier");
+
+        tts_host::update_catalogue_package(new_qwen, scan, config, network.fetcher(), nullptr, nullptr);
+        const auto after = tts_host::scan_model_registry(config);
+        require(after.discovered_packages.size() == 1 && !after.discovered_packages.front().bundled &&
+                    after.discovered_packages.front().revision == tts_host::catalogue_entry_revision(new_qwen) &&
+                    after.previous_packages.empty(),
+                "updating a damaged package did not replace it, or kept the damaged copy for Revert");
+        require(after.damaged_packages.size() == (bundled_tier ? 1u : 0u) &&
+                    std::filesystem::is_directory(bundled / "demo-qwen") == bundled_tier,
+                "updating a damaged package wrote the bundled copy or left the per-user one");
+      }
+
+      // A damaged local import is removable.
+      const auto root = work / "remove-damaged-local-qwen";
+      const auto user = root / "user";
+      std::filesystem::create_directories(user);
+      std::filesystem::create_directories(root / "app-models");
+      const auto config = make_config(root, schemas, user, root / "app-models");
+      FakeNetwork network;
+      tts_host::download_catalogue_entry(old_qwen, user, config, network.fetcher(), nullptr);
+      auto manifest = nlohmann::json::parse(read_file(user / "demo-qwen" / "model.json"));
+      manifest.erase("revision");
+      write_file(user / "demo-qwen" / "model.json", manifest.dump());
+      std::filesystem::remove(user / "demo-qwen" / "reference.wav");
+      const auto scan = tts_host::scan_model_registry(config);
+      require(tts_host::damaged_package("demo-qwen", scan) != nullptr && !scan.damaged_packages.front().revision,
+              "fixture is not a damaged local package");
+      tts_host::remove_model_package(tts_host::plan_model_removal("demo-qwen", scan, config), false, nullptr);
+      require(!std::filesystem::exists(user / "demo-qwen"), "a damaged local package was not removed");
+    }
+
+    {
       // A repair cut short is rolled back while good files were moving, and
       // completed or rolled back after the damaged copy moved aside.
       for (const std::string stage : {"moving", "swapped", "swapped-invalid"}) {

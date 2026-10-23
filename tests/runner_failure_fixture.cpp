@@ -89,6 +89,7 @@ int main() try {
           tts_host::write_stdout(tts_host::frame_runner_control_message(response));
           continue;
         }
+        if (mode == "bad-reply-once" && fail) response["result"] = "malformed";
         tts_host::write_stdout(tts_host::frame_runner_control_message(response));
         auto frame = tts_host::make_stub_runner_synthesis_frame();
         if ((mode.starts_with("partial") || mode == "audio-hang") && fail) {
@@ -100,6 +101,14 @@ int main() try {
         tts_host::RunnerAudioOutput::open_inherited().write_frame(frame);
         continue;
       } else response = tts_host::handle_stub_runner_control_message(request);
+      // A well-framed reply whose fields fail validation (a protocol error,
+      // not a crash), on the first start only or on every start.
+      const auto malformed = [&](const char *target) {
+        const std::string always = std::string("bad-") + target;
+        return method == target && (mode == always || (mode == always + "-once" && first_start()));
+      };
+      if (malformed("initialize")) response["result"] = nlohmann::json::object();
+      if (malformed("load")) response["result"] = "malformed";
       const auto framed = tts_host::frame_runner_control_message(response);
       if (mode == "drip-control") {
         for (char byte : framed) {

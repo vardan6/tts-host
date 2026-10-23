@@ -184,6 +184,29 @@ Synthetic Copy adapter compatibility remains separate open work below.
     directory, recover from it, and keep the journal when no recovery branch
     succeeds; test a folder named differently from its ID — see
     [review #4](docs/reviews/code-review-2026-10-24-model-maintenance.md#4--journal-the-actual-installed-folder).
+  - [x] **AFK — Recover from malformed runner replies:** a host-side
+    `RunnerProtocolError` from initialize, load, or synthesize restarts once
+    like a launch failure; `RunnerLoadRejected` and cancellation stay
+    non-retryable; tests cover malformed initialize, load, and synthesize
+    replies — see
+    [follow-up triage](docs/reviews/code-review-2026-10-24-model-maintenance.md#follow-up-triage--2026-10-24),
+    [follow-up #5](docs/reviews/code-review-2026-10-24-model-maintenance.md#follow-up-details-5--include-malformed-startup-replies-in-recovery),
+    and [ADR 0002](docs/adr/0002-runner-protocol.md).
+  - [x] **AFK — Recovery actions for non-current damaged packages:** on the
+    user's instruction to fix all follow-ups, a damaged older revision offers
+    Update (the damaged copy is discarded, not kept for Revert) and a damaged
+    per-user copy, local or catalogued, offers Remove…; bundled stays
+    read-only; row tests cover current, older, and local damaged packages —
+    see
+    [follow-up #6](docs/reviews/code-review-2026-10-24-model-maintenance.md#follow-up-details-6--give-non-current-damaged-packages-a-recovery-route)
+    and [maintenance design](docs/design/architecture.md#model-removal-repair-and-maintenance-actions).
+  - [x] **AFK — Tier precedence for damaged copies:** damaged copies of an ID
+    are ordered by catalogue-match, then per-user precedence, so maintenance
+    acts on the winning copy; tested damaged in both tiers. The mixed-revision
+    order is not tested, because the test fixtures are not in the compiled
+    catalogue — see
+    [follow-up #7](docs/reviews/code-review-2026-10-24-model-maintenance.md#follow-up-details-7--resolve-damaged-package-identity-before-choosing-a-maintenance-target)
+    and [ADR 0010](docs/adr/0010-model-revisions-storage-and-release-layout.md).
 - Qwen quality and model options, after the unified model list:
   - [x] **AFK — Higher-precision Qwen catalogue variants:** add the Q8_0 and
     bf16 packages with pinned URLs, sizes, and SHA-256; download and synthesize

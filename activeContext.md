@@ -1,16 +1,16 @@
 # Active Context
 
 - Mode: implementation; the bundled two-model release block is complete.
-- Branch: `feature/model-maintenance`, pushed. Uncommitted: the 2026-10-24
+- Branch: `feature/model-maintenance`, pushed. `86a7e43` commits the 2026-10-24
   roadmap closures, the review file with its triage, and the four review fixes.
-- State: all four model-maintenance review fixes are in and pass both builds'
-  tests. The user is considering dropping Qwen (Open decisions in `roadmap.md`).
-- Next: `/review-triage` the follow-up cross-review findings #5–#7 in
-  `docs/reviews/code-review-2026-10-24-model-maintenance.md` (startup protocol
-  errors skip recovery; no recovery route for older or local damaged packages;
-  damaged copies ignore tier precedence). The UI fixes passed the user's desktop
-  check. Merge to `main` waits on that triage; then the Qwen keep/drop decision
-  gates the remaining Qwen slices.
+  Uncommitted: the follow-up triage and the fixes for follow-ups #5–#7.
+- State: all seven model-maintenance review findings are fixed and pass both
+  builds' tests. The new Settings actions for damaged rows (#6: Update on an
+  older revision, Remove… on a per-user copy) are not desktop-checked. The
+  user is considering dropping Qwen (Open decisions in `roadmap.md`).
+- Next: user commits and checks the damaged-row actions on the desktop if
+  wanted; then merge to `main`. The UI fixes passed the user's desktop check.
+  The Qwen keep/drop decision gates the remaining Qwen slices.
 - Blockers/environment: the running Host locks its executable; do not
   terminate it without permission, and do not link over it. Use a separate
   output folder for build checks. Developer launches use
@@ -29,3 +29,6 @@
     check matching the folder name, not a regression.
   - The harness guard blocks Bash heredocs or scripts that contain "Qwen" text;
     edit such files with the Edit tool.
+  - A source edit once vanished from `/mnt/c` between a passing build and the
+    next command (cause unknown); grep for the change before trusting a
+    revert-and-restore check.

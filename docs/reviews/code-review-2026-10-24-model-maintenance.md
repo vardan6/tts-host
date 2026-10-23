@@ -126,3 +126,53 @@ Keep damaged packages unloadable, but provide an appropriate writable-package re
 A temporary C++ harness linked against the existing model-update test objects installed the same current-revision Qwen fixture into `a-bundled/` and `z-user/`, then removed the reference clip from both. The scan retained two damaged entries; Verify selected `a-bundled/demo-qwen` with `bundled = true`, and Repair refused with “is bundled with the app; reinstall or upgrade the application to repair it.” The equally damaged writable copy was unreachable by ID. No repository source or fixture was modified for this reproduction.
 
 Apply a defined precedence/duplicate policy to damaged maintenance candidates, or expose separate targets where required. Do not repair an arbitrary copy solely because its path sorts first. Add two-tier damaged/damaged and mixed-revision tests alongside the existing single-tier damage cases.
+
+## Follow-up triage — 2026-10-24
+
+Triaged by Opus 5.5, Anthropic. Each follow-up finding was checked against the
+code at `86a7e43`, which commits the fixes the follow-up review read as
+uncommitted. All three are confirmed. No implementation files were changed
+during triage.
+
+Must fix now (1): #5.
+
+| # | Finding | Risk | Value | Effort | Priority | Reason |
+|---|---------|------|-------|--------|----------|--------|
+| 5 | Malformed initialize/load replies bypass one-restart recovery | med | high | low | must_fix_now | unfinished part of must-fix #3; breaks the ADR 0002 contract that protocol errors restart once |
+| 6 | Damaged older-revision or local packages have no Settings recovery action | med | med | med | should_fix_before_phase_complete | real dead end after a catalogue upgrade, but needs a user decision first: it conflicts with the "Verify and Open folder only" rule this branch added |
+| 7 | Damaged copies ignore tier precedence; Verify can pick the read-only bundled copy | low | med | med | backlog | risk lowered from med: needs both tiers damaged at once, and the failure is a clear refusal with no data loss |
+
+### Follow-up validation notes
+
+- #5: `prepare()` (`src/recovering_runner.cpp:56`) recovers only
+  `RunnerLaunchError`; `RunnerProtocolError`
+  (`include/tts_host/runner_protocol.hpp:14`) is a separate
+  `std::runtime_error` subclass thrown by the initialize/load parsers
+  (`src/runner_protocol.cpp:64`, `:72`), so it falls into the catch-all and is
+  rethrown. ADR 0002 (line 61) puts protocol errors under one-restart recovery.
+  The same gap exists in `synthesize()` (`src/recovering_runner.cpp:88`) for a
+  malformed synthesize reply; it predates this branch, but the same contract
+  covers it, so the fix should handle both call sites.
+- #6: damaged rows set only `damaged` (`src/model_list.cpp:56`); Download
+  excludes them (`src/settings_window.cpp:714`); `writable` needs an installed
+  package (`:1347`); Verify needs the current revision (`:1364`). The
+  architecture text (`docs/design/architecture.md:603`–`609`) says damaged
+  packages offer only Verify and Open folder, while line 589 says per-user
+  packages are removable. Which actions a damaged row offers is the user's
+  decision, recorded through `/doc-update`.
+- #7: damaged entries go straight to `scan.damaged_packages`
+  (`src/model_registry.cpp:289`), skipping the tier merge (`:410`), and
+  `maintained_package` (`src/model_update.cpp:55`) takes the first match by
+  `(id, manifest_path)`. On Windows the bundled `Program Files` path sorts
+  before the per-user `Users` path, so the bundled copy is the one chosen when
+  both are damaged.
+
+### Follow-up resolution
+
+The user asked for all three findings to be fixed before merge, so #6 and #7
+were done ahead of their triaged priority. #6 follows the action set proposed
+at triage: Update for a damaged older revision, Remove… for a damaged per-user
+copy, bundled read-only. The rule is recorded in the
+[maintenance design](../design/architecture.md#model-removal-repair-and-maintenance-actions).
+The #7 mixed-revision ordering has no test, because the test fixtures are not
+compiled catalogue entries.

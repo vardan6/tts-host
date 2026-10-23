@@ -607,8 +607,15 @@ re-download is Remove followed by Download, and damage is handled by Repair.
   takes Update instead. A package whose manifest is valid but whose files
   cannot load (a missing or empty Qwen asset, weights without GGUF magic) is
   never loaded, but the scan keeps it as damaged: its row reads "damaged",
-  with the reason in the details pane, and offers only Verify and repair… and
-  Open folder. The commit writes the journal `.<id>.repairing` naming the
+  with the reason in the details pane, and offers Open folder plus the
+  recovery that fits it: Verify and repair… at the catalogue's revision,
+  Update at an older one, and Remove… for a per-user copy, local or
+  catalogued; a bundled copy stays read-only. Updating a damaged package
+  discards it rather than keeping it as the previous version, and removing
+  one never warns that it is the last model, since it was not loadable. When
+  the same id is damaged in both tiers, maintenance acts on the copy tier
+  precedence picks (the catalogue match, else per-user; ADR 0010), not on
+  whichever path sorts first. The commit writes the journal `.<id>.repairing` naming the
   package's folder, which need not equal its id, then moves the good files
   into staging, validates, moves the damaged folder to `.<id>.damaged`,
   renames staging into place, and drops the journal. A start that finds the

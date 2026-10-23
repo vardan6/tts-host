@@ -103,6 +103,28 @@ void test_installed_rows_replace_catalogue_rows() {
   require(!imported.in_catalogue && !imported.update_available, "an import has no catalogue actions");
 }
 
+// Damaged rows never load; an older catalogue revision offers Update, the
+// current one Verify, and a local one neither (Remove is the menu's).
+void test_damaged_rows_offer_their_recovery() {
+  const auto &catalogue = tts_host::model_catalogue();
+  const auto &current_id = catalogue[0].id;
+  const auto &stale_id = catalogue[1].id;
+  ModelRegistryScan scan;
+  scan.damaged_packages.push_back(
+      package(current_id, "/user/" + current_id, false, tts_host::catalogue_revision_for(current_id)));
+  scan.damaged_packages.push_back(package(stale_id, "/user/" + stale_id, false, std::string(64, '0')));
+  scan.damaged_packages.push_back(package("imported", "/user/imported", false, std::nullopt));
+
+  const auto rows = tts_host::build_model_list(scan, "", {}, fake_size);
+  for (const auto &id : {current_id, stale_id, std::string("imported")}) {
+    const auto row = row_for(rows, id);
+    require(row.damaged && !row.installed && row.status == "damaged", "a damaged package loads or hides its damage");
+  }
+  require(!row_for(rows, current_id).update_available, "a damaged current revision offers an update");
+  require(row_for(rows, stale_id).update_available, "a damaged older revision offers no update");
+  require(!row_for(rows, "imported").update_available, "a damaged import offers an update");
+}
+
 void test_previous_versions_stay_reachable() {
   const auto &catalogue_id = tts_host::model_catalogue()[0].id;
   ModelRegistryScan scan;
@@ -172,6 +194,7 @@ int main(int argc, char **argv) {
   try {
     test_empty_scan_offers_every_catalogue_entry();
     test_installed_rows_replace_catalogue_rows();
+    test_damaged_rows_offer_their_recovery();
     test_previous_versions_stay_reachable();
     test_details_describe_the_selected_model();
     test_folder_size_on_disk(argv[1]);
