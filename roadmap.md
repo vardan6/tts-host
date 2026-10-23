@@ -120,8 +120,8 @@ Synthetic Copy adapter compatibility remains separate open work below.
     result in Settings and the Activity log — see
     [ADR 0002](docs/adr/0002-runner-protocol.md) and
     [load rejection design](docs/design/architecture.md#load-rejection).
-  - [ ] **AFK — Report Qwen unavailable without a usable GPU:** (implemented;
-    only the no-CUDA Windows check remains) runners reject
+  - [x] **AFK — Report Qwen unavailable without a usable GPU:** closed on
+    user decision (2026-10-23); the no-CUDA Windows check was waived. Runners reject
     `load` with a message (Qwen's GPU check, Kokoro's package errors, a stub
     option for the CTest); the Host skips restart/retry, applies a configured
     `fallbackProfile`, shows the last load result in Settings, and records every
@@ -138,16 +138,24 @@ Synthetic Copy adapter compatibility remains separate open work below.
     release's stage — see
     [review #3](docs/reviews/code-review-2026-10-19-bundled-models.md#3--check-cached-release-models-against-the-current-catalogue)
     and [distribution design](docs/design/architecture.md#distribution).
-  - [ ] **HITL — Clean Windows two-model acceptance:** verify offline install,
+  - [x] **HITL — Clean Windows two-model acceptance:** closed on user
+    confirmation (2026-10-23); not performed by the agent. Verify offline install,
     both models speaking, model selection, local/catalogue additions, a
     manual update, removal, and verify/repair on supported hardware — see
     [distribution requirements](docs/requirements/product.md#distribution-and-usability).
-  - [ ] **AFK — Unified Settings model list:** (implemented; Windows link
-    and Settings check remain) one list of installed and
+  - [ ] **AFK — Unified Settings model list:** (implemented; Windows build/link
+    passed in a separate output folder; Settings visual check remains) one list of installed and
     not-installed catalogue packages with source/status/size/loaded columns
     and a details pane replacing the registry dump, reusing the More ▾ menu —
     see
     [maintenance design](docs/design/architecture.md#model-removal-repair-and-maintenance-actions).
+    Selection follow-up: successful Load saves and immediately applies the
+    speech default for the package's languages; verify Q8_0 remains selected
+    through the next read and restart, then repeat with Kokoro — see
+    [desktop design](docs/design/architecture.md#desktop-integration).
+    Shortcut follow-up: verify Ctrl+F8 while Settings is open, after probing
+    a binding, and after close; the registration now stays active except
+    during the availability probe.
 - Qwen quality and model options, after the unified model list:
   - [x] **AFK — Higher-precision Qwen catalogue variants:** add the Q8_0 and
     bf16 packages with pinned URLs, sizes, and SHA-256; download and synthesize
@@ -162,12 +170,23 @@ Synthetic Copy adapter compatibility remains separate open work below.
     ADR if so) — see
     [ADR 0009](docs/adr/0009-qwen-release-selection-without-bake-off.md) and
     [default-model criteria](docs/requirements/product.md#acceptance-criteria-for-default-model-selection).
-  - [ ] **AFK — Research Qwen CustomVoice and VoiceDesign via llama.cpp:**
+  - [x] **AFK — Research Qwen CustomVoice and VoiceDesign via llama.cpp:**
+    [research note](docs/research/2026-10-23-qwen-customvoice-voicedesign-llamacpp.md)
+    (2026-10-23), captured in the engine design. Question was
     whether GGUF conversions of the 1.7B CustomVoice (named speakers, no
     reference clip) and VoiceDesign models exist or can be produced, and
     whether pinned or newer llama.cpp runs them; PyTorch stays rejected per
     [ADR 0009](docs/adr/0009-qwen-release-selection-without-bake-off.md) —
     no doc governs: the output is a research note for `/planning-capture`.
+  - [ ] **HITL — Decide the Qwen named-speaker and voice-design path:**
+    choose between waiting for upstream llama.cpp named-speaker and
+    instruction input (then a pin bump), patching our llama.cpp build, or adding
+    codec.cpp as a separate runner. The last two need an ADR. Also decide
+    whether VoiceDesign is in scope or only CustomVoice's fixed speakers. A
+    chosen runtime gets a Windows CUDA measurement slice (RTF, first chunk,
+    VRAM) before any catalogue entry — see
+    [engine design](docs/design/architecture.md#engines-and-models) and
+    [ADR 0009](docs/adr/0009-qwen-release-selection-without-bake-off.md).
   - [ ] **HITL — Plan per-model load and synthesis options in Settings:**
     decide which typed options users may set per profile and how Settings
     shows them. Candidates for Qwen: sampling temperature/top-k/top-p/seed

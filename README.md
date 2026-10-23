@@ -171,6 +171,9 @@ The host ships no weights in the repository. `tools/fetch_kokoro_weights.py`
 downloads the real, full-precision Kokoro-82M ONNX model and one voice
 embedding (Apache-2.0, from `onnx-community/Kokoro-82M-v1.0-ONNX` on Hugging
 Face) into `models/kokoro-en-v1/`, alongside a generated `model.json` manifest.
+The manifest records the package's content revision, so Settings shows it as
+`current` and offers catalogue updates; `--no-download` rewrites the manifest
+for an existing download (for example one fetched before revisions existed).
 That is real product data (~330 MB), not a test fixture — `models/` is
 gitignored and CTest never depends on it.
 

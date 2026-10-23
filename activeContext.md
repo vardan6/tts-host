@@ -1,45 +1,41 @@
 # Active Context
 
 - Mode: implementation, bundled two-model release follow-ups.
-- Branch: `feature/model-maintenance` (from `main` at `01f1684`, PR #3 merged).
-  "Unified Settings model list" is implemented and pushed: 53/53 Linux
-  CTests pass; Windows `settings_window.cpp` compiles, but `tts-host.exe`
-  link is blocked (LNK1168) by the running Debug Host. Its roadmap item stays
-  open until the Windows Settings check. "Report Qwen unavailable without a
-  usable GPU" (`195474d`) stays open until the no-CUDA Windows check.
-- Higher-precision Qwen variants done: Q4_K_M ≈ 1.44 RTF / 3.3 GB, Q8_0 ≈
-  1.65 / 3.9 GB, bf16 ≈ 2.64 / 5.4 GB (`progress.md`, 2026-10-21); listening
-  WAVs in `cache/variant-eval/`.
-- Next: user quits the Debug Host, rebuilds, and checks Settings → Models
-  (rows, columns, details pane, button enabling, More ▾ per row); then the
-  roadmap slice "HITL — Compare Qwen variants and reference voices with Kokoro".
-- Pending user checks on Windows: a full `scripts/release-win.ps1` run
-  reusing the existing `cache/release-models` stage (verifies, reuses or
-  restages); quit Debug Host, run
-  `powershell -f .\fresh-win.ps1`, then in Settings → Models try More ▾,
-  Remove… (dialog, keep-previous tick, Cancel default), and Verify and
-  repair… (corrupt a per-user file; No is the default); scroll the activity log
-  (repaint fix `1896937`); installer unticked-startup upgrade path in an
-  isolated environment (never this machine); on a Windows machine without
-  usable CUDA, Qwen as `quality` with `fallbackProfile` speaks with Kokoro and
-  Settings → Models shows Qwen "unavailable" with the reason in details.
-- Known gap: a previous-only row (Remove… with keep ticked) offers Delete
-  previous and Open folder; restoring it is not designed.
-- Risk: setup.exe is 1.99 GB, near Inno's 2.1 GB single-file limit; a larger
-  bundle needs `DiskSpanning`.
-- Open questions: in `roadmap.md` (Qwen default, per-model options). Linux
-  Qwen with runner-folder loading is unverified.
-- Blockers: running Debug Host locks its executable (LNK1168); do not
-  terminate it without asking. Developer Run entry left for the user per
-  `PROJECT.md`.
-- Environment: Windows Debug `build/` uses the cached b11029 Qwen runtime; use
-  `config.development.json` with login startup disabled. Linux tests in
-  `build-linux/`. Commands in README, `progress.md`, `PROJECT.md`. From WSL,
-  `powershell.exe` is not on PATH: call
-  `/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe` to build
-  `build/` (`cmake --build build --config Debug`) without launching the app.
-- Discarded as noise: the `harness-guard` hook blocks shell commands with a
-  segment starting with the Qwen model name (including `|| qwen->` inside a
-  heredoc); put such text in a file instead.
-  In this shell `grep` is rewritten to `rg`; use `/usr/bin/grep` for grep
-  syntax (`\|`, `-r` on directories).
+- Branch: `feature/model-maintenance`; all work is uncommitted: Settings
+  layout, model selection and shortcut fixes, 2026-10-23 roadmap closures,
+  CustomVoice research capture, and the Kokoro fetch-script revision stamp.
+- State: the only open slice in the release block is the Unified Settings model
+  list. Its code is built; Linux 53/53 CTests and Windows build/link passed in
+  `build/settings-selection-check`. Only the user's desktop checks remain.
+- Next: user quits the running Debug Host, runs `.\compile-win.ps1`, and checks:
+  - Ctrl+F8 with Settings open, after probing a binding, and after closing.
+    The saved capture policy is `clipboardOnly`, so copy text first.
+  - Load Q8_0, then read while Settings is open and after close/restart; the
+    model must stay selected. Repeat with Kokoro.
+  - All four tabs render, the window resizes, the Model/Source divider drags,
+    and the rows, details, buttons and More ▾ work. Kokoro now shows `current`.
+
+  Keep the roadmap item unchecked until the user confirms or waives these.
+- Then: the user reports the Qwen comparison outcome (they believe it is done;
+  nothing is recorded): which variant is bundled and whether the reference
+  voice changes. A change means an ADR superseding 0009. After that, the HITL
+  decisions on the named-speaker path and per-model options in `roadmap.md`.
+- Blockers/environment: the running Host locks its executable; do not
+  terminate it without permission, and do not link over it. Use a separate
+  output folder for build checks. Developer launches use
+  `config.development.json` (`PROJECT.md`). Linux tests: `build-linux/`. Run
+  `tts-host --list-models` with `--headless`, or it starts the app. Windows
+  PowerShell: `/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe`.
+- Open questions: the Qwen comparison outcome; whether Ctrl+F8 also failed
+  after closing Settings; the named-speaker path and VoiceDesign scope;
+  per-model options; the Qwen default (Open decisions in `roadmap.md`). Linux
+  Qwen runner-folder loading is unverified; previous-only restoration is
+  undesigned.
+- Discarded as noise:
+  - The reported Q8→Q4 switch was real profile routing, not a list-row
+    display error.
+  - Blanket clipping of sibling fields hid tab contents; keep the tab frame
+    behind its fields.
+  - The port 7861 failure was an existing Debug Host, not a test failure.
+  - Kokoro showing `local` was a missing revision stamp from the developer
+    fetch script; its files are identical to the catalogue's.

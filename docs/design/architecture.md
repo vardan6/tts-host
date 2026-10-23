@@ -678,6 +678,19 @@ Current upstream evidence:
   CustomVoice and Base APIs. PyTorch is not shipped (ADR 0009); any later
   default-model measurement must identify model family, voice, precision,
   runtime, and cold/warm conditions explicitly.
+- CustomVoice (named speakers) and VoiceDesign (voice described by an
+  instruction) do not run on the `qwen3-gguf` runner. llama.cpp's Qwen audio
+  helper (`mtmd_helper_gen_audio_*`, through b11840) only takes a language
+  and an optional reference clip. It has no input for a speaker ID or an
+  instruction turn, so a CustomVoice or VoiceDesign GGUF loaded there would
+  not use its named voices or instructions. Upstream conversion of
+  CustomVoice works only after b11029
+  ([PR #29179](https://github.com/ggml-org/llama.cpp/pull/29179)).
+  Community conversions run on other runtimes:
+  [codec.cpp](https://github.com/mybigday/codec.cpp) (CUDA, `--voice`,
+  `--instruct`) and [speech.cpp](https://github.com/nyosegawa/speech.cpp)
+  (no documented CUDA). Do not add these models to the catalogue for the
+  current runner. The path forward is an open decision in `roadmap.md`.
 
 The trusted Qwen evaluation runner uses llama.cpp **b11029**, commit
 `5c53396b89b05666c9d57445b7616a35f6198a16`. Its optional CMake target uses
