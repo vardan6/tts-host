@@ -963,7 +963,8 @@ void on_update_model_clicked(SettingsState &state, HWND window) {
   if (found == nullptr) {
     return;
   }
-  const auto *installed = catalogue_entry_package(*found, state.last_scan);
+  const auto *healthy = catalogue_entry_package(*found, state.last_scan);
+  const auto *installed = healthy != nullptr ? healthy : damaged_package(found->id, state.last_scan);
   if (installed == nullptr) {
     append_activity_log(state, utf8_to_wide(found->id) + L" is not installed; use Download.");
     return;
@@ -978,12 +979,13 @@ void on_update_model_clicked(SettingsState &state, HWND window) {
   const CatalogueEntry &entry = *found;
   start_model_task(state, window, true,
                    [&state, &entry, scan = state.last_scan, config = state.document,
-                    progress = model_task_progress(state)]() -> ModelTaskOutcome {
+                    progress = model_task_progress(state), damaged = healthy == nullptr]() -> ModelTaskOutcome {
     const auto name = utf8_to_wide(entry.display_name);
     try {
       update_catalogue_package(entry, scan, config, fetch_url_to_file, progress,
                                session_switch_guard(state));
-      return {L"Updated " + name + L". The previous version is kept for Revert.", true};
+      return {L"Updated " + name + (damaged ? L". The damaged copy was discarded." :
+                                              L". The previous version is kept for Revert."), true};
     } catch (const ModelTaskCancelled &) {
       return {L"Update of " + name + kDownloadCancelledMessage, false};
     } catch (const std::exception &error) {
@@ -1337,12 +1339,7 @@ void on_more_model_actions_clicked(SettingsState &state, HWND window, HWND butto
     return nullptr;
   }();
   // A package whose files no longer load is reachable for Verify and repair.
-  const auto *damaged = [&]() -> const ModelPackageCandidate * {
-    for (const auto &package : scan.damaged_packages) {
-      if (package.id == model_id && installed == nullptr) return &package;
-    }
-    return nullptr;
-  }();
+  const auto *damaged = damaged_package(model_id, scan);
   const bool idle = !state.model_task.joinable();
   const bool writable = installed != nullptr && !installed->bundled && idle;
 
@@ -1377,8 +1374,8 @@ void on_more_model_actions_clicked(SettingsState &state, HWND window, HWND butto
   add(kDeletePreviousModelCommandId, L"Delete previous", idle && has_previous);
   add(kRemoveSupersededModelCommandId, L"Remove superseded", idle && removable_superseded);
   AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-  add(kRemoveModelCommandId, installed != nullptr && installed->bundled ? L"Remove… (Bundled with the app)" : L"Remove…",
-      writable);
+  add(kRemoveModelCommandId, maintained != nullptr && maintained->bundled ? L"Remove… (Bundled with the app)" : L"Remove…",
+      maintained != nullptr && !maintained->bundled && idle);
   add(kVerifyModelCommandId, L"Verify and repair…", verifiable);
   AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
   add(kOpenModelFolderCommandId, L"Open folder", maintained != nullptr || has_previous);

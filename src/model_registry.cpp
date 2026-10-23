@@ -439,10 +439,19 @@ ModelRegistryScan scan_model_registry(const ConfigDocument &config) {
               return std::tie(left.id, left.manifest_path) <
                      std::tie(right.id, right.manifest_path);
             });
+  // Maintenance takes the first damaged copy of an ID, so order copies by the
+  // tier precedence above: per-user wins unless only the bundled copy is at
+  // the catalogue revision (ADR 0010).
+  const auto damaged_rank = [](const ModelPackageCandidate &package) {
+    const auto expected = catalogue_revision_for(package.id);
+    const bool current = expected && package.revision == expected;
+    return (current ? 0 : 2) + (package.bundled ? 1 : 0);
+  };
   std::sort(scan.damaged_packages.begin(), scan.damaged_packages.end(),
-            [](const ModelPackageCandidate &left, const ModelPackageCandidate &right) {
-              return std::tie(left.id, left.manifest_path) <
-                     std::tie(right.id, right.manifest_path);
+            [&](const ModelPackageCandidate &left, const ModelPackageCandidate &right) {
+              const int left_rank = damaged_rank(left), right_rank = damaged_rank(right);
+              return std::tie(left.id, left_rank, left.manifest_path) <
+                     std::tie(right.id, right_rank, right.manifest_path);
             });
   std::sort(scan.unsupported_entries.begin(), scan.unsupported_entries.end(),
             [](const UnsupportedRegistryEntry &left, const UnsupportedRegistryEntry &right) {

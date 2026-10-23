@@ -15,6 +15,13 @@
 
 namespace tts_host {
 
+const ModelPackageCandidate *damaged_package(const std::string &id, const ModelRegistryScan &scan) {
+  const auto has_id = [&](const ModelPackageCandidate &package) { return package.id == id; };
+  if (std::any_of(scan.discovered_packages.begin(), scan.discovered_packages.end(), has_id)) return nullptr;
+  const auto found = std::find_if(scan.damaged_packages.begin(), scan.damaged_packages.end(), has_id);
+  return found == scan.damaged_packages.end() ? nullptr : &*found;
+}
+
 namespace {
 
 // Written before the old folder moves aside and removed once the staged one
@@ -50,16 +57,11 @@ const ModelPackageCandidate &installed_package(const std::string &id, const Mode
   return *found;
 }
 
-// Verify and repair also reach a package whose files no longer load.
+// Verify, repair, update, and removal also reach a package whose files no
+// longer load.
 const ModelPackageCandidate &maintained_package(const std::string &id, const ModelRegistryScan &scan) {
-  const auto found = std::find_if(scan.damaged_packages.begin(), scan.damaged_packages.end(),
-                                  [&](const ModelPackageCandidate &package) { return package.id == id; });
-  if (found == scan.damaged_packages.end() ||
-      std::any_of(scan.discovered_packages.begin(), scan.discovered_packages.end(),
-                  [&](const ModelPackageCandidate &package) { return package.id == id; })) {
-    return installed_package(id, scan);
-  }
-  return *found;
+  const auto *damaged = damaged_package(id, scan);
+  return damaged != nullptr ? *damaged : installed_package(id, scan);
 }
 
 void remove_previous_versions_in(const std::filesystem::path &directory, const std::string &id,
@@ -227,7 +229,8 @@ ImportedModelPackage update_catalogue_package(const CatalogueEntry &entry, const
                                               const ConfigDocument &config, const HttpFetchFunction &fetch,
                                               const DownloadProgressCallback &progress,
                                               const PackageSwitchGuard &guard) {
-  const auto &current = installed_package(entry.id, scan);
+  const auto &current = maintained_package(entry.id, scan);
+  const bool damaged = damaged_package(entry.id, scan) != nullptr;
   if (!current.revision) {
     throw std::runtime_error("'" + entry.id + "' is a local package; only catalogue installs are updated");
   }
@@ -251,6 +254,21 @@ ImportedModelPackage update_catalogue_package(const CatalogueEntry &entry, const
       std::filesystem::rename(staging, destination);
       return;
     }
+    std::error_code ec;
+    if (damaged) {
+      // A damaged copy is discarded, not kept as the previous version.
+      const auto aside = removal_path(current.package_path);
+      std::filesystem::remove_all(aside);
+      std::filesystem::rename(current.package_path, aside, ec);
+      if (ec) throw std::runtime_error("could not move the damaged '" + entry.id + "' aside: " + ec.message());
+      std::filesystem::rename(staging, destination, ec);
+      if (ec) {
+        std::filesystem::rename(aside, current.package_path);
+        throw std::runtime_error("could not move the update of '" + entry.id + "' into place: " + ec.message());
+      }
+      std::filesystem::remove_all(aside);
+      return;
+    }
 
     // One previous version per id: the older one goes before this one moves in.
     remove_previous_versions_in(directory, entry.id, scan);
@@ -265,7 +283,6 @@ ImportedModelPackage update_catalogue_package(const CatalogueEntry &entry, const
         throw std::runtime_error("unable to write " + path_to_utf8(journal));
       }
     }
-    std::error_code ec;
     std::filesystem::rename(current.package_path, previous, ec);
     if (ec) {
       // Typically a file another process still holds open on Windows.
@@ -356,7 +373,7 @@ std::size_t remove_superseded_model_copies(const std::string &id, const ModelReg
 
 ModelRemovalPlan plan_model_removal(const std::string &id, const ModelRegistryScan &scan,
                                     const ConfigDocument &config) {
-  const auto &current = installed_package(id, scan);
+  const auto &current = maintained_package(id, scan);
   if (current.bundled) {
     throw std::runtime_error("'" + id + "' is bundled with the app and cannot be removed");
   }
@@ -383,7 +400,9 @@ ModelRemovalPlan plan_model_removal(const std::string &id, const ModelRegistrySc
   plan.bundled_becomes_active =
       std::any_of(scan.superseded_packages.begin(), scan.superseded_packages.end(),
                   [&](const ModelPackageCandidate &package) { return package.id == id && package.bundled; });
-  plan.last_package = scan.discovered_packages.size() == 1 && !plan.bundled_becomes_active;
+  // A damaged package is not loadable, so removing it never removes the last model.
+  plan.last_package = damaged_package(id, scan) == nullptr && scan.discovered_packages.size() == 1 &&
+                      !plan.bundled_becomes_active;
   return plan;
 }
 

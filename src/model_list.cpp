@@ -60,6 +60,8 @@ std::vector<ModelListRow> build_model_list(const ModelRegistryScan &scan, const 
     row.display_name = package.display_name;
     row.source = package.bundled ? "bundled" : "per-user";
     row.status = "damaged";
+    // An older revision is recovered by updating it; Verify needs the current one.
+    row.update_available = package_status(package) == PackageStatus::update_available;
     row.size_bytes = folder_size(package.package_path);
     row.damaged = true;
     finish(row);

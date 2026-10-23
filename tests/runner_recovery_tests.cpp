@@ -25,7 +25,7 @@ int main(int argc, char **argv) {
     const auto marker = std::filesystem::path(argv[2]) / "runner-recovery-marker";
     env("TTS_TEST_RUNNER_MARKER", marker.string());
     const tts_host::RunnerDeadlines deadlines{150ms, 150ms, 150ms, 100ms};
-    for (const auto *mode : {"death-once", "partial-once", "hang-once"}) {
+    for (const auto *mode : {"death-once", "partial-once", "hang-once", "bad-reply-once"}) {
       env("TTS_TEST_RUNNER_MODE", mode);
       env("TTS_TEST_REQUIRE_LOAD", "1");
       std::filesystem::remove(marker);
@@ -44,10 +44,12 @@ int main(int argc, char **argv) {
       require(restarts == 1, "failed chunk did not restart exactly once");
       require(runner.finish() == 0, "recovered process failed");
     }
-    // A start that fails before initialize or load replies restarts once in
-    // prepare(); that restart is the first chunk's, so a later failure of the
-    // chunk is final. Every start failing is actionable after one restart.
-    for (const std::string mode : {"init-death-once", "load-death-once", "init-death", "load-death"}) {
+    // A start that fails before initialize or load replies, or replies with
+    // fields that fail validation, restarts once in prepare(); that restart is
+    // the first chunk's, so a later failure of the chunk is final. Every start
+    // failing is actionable after one restart.
+    for (const std::string mode : {"init-death-once", "load-death-once", "init-death", "load-death",
+                                   "bad-initialize-once", "bad-load-once", "bad-initialize", "bad-load"}) {
       env("TTS_TEST_RUNNER_MODE", mode);
       std::filesystem::remove(marker);
       int restarts = 0;

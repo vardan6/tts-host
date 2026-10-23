@@ -39,7 +39,7 @@ class RecoveringRunner {
   void drop_session();
   // Drops the session, then throws if cancelled or `retried`; otherwise logs
   // the restart of `what`.
-  void recover_or_throw(const RunnerLaunchError &error, bool retried, const std::string &what);
+  void recover_or_throw(const std::exception &error, bool retried, const std::string &what);
   std::filesystem::path executable_;
   std::optional<std::filesystem::path> model_, voice_;
   RunnerDeadlines deadlines_;

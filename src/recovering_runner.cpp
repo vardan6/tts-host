@@ -40,7 +40,7 @@ void RecoveringRunner::drop_session() {
   if (state_callback_) state_callback_(false);
 }
 
-void RecoveringRunner::recover_or_throw(const RunnerLaunchError &error, bool retried, const std::string &what) {
+void RecoveringRunner::recover_or_throw(const std::exception &error, bool retried, const std::string &what) {
   drop_session();
   if (cancelled_ && cancelled_()) throw RunnerCancelled();
   if (retried) throw RunnerLaunchError(
@@ -52,7 +52,8 @@ void RecoveringRunner::recover_or_throw(const RunnerLaunchError &error, bool ret
 }
 
 // A start that needed its restart spends the first chunk's: one restart per
-// unplayed chunk (ADR 0002). A rejected load is never retried.
+// unplayed chunk (ADR 0002). A malformed reply restarts like a crash; a
+// rejected load is never retried.
 void RecoveringRunner::prepare() {
   for (bool retried = false;; retried = true) {
     try {
@@ -62,6 +63,9 @@ void RecoveringRunner::prepare() {
       drop_session();
       throw;
     } catch (const RunnerLaunchError &error) {
+      recover_or_throw(error, retried, "its start");
+      restart_spent_ = true;
+    } catch (const RunnerProtocolError &error) {
       recover_or_throw(error, retried, "its start");
       restart_spent_ = true;
     } catch (...) {
@@ -104,6 +108,8 @@ SynthesizedChunk RecoveringRunner::synthesize(const std::string &text, double sp
       drop_session();
       throw;
     } catch (const RunnerLaunchError &error) {
+      recover_or_throw(error, attempt != 0, "unplayed chunk");
+    } catch (const RunnerProtocolError &error) {
       recover_or_throw(error, attempt != 0, "unplayed chunk");
     }
   }

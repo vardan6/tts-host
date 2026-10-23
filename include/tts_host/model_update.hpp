@@ -23,6 +23,11 @@ namespace tts_host {
 using PackageSwitchGuard =
     std::function<void(const std::string &model_id, const std::function<void()> &switch_package)>;
 
+// The damaged copy of `id` maintenance acts on, or null when a loadable copy
+// exists or none is damaged. Scan order puts the copy that wins tier
+// precedence first (ADR 0010).
+const ModelPackageCandidate *damaged_package(const std::string &id, const ModelRegistryScan &scan);
+
 // The writable directory catalogue installs and updates target: the first
 // configured modelRegistry.directories entry. Throws when none is configured.
 std::filesystem::path writable_model_directory(const ConfigDocument &config);
@@ -34,8 +39,10 @@ std::filesystem::path writable_model_directory(const ConfigDocument &config);
 // previous version) and the staged one into place. A per-user package is
 // replaced in its own directory; a bundled one is never written and the update
 // goes to writable_model_directory(), the bundled copy becoming the previous
-// version. Throws, leaving the working package in place, when the installed
-// package is local, already current, or any step fails. The staged download
+// version. A damaged package (damaged_package()) is replaced and discarded,
+// not kept as the previous version. Throws, leaving the working package in
+// place, when the installed package is local, already current, or any step
+// fails. The staged download
 // survives a failed commit so a retry resumes it.
 ImportedModelPackage update_catalogue_package(const CatalogueEntry &entry, const ModelRegistryScan &scan,
                                               const ConfigDocument &config, const HttpFetchFunction &fetch,
@@ -77,8 +84,9 @@ struct ModelRemovalPlan {
   bool last_package = false;
 };
 
-// Plans removing the installed `id`. Throws when it is not installed or is a
-// bundled package in installed mode, which is read-only (ADR 0010).
+// Plans removing the installed or damaged `id`. Throws when it is not
+// installed or is a bundled package in installed mode, which is read-only
+// (ADR 0010).
 ModelRemovalPlan plan_model_removal(const std::string &id, const ModelRegistryScan &scan,
                                     const ConfigDocument &config);
 
