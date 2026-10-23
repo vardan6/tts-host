@@ -1,3 +1,33 @@
+- 2026-10-23: Developer Kokoro shows `current` — `tools/fetch_kokoro_weights.py`
+  now writes the host's content revision into `model.json` (`--no-download`
+  restamps an existing download). The developer Kokoro files matched the
+  catalogue SHA-256s byte for byte; after restamping, `--list-models` reports
+  all four packages `current`.
+- 2026-10-23: Clean Windows two-model acceptance — closed on user
+  confirmation; the agent did not perform it.
+- 2026-10-23: Qwen CustomVoice/VoiceDesign research — upstream llama.cpp
+  (b11029 through b11840) synthesizes Base only: no named-speaker or
+  instruction input; CustomVoice conversion fixed after the pin (PR #29179).
+  Community GGUFs run on codec.cpp or speech.cpp. Note in `docs/research/`,
+  captured in the engine design with a HITL path decision in `roadmap.md`;
+  nothing converted or synthesized.
+- 2026-10-23: Report Qwen unavailable without a usable GPU — closed on user
+  decision; the native no-CUDA Windows check was waived, not performed.
+- 2026-10-22: Global shortcut while Settings is open — removed window-long
+  unregistration; release only for the synchronous availability probe and
+  restore afterwards, preserving runtime suspension; rebind saved chord on
+  close. Linux build, three focused CTests, and Windows Debug build/link passed
+  (`build/settings-selection-check`). Native shortcut check remains pending.
+  Saved developer capture policy is clipboard-only, which requires Copy first.
+- 2026-10-22: Settings model choice drives subsequent speech — successful Load
+  saves language defaults through Settings-owned profiles, publishes the new
+  snapshot immediately, and preserves named profiles and unrelated languages.
+  General default-profile selection also publishes immediately. Failed loads
+  keep the saved choice. Linux 53/53 CTests passed; Windows Debug build/link
+  and native configuration persistence regressions passed in
+  `build/settings-selection-check`, avoiding the running Host. Desktop check
+  remains: Load Q8_0, read while Settings is open and after close/restart,
+  then switch to Kokoro and repeat. Requirements and desktop design updated.
 - 2026-10-21: Higher-precision Qwen catalogue variants — added
   catalogue-only `qwen3-tts-1.7b-q8` (Q8_0 backbone and mmproj, 2188 MB) and
   `qwen3-tts-1.7b-bf16` (bf16 backbone and mmproj, 3950 MB), pinned to ggml-org
@@ -548,3 +578,14 @@
   `settings_window.cpp` compiles warning-free and the model list/update/
   registry tests pass, but the `tts-host.exe` link is blocked (LNK1168) by the
   running Debug Host, so the new page is unseen on Windows.
+
+- 2026-10-21: Settings resize and column repaint fix — fields and panes follow
+  window resizing down to a usable minimum; model action buttons share the
+  width, and header changes invalidate the double-buffered list. Windows Debug
+  build and link passed using `build/settings-resize-check` to avoid the running
+  Host lock; visual column-drag and all-tab resize checks remain pending.
+
+- 2026-10-22: Settings blank-page regression — user reported hidden controls
+  after the resize fix. Removed blanket sibling clipping from fields and
+  explicitly lowered the tab frame after all sibling controls exist. Windows
+  Debug build/link and diff checks passed; all-tab visual verification pending.
