@@ -1,3 +1,9 @@
+- 2026-10-24: Unified Settings model list — desktop checks passed on user
+  confirmation: layout, Q8_0/Kokoro selection persistence, Ctrl+F8.
+- 2026-10-24: Qwen variants vs Kokoro listening comparison — user verdict:
+  Q4_K_M, Q8_0 and bf16 all poor quality and about 5× too slow, with waits
+  between sentences, possibly worse than Chrome's built-in voice. No change:
+  the bundled package stays selectable for now; removal is an open decision.
 - 2026-10-23: Developer Kokoro shows `current` — `tools/fetch_kokoro_weights.py`
   now writes the host's content revision into `model.json` (`--no-download`
   restamps an existing download). The developer Kokoro files matched the

@@ -143,8 +143,8 @@ Synthetic Copy adapter compatibility remains separate open work below.
     both models speaking, model selection, local/catalogue additions, a
     manual update, removal, and verify/repair on supported hardware — see
     [distribution requirements](docs/requirements/product.md#distribution-and-usability).
-  - [ ] **AFK — Unified Settings model list:** (implemented; Windows build/link
-    passed in a separate output folder; Settings visual check remains) one list of installed and
+  - [x] **AFK — Unified Settings model list:** desktop checks (layout,
+    selection persistence, Ctrl+F8) passed on user confirmation 2026-10-24. One list of installed and
     not-installed catalogue packages with source/status/size/loaded columns
     and a details pane replacing the registry dump, reusing the More ▾ menu —
     see
@@ -162,8 +162,11 @@ Synthetic Copy adapter compatibility remains separate open work below.
     each on Windows and record RTF and peak VRAM if measurable — see
     [catalogue design](docs/design/architecture.md#download-catalogue) and
     [ADR 0009](docs/adr/0009-qwen-release-selection-without-bake-off.md).
-  - [ ] **HITL — Compare Qwen variants and reference voices with Kokoro:**
-    user listens to Q4_K_M/Q8_0/bf16 at speed 1.0 with the LJ Speech clip and
+  - [x] **HITL — Compare Qwen variants and reference voices with Kokoro:**
+    closed 2026-10-24 with no change: bundled Q4_K_M, the catalogue variants and
+    the LJ Speech voice stay; ADR 0009 stands. User verdict: every variant is
+    poor quality and about 5× too slow, with waits between sentences; possibly
+    worse than Chrome's built-in voice (removal is an open decision). User listens to Q4_K_M/Q8_0/bf16 at speed 1.0 with the LJ Speech clip and
     at least one cleaner, licensed reference clip the user approves, against
     Kokoro; decide whether bundled Qwen stays Q4_K_M, changes, or becomes
     catalogue-only, and whether the reference voice changes (a superseding
@@ -253,6 +256,12 @@ the runner layout is decided by
 
 ## Open decisions
 
+- Whether to drop Qwen entirely (user, 2026-10-24: considering, not decided).
+  The listening comparison found every variant poor and about 5× too slow.
+  Removing it would supersede
+  [ADR 0009](docs/adr/0009-qwen-release-selection-without-bake-off.md) and
+  make the named-speaker and per-model Qwen option slices moot; decide this
+  before investing in them.
 - Whether and when Qwen becomes the quality-profile default: it misses the
   RTF ≤ 1.0 hard limit (≈1.5 warm on Linux) and peak VRAM is unmeasured; the
   user may measure it against, or change, the
