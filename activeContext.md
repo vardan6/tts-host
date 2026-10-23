@@ -1,14 +1,13 @@
 # Active Context
 
 - Mode: implementation; the bundled two-model release block is complete.
-- Branch: `feature/model-maintenance`, pushed. `86a7e43` commits the 2026-10-24
-  roadmap closures, the review file with its triage, and the four review fixes.
-  Uncommitted: the follow-up triage and the fixes for follow-ups #5–#7.
+- Branch: `feature/model-maintenance`, pushed and clean. `86a7e43` has the four
+  review fixes; `af7c728` has the follow-up triage and the fixes for #5–#7.
 - State: all seven model-maintenance review findings are fixed and pass both
   builds' tests. The new Settings actions for damaged rows (#6: Update on an
   older revision, Remove… on a per-user copy) are not desktop-checked. The
   user is considering dropping Qwen (Open decisions in `roadmap.md`).
-- Next: user commits and checks the damaged-row actions on the desktop if
+- Next: user checks the damaged-row actions on the desktop if
   wanted; then merge to `main`. The UI fixes passed the user's desktop check.
   The Qwen keep/drop decision gates the remaining Qwen slices.
 - Blockers/environment: the running Host locks its executable; do not
