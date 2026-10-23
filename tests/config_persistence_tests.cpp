@@ -37,6 +37,27 @@ int main(int argc, char **argv) {
     const std::string original_bytes = original.dump(2) + '\n';
     const auto backup = std::filesystem::path(path.string() + ".last-valid");
     tts_host::ConfigDocument document{original, {path, std::filesystem::absolute(argv[2])}};
+    // Settings selection must drive normal language/profile routing, survive
+    // saving/reopening, and leave unrelated languages and named profiles alone.
+    auto selected = tts_host::with_selected_model(document, "qwen3-tts-1.7b-q8", {"en"});
+    const auto selected_profile = selected.value.at("languageDefaults").at("en").get<std::string>();
+    require(selected.value.at("profiles").at(selected_profile).at("model") == "qwen3-tts-1.7b-q8",
+            "Settings choice did not change the model used by English reads");
+    require(selected.value.at("profiles").at(selected_profile).at("loadPolicy") == "eager",
+            "warm-up could replace the Settings choice with an older eager default");
+    for (const auto &entry : original.at("profiles").items())
+      require(selected.value.at("profiles").at(entry.key()) == entry.value(), "named profile was changed");
+    for (const auto &entry : original.at("languageDefaults").items())
+      if (entry.key() != "en")
+        require(selected.value.at("languageDefaults").at(entry.key()) == entry.value(),
+                "unrelated language default was changed");
+    write(path, original_bytes);
+    tts_host::save_config_document(selected);
+    require(nlohmann::json::parse(read(path)) == selected.value, "model choice did not survive save");
+    selected = tts_host::with_selected_model(selected, "kokoro-en-v1", {"en"});
+    require(selected.value.at("profiles").at(selected_profile).at("model") == "kokoro-en-v1",
+            "the latest model selection did not win");
+    require(document.value == original, "candidate creation mutated the saved configuration");
     document.value["audio"]["playbackSkipSeconds"] = 12;
     for (int failure = 0; failure < 5; ++failure) {
       write(path, original_bytes);

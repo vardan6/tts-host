@@ -54,6 +54,35 @@ std::filesystem::path temporary_path(const std::filesystem::path &target) {
 
 }  // namespace
 
+ConfigDocument with_selected_model(const ConfigDocument &document, const std::string &model_id,
+                                   const std::vector<std::string> &languages) {
+  if (languages.empty()) throw std::runtime_error("The selected model declares no languages");
+  auto candidate = document;
+  auto &profiles = candidate.value.at("profiles");
+  auto &defaults = candidate.value.at("languageDefaults");
+  for (const auto &language : languages) {
+    const auto name = "selected-model-" + language;
+    nlohmann::json profile = {{"device", "auto"}, {"loadPolicy", "eager"}, {"model", model_id}};
+    // Preserve the active profile's fallback and timeout, but let the selected
+    // engine choose its device. Eager warm-up must prefer the new default.
+    if (defaults.contains(language)) {
+      const auto &previous = profiles.at(defaults.at(language).get<std::string>());
+      for (const auto *key : {"fallbackProfile", "idleUnloadSeconds"}) {
+        if (previous.contains(key)) profile[key] = previous.at(key);
+      }
+      if (profile.contains("fallbackProfile")) {
+        const auto fallback = profile.at("fallbackProfile").get<std::string>();
+        if (fallback == name || profiles.at(fallback).at("model") == model_id)
+          profile.erase("fallbackProfile");
+      }
+    }
+    profiles[name] = std::move(profile);
+    defaults[language] = name;
+  }
+  validate_config(candidate);
+  return candidate;
+}
+
 void save_config_document(const ConfigDocument &document, const ConfigSaveOperations &operations) {
   validate_config(document);
   const auto write = operations.write ? operations.write : write_file;

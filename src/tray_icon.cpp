@@ -356,11 +356,17 @@ LRESULT CALLBACK tray_window_proc(HWND window, UINT message, WPARAM wparam, LPAR
         auto *context = tray_context(window);
         if (context->settings_open) return 0;
         context->settings_open = true;
-        // Release our own hotkey while Settings probes candidates. Otherwise
-        // testing the active value would always report a conflict with TTS Host.
-        context->selection_hotkey.release([&] { UnregisterHotKey(window, kReadSelectionHotkeyId); });
         try {
-          run_settings_window(*context->document, *context->runner_directory, context->sessions);
+          run_settings_window(*context->document, *context->runner_directory, context->sessions,
+                              *context->publish_config, [window, context](bool probing) {
+            if (probing) {
+              context->selection_hotkey.release(
+                  [&] { UnregisterHotKey(window, kReadSelectionHotkeyId); });
+            } else if (IsWindow(window)) {
+              context->selection_hotkey.restore(
+                  [&] { return register_read_selection_hotkey(window, *context->document); });
+            }
+          });
         } catch (const std::exception &error) {
           if (IsWindow(window)) show_error(window, error.what());
         }
@@ -374,6 +380,7 @@ LRESULT CALLBACK tray_window_proc(HWND window, UINT message, WPARAM wparam, LPAR
         } catch (const std::exception &error) {
           show_error(window, error.what());
         }
+        context->selection_hotkey.release([&] { UnregisterHotKey(window, kReadSelectionHotkeyId); });
         context->selection_hotkey.restore(
             [&] { return register_read_selection_hotkey(window, *context->document); });
       } else if (LOWORD(wparam) == kSelectionHotkeyToggleMenuItemId) {

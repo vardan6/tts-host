@@ -190,6 +190,9 @@ connected prose and sentence transitions.
 - The first desktop launch asks once whether to start at login, pre-ticked from
   `startup.launchOnLogin` (default `true`); the Host is never registered
   silently.
+- The Settings window resizes its fields and panes with the window, with a
+  minimum usable size. The model list, details, and activity log share added
+  space; resizing model columns leaves no stale background areas.
 - The Settings **Playback** tab sets the audio buffer (20–200 ms, default 50),
   the pause between sentences (0–1000 ms, default 0), and sentences prepared
   ahead (1–4, default 1), with **Reset to defaults** for that tab. Changes apply
@@ -202,8 +205,14 @@ connected prose and sentence transitions.
   ignored.
 - Model selection is available through at least: a default model/profile; a
   default per language; a per-request API selection; and desktop/tray controls.
+- Successfully loading a model in Settings also selects it for subsequent
+  speech in its supported languages, immediately and across Host restarts.
+  The latest Settings model or default-profile choice wins; a rejected load
+  does not change the saved choice. Unload releases weights without clearing
+  the speech selection.
 - The application exposes model discovery, load, unload, status, voice,
   language, and device information.
+- An enabled global selection shortcut remains usable while Settings is open.
 - Configuration errors identify the JSON path and preserve the last valid
   configuration.
 - Unsupported schema versions are rejected with an actionable error without

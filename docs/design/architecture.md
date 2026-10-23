@@ -744,6 +744,18 @@ holds the slot through synthesis, lookahead, and playback; Settings load/unload
 reports that the model is in use rather than blocking on the utterance. Stop or
 runner failure follows ADR 0002's cancellation/recovery contract.
 
+Settings Load also saves the chosen package as the language default for each
+language it declares. A Settings-owned `selected-model-<language>` profile
+keeps existing named profiles intact, uses automatic device selection, and
+preserves the active profile's idle timeout and fallback unless that fallback
+would select the same model or itself. It uses eager loading so background
+warm-up prefers the new default. Build and validate the candidate before load;
+save and publish it only after load succeeds. Save failure retains the previous
+configuration and reports an error. Model and General default-profile choices
+publish a new speech snapshot immediately, including while Settings stays open;
+the latest choice drives subsequent reads. Unload and idle unloading only
+release the resident runner; they do not reset the saved selection.
+
 `loadPolicy: eager` warms a model before the first tray read; `onDemand` waits for
 speech. With the current single slot, choose the first eager language-default
 profile in configuration-key order, otherwise the first eager profile. Other
@@ -799,6 +811,11 @@ modifiers plus a letter, digit, or F1–F24 key, then Settings probes it with
 `RegisterHotKey` before saving. A failed probe means Windows or another
 application currently owns the chord; Windows provides no global hotkey
 inventory.
+
+Opening Settings keeps the registered global shortcut active. Only the
+synchronous availability probe temporarily releases the tray registration,
+then restores it with the user's runtime suspension state preserved. Closing
+Settings rebinds the shortcut from the saved configuration.
 
 Desktop selection capture has three explicit policies, persisted in
 `selection.capturePolicy`: `automatic` (the default), `uiAutomationOnly`, and
