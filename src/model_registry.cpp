@@ -123,8 +123,12 @@ void validate_manifest_file_paths(const json &manifest,
   }
 }
 
-ModelPackageCandidate load_manifest_candidate(const std::filesystem::path &package_path,
-                                              const std::filesystem::path &manifest_path) {
+constexpr const char *kQwenAssetKeys[] = {"model", "mmproj", "voice", "voiceLicense"};
+
+// Checks the manifest only: schema, containment, and the declarations each
+// engine needs. Asset content is package_asset_problem's job.
+ModelPackageCandidate load_manifest_identity(const std::filesystem::path &package_path,
+                                             const std::filesystem::path &manifest_path) {
   const auto manifest = load_json_file(manifest_path, "model manifest");
   enforce_supported_schema_version(manifest);
 
@@ -138,19 +142,9 @@ ModelPackageCandidate load_manifest_candidate(const std::filesystem::path &packa
     const auto &languages = manifest.at("languages");
     if (languages.size() != 1 || (languages.front() != "en" && languages.front() != "ru"))
       throw std::runtime_error("qwen3-gguf package must declare exactly one language: en or ru");
-    for (const auto *key : {"model", "mmproj", "voice", "voiceLicense"}) {
-      const auto &files = manifest.at("files");
-      if (!files.contains(key))
+    for (const auto *key : kQwenAssetKeys) {
+      if (!manifest.at("files").contains(key))
         throw std::runtime_error(std::string("qwen3-gguf package requires /files/") + key);
-      const auto asset = package_path / path_from_utf8(files.at(key).get<std::string>());
-      if (!std::filesystem::is_regular_file(asset) || std::filesystem::file_size(asset) == 0)
-        throw std::runtime_error(std::string("qwen3-gguf package requires a non-empty file at /files/") + key);
-      if (std::string_view(key) == "model" || std::string_view(key) == "mmproj") {
-        std::ifstream input(asset, std::ios::binary);
-        char magic[4]{};
-        if (!input.read(magic, sizeof(magic)) || std::string_view(magic, 4) != "GGUF")
-          throw std::runtime_error(std::string("qwen3-gguf package requires GGUF at /files/") + key);
-      }
     }
   }
 
@@ -165,6 +159,34 @@ ModelPackageCandidate load_manifest_candidate(const std::filesystem::path &packa
       manifest.contains("revision") ? std::optional<std::string>(manifest.at("revision").get<std::string>())
                                     : std::nullopt,
   };
+}
+
+// Why a package with a valid manifest still cannot load: a missing or empty
+// Qwen asset, or weights without the GGUF magic. Verify and repair can still
+// reach such a package (scan.damaged_packages).
+std::optional<std::string> package_asset_problem(const ModelPackageCandidate &candidate) {
+  if (candidate.engine != "qwen3-gguf") return std::nullopt;
+  for (const auto *key : kQwenAssetKeys) {
+    const auto asset = candidate.package_path /
+                       path_from_utf8(candidate.manifest.at("files").at(key).get<std::string>());
+    std::error_code ec;
+    if (!std::filesystem::is_regular_file(asset, ec) || std::filesystem::file_size(asset, ec) == 0 || ec)
+      return std::string("qwen3-gguf package requires a non-empty file at /files/") + key;
+    if (std::string_view(key) == "model" || std::string_view(key) == "mmproj") {
+      std::ifstream input(asset, std::ios::binary);
+      char magic[4]{};
+      if (!input.read(magic, sizeof(magic)) || std::string_view(magic, 4) != "GGUF")
+        return std::string("qwen3-gguf package requires GGUF at /files/") + key;
+    }
+  }
+  return std::nullopt;
+}
+
+ModelPackageCandidate load_manifest_candidate(const std::filesystem::path &package_path,
+                                              const std::filesystem::path &manifest_path) {
+  auto candidate = load_manifest_identity(package_path, manifest_path);
+  if (const auto problem = package_asset_problem(candidate)) throw std::runtime_error(*problem);
+  return candidate;
 }
 
 // Scans one registry directory into `tier`. Problems with the directory or an
@@ -260,9 +282,14 @@ void scan_registry_directory(ModelRegistryScan &scan, const std::filesystem::pat
     }
 
     try {
-      auto candidate = load_manifest_candidate(package_path, manifest_path);
-        candidate.bundled = bundled;
-        tier.push_back(std::move(candidate));
+      auto candidate = load_manifest_identity(package_path, manifest_path);
+      candidate.bundled = bundled;
+      if (const auto problem = package_asset_problem(candidate)) {
+        add_unsupported(scan, package_path, *problem);
+        scan.damaged_packages.push_back(std::move(candidate));
+        continue;
+      }
+      tier.push_back(std::move(candidate));
     } catch (const std::exception &error) {
       add_unsupported(scan, package_path, error.what());
     }
@@ -408,6 +435,11 @@ ModelRegistryScan scan_model_registry(const ConfigDocument &config) {
                      std::tie(right.id, right.manifest_path);
             });
   std::sort(scan.previous_packages.begin(), scan.previous_packages.end(),
+            [](const ModelPackageCandidate &left, const ModelPackageCandidate &right) {
+              return std::tie(left.id, left.manifest_path) <
+                     std::tie(right.id, right.manifest_path);
+            });
+  std::sort(scan.damaged_packages.begin(), scan.damaged_packages.end(),
             [](const ModelPackageCandidate &left, const ModelPackageCandidate &right) {
               return std::tie(left.id, left.manifest_path) <
                      std::tie(right.id, right.manifest_path);

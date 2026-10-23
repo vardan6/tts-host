@@ -78,7 +78,10 @@ A stub runner emitting synthetic audio with no model is a permanent in-repo
 fixture and the basis of the end-to-end test.
 
 Runner death and deadline recovery, complete-chunk publication, and cancellation
-follow [ADR 0002](../adr/0002-runner-protocol.md#runner-failure).
+follow [ADR 0002](../adr/0002-runner-protocol.md#runner-failure). The Host
+starts and loads the runner before the first sentence, so a crash, transport
+failure, or deadline during that start takes the same one restart; a restart
+spent there is the first chunk's, which then gets no second one.
 
 ### Load rejection
 
@@ -601,12 +604,19 @@ re-download is Remove followed by Download, and damage is handled by Repair.
   "reinstall or upgrade the application" as the action, because the Host
   never writes the application's `models/`. Verify is offered only for a
   package at the catalogue's revision; an older one differs everywhere and
-  takes Update instead. The commit writes the journal `.<id>.repairing`, moves
-  the good files into staging, validates, moves the damaged folder to
-  `.<id>.damaged`, renames staging into place, and drops the journal. A start
-  that finds the journal with both folders present moves the good files back
-  (the repair is retried); with only staging left it installs staging if it
-  validates and otherwise restores the damaged folder.
+  takes Update instead. A package whose manifest is valid but whose files
+  cannot load (a missing or empty Qwen asset, weights without GGUF magic) is
+  never loaded, but the scan keeps it as damaged: its row reads "damaged",
+  with the reason in the details pane, and offers only Verify and repair… and
+  Open folder. The commit writes the journal `.<id>.repairing` naming the
+  package's folder, which need not equal its id, then moves the good files
+  into staging, validates, moves the damaged folder to `.<id>.damaged`,
+  renames staging into place, and drops the journal. A start that finds the
+  journal with both folders present moves the good files back (the repair is
+  retried); with only staging left it installs staging if it validates and
+  otherwise restores the damaged folder. A journal whose folder name is not
+  an ordinary entry of the directory, or that leaves nothing to restore from,
+  is kept and reported on every start rather than dropped.
 - **Open folder** reveals the selected package folder (a superseded row opens
   that copy); **Open models folder** opens the writable tier. Manual deletion
   there is picked up by directory watching; a package whose runner is resident

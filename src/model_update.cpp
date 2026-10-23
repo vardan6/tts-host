@@ -50,6 +50,18 @@ const ModelPackageCandidate &installed_package(const std::string &id, const Mode
   return *found;
 }
 
+// Verify and repair also reach a package whose files no longer load.
+const ModelPackageCandidate &maintained_package(const std::string &id, const ModelRegistryScan &scan) {
+  const auto found = std::find_if(scan.damaged_packages.begin(), scan.damaged_packages.end(),
+                                  [&](const ModelPackageCandidate &package) { return package.id == id; });
+  if (found == scan.damaged_packages.end() ||
+      std::any_of(scan.discovered_packages.begin(), scan.discovered_packages.end(),
+                  [&](const ModelPackageCandidate &package) { return package.id == id; })) {
+    return installed_package(id, scan);
+  }
+  return *found;
+}
+
 void remove_previous_versions_in(const std::filesystem::path &directory, const std::string &id,
                                  const ModelRegistryScan &scan) {
   for (const auto &previous : scan.previous_packages) {
@@ -141,9 +153,25 @@ void remove_leftovers_in(const std::filesystem::path &directory) {
 }
 
 // Written before a repair moves the good files into staging and removed once
-// the repaired package is in place.
+// the repaired package is in place. Holds "repair" and, on the next line, the
+// package's folder name, which need not equal its id.
 std::filesystem::path repair_journal_path(const std::filesystem::path &directory, const std::string &id) {
   return directory / ("." + id + ".repairing");
+}
+
+// The package folder a repair journal names, or `directory / id` for a
+// journal without one. Throws for a name that is not one ordinary entry of
+// `directory`.
+std::filesystem::path repaired_folder(const std::filesystem::path &journal, const std::string &id) {
+  const auto text = read_text(journal);
+  const auto newline = text.find('\n');
+  if (newline == std::string::npos) return journal.parent_path() / id;
+  const auto name = path_from_utf8(text.substr(newline + 1));
+  const auto spelled = path_to_utf8(name);
+  if (spelled.empty() || spelled.front() == '.' || name.filename() != name || name.has_root_path()) {
+    throw std::runtime_error("repair journal " + path_to_utf8(journal) + " names an invalid package folder");
+  }
+  return journal.parent_path() / name;
 }
 
 // Where a repair moves the damaged package before deleting it.
@@ -370,7 +398,7 @@ void remove_model_package(const ModelRemovalPlan &plan, bool keep_previous, cons
 
 ModelVerification verify_catalogue_package(const CatalogueEntry &entry, const ModelRegistryScan &scan,
                                            const DownloadProgressCallback &progress) {
-  const auto &current = installed_package(entry.id, scan);
+  const auto &current = maintained_package(entry.id, scan);
   if (!current.revision) {
     throw std::runtime_error("'" + entry.id + "' is a local package; only catalogue installs can be verified");
   }
@@ -461,7 +489,7 @@ void repair_catalogue_package(const CatalogueEntry &entry, const ModelVerificati
     const auto journal = repair_journal_path(directory, entry.id);
     {
       std::ofstream output(journal, std::ios::binary | std::ios::trunc);
-      if (!output || !(output << "repair")) {
+      if (!output || !(output << "repair\n" << path_to_utf8(installed.filename()))) {
         throw std::runtime_error("unable to write " + path_to_utf8(journal));
       }
     }
@@ -547,7 +575,13 @@ std::vector<std::string> recover_interrupted_model_updates(const ConfigDocument 
     for (const auto &journal : dot_entries_with_suffix(directory, ".repairing")) {
       const auto name = journal.filename().string();
       const auto id = name.substr(1, name.size() - 11);
-      const auto installed = directory / id;
+      std::filesystem::path installed;
+      try {
+        installed = repaired_folder(journal, id);
+      } catch (const std::exception &error) {
+        messages.push_back(std::string(error.what()) + "; left it in place.");
+        continue;
+      }
       const auto staging = directory / ("." + id + ".downloading");
       const auto discard = repair_discard_path(directory, id);
       const bool staged = std::filesystem::exists(staging);
@@ -565,6 +599,12 @@ std::vector<std::string> recover_interrupted_model_updates(const ConfigDocument 
           put_back_missing_files(staging, installed);
         }
         messages.push_back("Restored '" + id + "' after an interrupted repair; run Verify and repair again.");
+      } else {
+        // Nothing to restore from: keep the journal, so every start reports
+        // the stranded staged files instead of forgetting them.
+        messages.push_back("Could not recover the interrupted repair of '" + id + "': " +
+                           path_to_utf8(installed) + " is missing; left " + path_to_utf8(journal) + " in place.");
+        continue;
       }
       std::filesystem::remove(journal);
     }

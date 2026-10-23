@@ -82,6 +82,24 @@ std::string installed_revision(const tts_host::ConfigDocument &config) {
   return scan.discovered_packages.front().revision.value_or("local");
 }
 
+// A Qwen-engine package, whose discovery checks its assets' content as well.
+tts_host::CatalogueEntry qwen_version() {
+  const auto file = [](const std::string &path, const std::string &key, const std::string &body) {
+    return tts_host::CatalogueFile{path, key, "https://example.invalid/" + body, tts_host::sha256_hex(body),
+                                   body.size()};
+  };
+  return tts_host::CatalogueEntry{
+      "demo-qwen",
+      "Demo Qwen",
+      "qwen3-gguf",
+      {"en"},
+      tts_host::CatalogueLicense{"Apache-2.0", "https://example.invalid/licence", false},
+      {file("model.gguf", "model", "GGUFweights"), file("mmproj.gguf", "mmproj", "GGUFmmproj"),
+       file("reference.wav", "voice", "RIFFvoice")},
+      {tts_host::CatalogueGeneratedFile{"reference-license.txt", "voiceLicense", "public domain notice"}},
+  };
+}
+
 std::size_t previous_count(const tts_host::ConfigDocument &config) {
   return tts_host::scan_model_registry(config).previous_packages.size();
 }
@@ -562,6 +580,49 @@ int main(int argc, char **argv) {
     }
 
     {
+      // A Qwen package with a missing asset or a damaged GGUF header does not
+      // load, yet Verify reports it and repair restores it; bundled reports only.
+      const auto qwen = qwen_version();
+      const std::vector<std::pair<std::string, std::string>> damages{
+          {"reference.wav", ""}, {"mmproj.gguf", ""}, {"model.gguf", "XXXFweights"}};
+      for (const bool bundled_tier : {false, true}) {
+        for (const auto &[damaged_file, contents] : damages) {
+          const auto root = work / ("repair-qwen-" + std::string(bundled_tier ? "bundled-" : "") + damaged_file);
+          const auto user = root / "user";
+          const auto bundled = root / "app-models";
+          std::filesystem::create_directories(user);
+          std::filesystem::create_directories(bundled);
+          const auto config = make_config(root, schemas, user, bundled);
+          FakeNetwork network;
+          const auto directory = bundled_tier ? bundled : user;
+          tts_host::download_catalogue_entry(qwen, directory, config, network.fetcher(), nullptr);
+          const auto file = directory / "demo-qwen" / damaged_file;
+          if (contents.empty()) std::filesystem::remove(file); else write_file(file, contents);
+
+          const auto scan = tts_host::scan_model_registry(config);
+          require(scan.discovered_packages.empty() && scan.damaged_packages.size() == 1 &&
+                      scan.unsupported_entries.size() == 1,
+                  damaged_file + ": a damaged Qwen package was loadable or not kept for maintenance");
+          const auto report = tts_host::verify_catalogue_package(qwen, scan, nullptr);
+          require(report.damaged.size() == 1 && report.damaged[0].relative_path == damaged_file &&
+                      report.damaged[0].missing == contents.empty() && report.bundled == bundled_tier,
+                  damaged_file + ": the damaged Qwen file was not reported");
+          bool repaired = true;
+          try {
+            tts_host::repair_catalogue_package(qwen, report, config, network.fetcher(), nullptr, nullptr);
+          } catch (const std::runtime_error &) {
+            repaired = false;
+          }
+          require(repaired != bundled_tier, damaged_file + ": repair ignored the package's tier");
+          const auto after = tts_host::scan_model_registry(config);
+          require(after.discovered_packages.size() == (bundled_tier ? 0u : 1u) &&
+                      after.damaged_packages.size() == (bundled_tier ? 1u : 0u),
+                  damaged_file + ": repair did not make the Qwen package loadable again");
+        }
+      }
+    }
+
+    {
       // A repair cut short is rolled back while good files were moving, and
       // completed or rolled back after the damaged copy moved aside.
       for (const std::string stage : {"moving", "swapped", "swapped-invalid"}) {
@@ -592,6 +653,63 @@ int main(int argc, char **argv) {
                     !std::filesystem::exists(user / ".demo-update.damaged"),
                 stage + ": recovery left its journal or the damaged copy");
         require(tts_host::recover_interrupted_model_updates(config).empty(), stage + ": recovery is not idempotent");
+      }
+    }
+
+    {
+      // A package in a folder not named after its id: repair works in place,
+      // and an interrupted one is recovered from the folder its journal names.
+      // A journal naming no recoverable folder is kept and reported.
+      for (const std::string stage : {"complete", "moving", "unrecoverable"}) {
+        const auto user = work / ("repair-renamed-" + stage) / "user";
+        std::filesystem::create_directories(user);
+        const auto config = make_config(work / ("repair-renamed-" + stage), schemas, user, {});
+        FakeNetwork network;
+        tts_host::download_catalogue_entry(multi, user, config, network.fetcher(), nullptr);
+        const auto package = user / "renamed-demo";
+        std::filesystem::rename(user / "demo-update", package);
+        write_file(package / "model.onnx", "xeights-multi");
+
+        if (stage == "complete") {
+          const auto report = tts_host::verify_catalogue_package(multi, tts_host::scan_model_registry(config), nullptr);
+          tts_host::repair_catalogue_package(multi, report, config, network.fetcher(), nullptr, nullptr);
+          require(!std::filesystem::exists(user / "demo-update") &&
+                      tts_host::verify_catalogue_package(multi, tts_host::scan_model_registry(config), nullptr)
+                          .damaged.empty(),
+                  "a renamed package was not repaired in place");
+          continue;
+        }
+
+        // Cut short while good files moved: staging has no manifest yet.
+        const auto staging = tts_host::stage_catalogue_entry(multi, user, config, network.fetcher(), nullptr);
+        std::filesystem::remove(staging / "model.json");
+        std::filesystem::remove(staging / "voices" / "af.bin");
+        std::filesystem::rename(package / "voices" / "af.bin", staging / "voices" / "af.bin");
+        const auto journal = user / ".demo-update.repairing";
+        write_file(journal, stage == "moving" ? "repair\nrenamed-demo" : "repair");
+
+        const auto messages = tts_host::recover_interrupted_model_updates(config);
+        require(messages.size() == 1, stage + ": the interrupted renamed repair was not reported");
+        if (stage == "moving") {
+          require(read_file(package / "voices" / "af.bin") == "voices-multi" && !std::filesystem::exists(journal),
+                  "the good file was not put back into the renamed folder");
+        } else {
+          require(std::filesystem::exists(journal) && std::filesystem::exists(staging / "voices" / "af.bin") &&
+                      messages.front().find("left") != std::string::npos,
+                  "an unrecoverable repair journal was deleted");
+        }
+      }
+
+      // A journal may only name an ordinary entry of its directory.
+      const auto user = work / "repair-escape" / "user";
+      std::filesystem::create_directories(user);
+      const auto config = make_config(work / "repair-escape", schemas, user, {});
+      for (const std::string name : {"../outside", ".previous", ""}) {
+        write_file(user / ".demo-update.repairing", "repair\n" + name);
+        const auto messages = tts_host::recover_interrupted_model_updates(config);
+        require(messages.size() == 1 && messages.front().find("invalid package folder") != std::string::npos &&
+                    std::filesystem::exists(user / ".demo-update.repairing"),
+                "a repair journal naming '" + name + "' was trusted");
       }
     }
   } catch (const std::exception &error) {

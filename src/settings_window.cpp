@@ -425,7 +425,9 @@ BOOL CALLBACK apply_shell_ui_font(HWND child, LPARAM font) {
 // preselecting whichever one languageDefaults.en currently names. English is
 // the only language surfaced end to end so far (see roadmap and
 // resolve_default_runner_selection in src/main.cpp).
+// Refills `combo`: selection indexes the new rows, so old ones go first.
 void populate_default_profile_combo(HWND combo, const ConfigDocument &document) {
+  SendMessageW(combo, CB_RESETCONTENT, 0, 0);
   const auto &profiles = document.value.at("profiles");
   const std::string current_value = document.value.at("languageDefaults").contains("en")
                                         ? document.value.at("languageDefaults").at("en").get<std::string>()
@@ -709,7 +711,7 @@ void update_model_buttons(SettingsState &state, HWND window) {
   const bool idle = !state.model_task.joinable();
   const auto enable = [&](int id, bool enabled) { EnableWindow(GetDlgItem(window, id), enabled ? TRUE : FALSE); };
   enable(kLoadModelButtonId, row != nullptr && row->installed);
-  enable(kDownloadModelButtonId, idle && row != nullptr && !row->installed && row->in_catalogue);
+  enable(kDownloadModelButtonId, idle && row != nullptr && !row->installed && !row->damaged && row->in_catalogue);
   enable(kUpdateModelButtonId, idle && row != nullptr && row->update_available);
   enable(kImportModelButtonId, idle);
   enable(kCancelModelTaskButtonId, !idle && state.model_task_cancellable);
@@ -1299,6 +1301,7 @@ void on_open_model_folder_clicked(SettingsState &state, HWND window) {
     return found == packages.end() ? nullptr : &*found;
   };
   const auto *found = find(state.last_scan.discovered_packages);
+  if (found == nullptr) found = find(state.last_scan.damaged_packages);
   if (found == nullptr) found = find(state.last_scan.previous_packages);
   if (found == nullptr) {
     return;
@@ -1333,6 +1336,13 @@ void on_more_model_actions_clicked(SettingsState &state, HWND window, HWND butto
     }
     return nullptr;
   }();
+  // A package whose files no longer load is reachable for Verify and repair.
+  const auto *damaged = [&]() -> const ModelPackageCandidate * {
+    for (const auto &package : scan.damaged_packages) {
+      if (package.id == model_id && installed == nullptr) return &package;
+    }
+    return nullptr;
+  }();
   const bool idle = !state.model_task.joinable();
   const bool writable = installed != nullptr && !installed->bundled && idle;
 
@@ -1349,8 +1359,9 @@ void on_more_model_actions_clicked(SettingsState &state, HWND window, HWND butto
   const bool catalogued = std::any_of(model_catalogue().begin(), model_catalogue().end(),
                                       [&](const CatalogueEntry &entry) { return entry.id == model_id; });
   // Verify compares against the catalogue revision; an older one is updated instead.
+  const auto *maintained = installed != nullptr ? installed : damaged;
   const bool verifiable =
-      installed != nullptr && idle && catalogued && package_status(*installed) == PackageStatus::current;
+      maintained != nullptr && idle && catalogued && package_status(*maintained) == PackageStatus::current;
   bool removable_superseded = false;
   for (const auto &package : scan.superseded_packages) {
     if (package.id != model_id) continue;
@@ -1370,7 +1381,7 @@ void on_more_model_actions_clicked(SettingsState &state, HWND window, HWND butto
       writable);
   add(kVerifyModelCommandId, L"Verify and repair…", verifiable);
   AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-  add(kOpenModelFolderCommandId, L"Open folder", installed != nullptr || has_previous);
+  add(kOpenModelFolderCommandId, L"Open folder", maintained != nullptr || has_previous);
   add(kOpenModelsFolderCommandId, L"Open models folder", true);
 
   RECT rect{};

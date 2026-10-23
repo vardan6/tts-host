@@ -156,6 +156,34 @@ Synthetic Copy adapter compatibility remains separate open work below.
     Shortcut follow-up: verify Ctrl+F8 while Settings is open, after probing
     a binding, and after close; the registration now stays active except
     during the availability probe.
+- Fixes before merge, on `feature/model-maintenance`, from the
+  [model-maintenance review triage](docs/reviews/code-review-2026-10-24-model-maintenance.md#triage--2026-10-24):
+  - [x] **AFK — Keep runner recovery for initial startup failures:** make
+    `prepare()` take part in the one-restart policy for launch, protocol, and
+    deadline failures while `RunnerLoadRejected` still skips retries and
+    applies the fallback; keep one retry budget for the first unplayed chunk;
+    test initialize and load transport failures apart from explicit
+    rejection — see
+    [review #3](docs/reviews/code-review-2026-10-24-model-maintenance.md#3--preserve-recovery-while-distinguishing-explicit-load-rejection),
+    [ADR 0002](docs/adr/0002-runner-protocol.md), and
+    [load rejection design](docs/design/architecture.md#load-rejection).
+  - [x] **AFK — Reset the default-profile picker on Load:** clear the combo
+    before refilling it after a successful Load; repeated Load → General
+    shows one row per profile with the saved default selected. Windows
+    desktop check passed on user confirmation 2026-10-24 — see
+    [review #2](docs/reviews/code-review-2026-10-24-model-maintenance.md#2--reset-the-profile-picker-before-refilling-it).
+  - [x] **AFK — Verify and repair damaged Qwen packages:** done ahead of the
+    Qwen keep/drop decision at the user's request; keep damaged-package metadata for
+    maintenance without making it loadable, preserving schema/containment and
+    bundled report-only; cover missing reference, missing mmproj, and a bad
+    GGUF header — see
+    [review #1](docs/reviews/code-review-2026-10-24-model-maintenance.md#1--retain-enough-package-identity-to-verify-damaged-qwen-assets)
+    and [maintenance design](docs/design/architecture.md#model-removal-repair-and-maintenance-actions).
+  - [x] **AFK — Journal the installed folder for repair:** record the package
+    folder in the repair journal, check it stays inside the registry
+    directory, recover from it, and keep the journal when no recovery branch
+    succeeds; test a folder named differently from its ID — see
+    [review #4](docs/reviews/code-review-2026-10-24-model-maintenance.md#4--journal-the-actual-installed-folder).
 - Qwen quality and model options, after the unified model list:
   - [x] **AFK — Higher-precision Qwen catalogue variants:** add the Q8_0 and
     bf16 packages with pinned URLs, sizes, and SHA-256; download and synthesize

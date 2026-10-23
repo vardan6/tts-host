@@ -18,6 +18,9 @@ class RecoveringRunner {
                    std::optional<std::filesystem::path> voice = {},
                    RunnerDeadlines deadlines = {}, std::function<bool()> cancelled = {},
                    std::function<void(const std::string &)> log = {});
+  // Starts and loads the runner if it is not running, restarting once after
+  // a RunnerLaunchError (launch, transport, or deadline). A restart spent
+  // here leaves the next synthesize() none for its chunk.
   void prepare();
   void unload();
   bool loaded() const { return session_ != nullptr; }
@@ -33,6 +36,10 @@ class RecoveringRunner {
   int finish();
  private:
   void start();
+  void drop_session();
+  // Drops the session, then throws if cancelled or `retried`; otherwise logs
+  // the restart of `what`.
+  void recover_or_throw(const RunnerLaunchError &error, bool retried, const std::string &what);
   std::filesystem::path executable_;
   std::optional<std::filesystem::path> model_, voice_;
   RunnerDeadlines deadlines_;
@@ -42,5 +49,6 @@ class RecoveringRunner {
   std::function<void(const std::string &)> load_rejected_callback_;
   std::unique_ptr<RunnerSession> session_;
   int request_id_ = 3;
+  bool restart_spent_ = false;
 };
 }  // namespace tts_host

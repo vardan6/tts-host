@@ -44,6 +44,63 @@ int main(int argc, char **argv) {
       require(restarts == 1, "failed chunk did not restart exactly once");
       require(runner.finish() == 0, "recovered process failed");
     }
+    // A start that fails before initialize or load replies restarts once in
+    // prepare(); that restart is the first chunk's, so a later failure of the
+    // chunk is final. Every start failing is actionable after one restart.
+    for (const std::string mode : {"init-death-once", "load-death-once", "init-death", "load-death"}) {
+      env("TTS_TEST_RUNNER_MODE", mode);
+      std::filesystem::remove(marker);
+      int restarts = 0;
+      tts_host::RecoveringRunner runner(executable, std::filesystem::path("model"), {}, deadlines,
+          {}, [&](const std::string &message) {
+            require(message.find("retrying its start") != std::string::npos, "start restart reason missing");
+            ++restarts;
+          });
+      if (mode.ends_with("-once")) {
+        runner.prepare();
+        require(runner.loaded() && restarts == 1, "a failed start did not restart exactly once");
+        require(runner.synthesize("hello", 1.0).pcm == tts_host::make_stub_runner_synthesis_frame().payload,
+                "the restarted runner did not synthesize");
+        require(runner.finish() == 0, "restarted process failed");
+      } else {
+        bool failed = false;
+        try { runner.prepare(); }
+        catch (const tts_host::RunnerLaunchError &error) {
+          failed = std::string(error.what()).find("choose another model") != std::string::npos;
+        }
+        require(failed && restarts == 1 && !runner.loaded(),
+                "a repeatedly failing start must be actionable after exactly one restart");
+      }
+    }
+    {
+      // The start's restart spends the first chunk's: its failure is final.
+      env("TTS_TEST_RUNNER_MODE", "load-death-once");
+      std::filesystem::remove(marker);
+      int restarts = 0;
+      tts_host::RecoveringRunner runner(executable, std::filesystem::path("model"), {}, deadlines,
+          {}, [&](const std::string &) { ++restarts; });
+      runner.prepare();
+      runner.finish();  // the closed session fails the first chunk
+      bool failed = false;
+      try { runner.synthesize("hello", 1.0); }
+      catch (const tts_host::RunnerLaunchError &error) {
+        failed = std::string(error.what()).find("after one restart") != std::string::npos;
+      }
+      require(failed && restarts == 1, "the first chunk got a second restart after the start's");
+    }
+    // A rejected load through prepare() is not retried either.
+    {
+      env("TTS_TEST_RUNNER_MODE", "normal");
+      env("TTS_STUB_RUNNER_REJECT_LOAD", "no usable GPU");
+      int restarts = 0;
+      tts_host::RecoveringRunner runner(executable, std::filesystem::path("model"), {}, deadlines,
+          {}, [&](const std::string &) { ++restarts; });
+      bool rejected = false;
+      try { runner.prepare(); }
+      catch (const tts_host::RunnerLoadRejected &) { rejected = true; }
+      env("TTS_STUB_RUNNER_REJECT_LOAD", "");
+      require(rejected && restarts == 0 && !runner.loaded(), "prepare() retried a rejected load");
+    }
     // A rejected request reports its reason without restarting the runner,
     // discards its partial PCM, and leaves the session usable.
     {

@@ -17,6 +17,15 @@ int main() try {
   lifecycle("start");
   const std::string mode = std::getenv("TTS_TEST_RUNNER_MODE");
   if (mode == "close-input") return 9;
+  // Dies before answering initialize or load, on the first start only or on
+  // every start.
+  const auto first_start = [] {
+    const std::filesystem::path marker(std::getenv("TTS_TEST_RUNNER_MARKER"));
+    if (std::filesystem::exists(marker)) return false;
+    std::ofstream(marker) << "failed";
+    return true;
+  };
+  if (mode == "init-death" || (mode == "init-death-once" && first_start())) return 9;
   if (mode == "silent" || mode == "blocked-write") hang();
   tts_host::RunnerControlMessageParser parser;
   bool loaded = false;
@@ -30,6 +39,7 @@ int main() try {
       nlohmann::json response;
       if (method == "load") {
         if (mode == "load-hang") hang();
+        if (mode == "load-death" || (mode == "load-death-once" && first_start())) return 9;
         loaded = true;
         response = tts_host::handle_stub_runner_load_message(request);
       } else if (method == "synthesize") {
