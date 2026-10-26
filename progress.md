@@ -1,3 +1,27 @@
+- 2026-10-26: Profile resolution module — `profile_resolution.hpp` owns
+  language → profile → model, `--model`/`--runner`, `fallbackProfile`, the
+  per-profile idle override, and `eager_selection`; `ProfileView` is the only
+  reader of `model`, `fallbackProfile`, `loadPolicy`, and `idleUnloadSeconds`
+  (including Remove…'s profile list). `RunnerSelection` (`runner_selection.hpp`)
+  replaces `ModelRunnerSelection`; `ModelSessionManager::warm` and `acquire`
+  take it directly and no longer read profiles. Messages are returned and
+  `main.cpp` prints and logs them, so a request whose resolution throws no
+  longer prints its "Language:" or "using fallback" line first; the error
+  still names both reasons. `profile_resolution_tests` cover it without
+  processes; `cli_language_selection` still passes on Linux.
+- 2026-10-26: Speech queue module — `SpeechQueue` (`speech_queue.hpp`)
+  replaces `TraySpeechScheduler` in `main.cpp`; synthesis sits behind the
+  `SpeechEngine` seam (speak, warm, unload if idle), with `HostSpeechEngine`
+  in `main.cpp` as the production adapter. `speech_queue_tests` cover
+  replace/queue, stop, warm-up cancellation, profile-change rewarm, the idle
+  poll, and failure through a fake engine. The Local API now turns
+  `PlaybackStatus` into the `/v1/playback` JSON (`playback_status_json`).
+- 2026-10-26: Model-action eligibility in the model list module — each
+  `ModelListRow` carries its actions (applies, target folder, reason, changes
+  registry); Settings buttons and More ▾ only render them. `model_update`
+  exposes `maintained_package` and `revert_source`, which both the rows and
+  its throws use. Rules covered by `model_list_tests`; Windows Host builds;
+  desktop click-through pending (HITL in `roadmap.md`).
 - 2026-10-24: Unified Settings model list — desktop checks passed on user
   confirmation: layout, Q8_0/Kokoro selection persistence, Ctrl+F8.
 - 2026-10-24: Qwen variants vs Kokoro listening comparison — user verdict:
@@ -604,3 +628,15 @@
 - 2026-10-24: Follow-up cross-provider model-maintenance review — reviewed the four fixes against `3688056` and the then-uncommitted working tree; appended findings #5–#7 and original-finding dispositions to [the existing review](docs/reviews/code-review-2026-10-24-model-maintenance.md#follow-up-cross-review--2026-10-24). #5 is the remaining protocol-validation case of original #3; #6–#7 concern the new damaged-package state. Linux Debug build and all six targeted CTests passed; temporary fixtures reproduced #5 and #7. This records the review outcome at that time, not the current fix status: follow-up triage and implementation have since progressed in other sessions. No implementation or behavior/architecture changes were made by this review session; no uncaptured planning or handoff needed. Session close leaves active context, roadmap, review triage, and concurrent implementation untouched.
 
 - 2026-10-24: Model-maintenance follow-up triage and fixes — triaged #5–#7 (all confirmed), then fixed all three at the user's request: malformed initialize/load/synthesize replies take the one restart; damaged older revisions offer Update (damaged copy discarded) and damaged per-user copies offer Remove…, bundled read-only; damaged copies follow tier precedence. Architecture maintenance section updated. Linux 52/53 and Windows (`build-gpu-fallback`) 52/53 CTests pass, failures being the known port 7861 and folder-name noise. Desktop check of the new damaged-row actions and a mixed-revision precedence test remain open.
+
+- 2026-10-25: Merge model maintenance — PR #4 rebase-merged into `main` (`a47ebe4`); `feature/model-maintenance` deleted on GitHub and locally; the damaged-row Settings actions (#6) were merged without a desktop check.
+
+- 2026-10-25: Architecture review — `/improve-codebase-architecture` found four deepening candidates; captured in `docs/reviews/architecture-review-2026-10-25.md` (+ HTML snapshot) and as roadmap § Architecture deepening on `chore/improve-codebase-architecture`.
+
+- 2026-10-26: Architecture interfaces settled — the review's questions for candidates 1–4 answered (user accepted the recommendations) and recorded in `docs/design/architecture.md` (action eligibility, § Speech queue, § Profile resolution); candidate 4 folds into 3, other typed config reads deferred; grilling slices removed. Qwen kept with all variants.
+
+- 2026-10-26: Cross-provider architecture-deepening review — Codex/OpenAI reviewed `a47ebe4..56155ef` against the captured specs after Opus 5.5/Anthropic implementation; [one low-severity profile-read consolidation gap](docs/reviews/code-review-2026-10-26-architecture-deepening.md) awaits triage, with no runtime regression confirmed. Linux build passed; 53/55 CTests passed, and both remaining checks passed using the committed config or a free port. Desktop click-through remains pending. Review only: no behavior/architecture changes or uncaptured planning; state files suffice for continuation.
+
+- 2026-10-26: Architecture review triage — finding #1 (profile reads left in `with_selected_model()`) confirmed against `src/config_persistence.cpp`; classified should-fix-before-merge, no must-fix; queued as roadmap slice "Read profiles through the typed view in model selection". No code or durable-doc changes.
+
+- 2026-10-26: Read profiles through the typed view in model selection — `with_selected_model()` reads the previous profile and its fallback via `profile_view()` (review finding #1); new `config_persistence_tests` cases cover fallback kept/dropped and explicit zero idle timeout, and pass on the old code too. Linux 53/55: config persistence fails only against the uncommitted `config.example.json`, tray on busy port 7861 (both known). Windows not rebuilt.

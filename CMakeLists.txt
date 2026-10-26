@@ -188,12 +188,14 @@ add_executable(
   src/now_playing_window.cpp
   src/playback_controller.cpp
   src/playback_sink.cpp
+  src/profile_resolution.cpp
   src/runner_protocol.cpp
   src/runner_launcher.cpp
   src/synthesis_pipeline.cpp
   src/selection_capture.cpp
   src/settings_window.cpp
   src/sha256.cpp
+  src/speech_queue.cpp
   src/startup_choice.cpp
   src/text_normalizer.cpp
   src/text_splitter.cpp
@@ -675,7 +677,8 @@ if(BUILD_TESTING)
   add_test(NAME tts_host_cli_text_sources COMMAND tts-host-config-loader-tests)
 
   add_executable(tts-host-config-persistence-tests
-    src/config_loader.cpp src/config_persistence.cpp tests/config_persistence_tests.cpp)
+    src/config_loader.cpp src/config_persistence.cpp src/profile_resolution.cpp
+    src/language_selection.cpp tests/config_persistence_tests.cpp)
   target_include_directories(tts-host-config-persistence-tests PRIVATE include)
   target_link_libraries(tts-host-config-persistence-tests PRIVATE
     nlohmann_json::nlohmann_json ${JSON_SCHEMA_VALIDATOR_TARGET})
@@ -771,7 +774,8 @@ if(BUILD_TESTING)
     src/recovering_runner.cpp src/activity_log.cpp
     src/synthesis_pipeline.cpp src/runner_launcher.cpp src/runner_protocol.cpp
     src/playback_controller.cpp src/playback_sink.cpp src/audio_conversion.cpp
-    src/audio_history.cpp src/text_splitter.cpp src/wav_writer.cpp)
+    src/audio_history.cpp src/text_splitter.cpp src/wav_writer.cpp
+    src/profile_resolution.cpp src/language_selection.cpp)
   target_include_directories(tts-host-resident-synthesis-tests PRIVATE include)
   target_link_libraries(tts-host-resident-synthesis-tests PRIVATE
     nlohmann_json::nlohmann_json ${JSON_SCHEMA_VALIDATOR_TARGET})
@@ -1001,13 +1005,18 @@ if(BUILD_TESTING)
       ${CMAKE_CURRENT_BINARY_DIR}/model-registry-tier-tests
   )
 
-  # Unified Settings model list rows and details (src/model_list.cpp), built
-  # from hand-made scans so every source/status combination is covered.
+  # Unified Settings model list rows, their action eligibility, and details
+  # (src/model_list.cpp), built from hand-made scans so every source/status
+  # combination is covered.
   add_executable(
     tts-host-model-list-tests
+    src/catalogue_download.cpp
     src/model_catalogue.cpp
     src/model_list.cpp
     src/model_registry.cpp
+    src/model_update.cpp
+    src/profile_resolution.cpp
+    src/language_selection.cpp
     src/sha256.cpp
     tests/model_list_tests.cpp
   )
@@ -1018,6 +1027,9 @@ if(BUILD_TESTING)
       nlohmann_json::nlohmann_json
       ${JSON_SCHEMA_VALIDATOR_TARGET}
   )
+  if(WIN32)
+    target_link_libraries(tts-host-model-list-tests PRIVATE winhttp)
+  endif()
   if(MSVC)
     target_compile_options(tts-host-model-list-tests PRIVATE /W4 /permissive-)
   else()
@@ -1039,6 +1051,8 @@ if(BUILD_TESTING)
     src/model_catalogue.cpp
     src/model_registry.cpp
     src/model_update.cpp
+    src/profile_resolution.cpp
+    src/language_selection.cpp
     src/sha256.cpp
     tests/model_update_tests.cpp
   )
@@ -1196,6 +1210,45 @@ if(BUILD_TESTING)
   endif()
   add_test(NAME tts_host_local_api COMMAND tts-host-local-api-tests)
   set_tests_properties(tts_host_local_api PROPERTIES TIMEOUT 10)
+
+  # Profile resolution (src/profile_resolution.cpp) with an in-process model
+  # resolver: language to profile to model, overrides, fallbacks, and the
+  # eager pick, without runner processes.
+  add_executable(
+    tts-host-profile-resolution-tests
+    src/language_selection.cpp
+    src/profile_resolution.cpp
+    tests/profile_resolution_tests.cpp
+  )
+  target_include_directories(tts-host-profile-resolution-tests PRIVATE include)
+  target_link_libraries(tts-host-profile-resolution-tests PRIVATE nlohmann_json::nlohmann_json)
+  if(MSVC)
+    target_compile_options(tts-host-profile-resolution-tests PRIVATE /W4 /permissive-)
+  else()
+    target_compile_options(tts-host-profile-resolution-tests PRIVATE -Wall -Wextra -Wpedantic)
+  endif()
+  add_test(NAME tts_host_profile_resolution COMMAND tts-host-profile-resolution-tests)
+
+  # Speech queue rules (src/speech_queue.cpp) through an in-process fake
+  # engine: replace versus queue, stop, warm-up cancellation, profile-change
+  # reload, and the idle-unload poll.
+  add_executable(
+    tts-host-speech-queue-tests
+    src/activity_log.cpp
+    src/config_snapshot.cpp
+    src/playback_controller.cpp
+    src/speech_queue.cpp
+    tests/speech_queue_tests.cpp
+  )
+  target_include_directories(tts-host-speech-queue-tests PRIVATE include)
+  target_link_libraries(tts-host-speech-queue-tests PRIVATE nlohmann_json::nlohmann_json)
+  if(MSVC)
+    target_compile_options(tts-host-speech-queue-tests PRIVATE /W4 /permissive-)
+  else()
+    target_compile_options(tts-host-speech-queue-tests PRIVATE -Wall -Wextra -Wpedantic)
+  endif()
+  add_test(NAME tts_host_speech_queue COMMAND tts-host-speech-queue-tests)
+  set_tests_properties(tts_host_speech_queue PROPERTIES TIMEOUT 30)
 
   find_program(TTS_HOST_NODE_EXECUTABLE NAMES node)
   if(TTS_HOST_NODE_EXECUTABLE)

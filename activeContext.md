@@ -1,33 +1,32 @@
 # Active Context
 
-- Mode: implementation; the bundled two-model release block is complete.
-- Branch: `feature/model-maintenance`, pushed and clean. `86a7e43` has the four
-  review fixes; `af7c728` has the follow-up triage and the fixes for #5–#7.
-- State: all seven model-maintenance review findings are fixed and pass both
-  builds' tests. The new Settings actions for damaged rows (#6: Update on an
-  older revision, Remove… on a per-user copy) are not desktop-checked. The
-  user is considering dropping Qwen (Open decisions in `roadmap.md`).
-- Next: user checks the damaged-row actions on the desktop if
-  wanted; then merge to `main`. The UI fixes passed the user's desktop check.
-  The Qwen keep/drop decision gates the remaining Qwen slices.
-- Blockers/environment: the running Host locks its executable; do not
-  terminate it without permission, and do not link over it. Use a separate
-  output folder for build checks. Developer launches use
-  `config.development.json` (`PROJECT.md`). Linux tests: `build-linux/`. Run
-  `tts-host --list-models` with `--headless`, or it starts the app. Windows
-  PowerShell: `/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe`.
-- Open questions: whether to drop Qwen; named-speaker path and VoiceDesign
-  scope; per-model options; the other Open decisions in `roadmap.md`. Linux
-  Qwen runner-folder loading is unverified; previous-only restoration is
-  undesigned.
-- Discarded as noise:
-  - Kokoro showing `local` was a missing revision stamp from the developer
-    fetch script.
-  - The port 7861 failure was an existing Debug Host, not a test failure.
-  - `cli_language_selection` failing in `build-gpu-fallback` is its "fallback"
-    check matching the folder name, not a regression.
-  - The harness guard blocks Bash heredocs or scripts that contain "Qwen" text;
-    edit such files with the Edit tool.
-  - A source edit once vanished from `/mnt/c` between a passing build and the
-    next command (cause unknown); grep for the change before trusting a
-    revert-and-restore check.
+- Mode: implementation (behavior-preserving refactor); branch `chore/improve-codebase-architecture` from
+  `main` at `a47ebe4`; pushed, open as PR #5 (github.com/vardan6/tts-host/pull/5).
+- State: three architecture refactors plus the fix for cross-review
+  [finding #1](docs/reviews/code-review-2026-10-26-architecture-deepening.md)
+  (profile reads in `with_selected_model()` via `profile_view()`); all
+  review findings closed.
+- Next atomic step: HITL model-row desktop click-through in `roadmap.md`
+  (also covers the damaged-row actions #6), then merge PR #5.
+- Verification: Linux build passed; 53/55 CTests passed — config persistence
+  fails only against the uncommitted `config.example.json` (passes on the
+  committed copy), tray on busy port 7861. Windows not rebuilt since the
+  finding fix; prior build passed except its known language-test false
+  failure.
+- Blockers/environment: do not terminate the running Host without permission
+  or link over its locked executable; use a separate build output. Developer
+  launches use `config.development.json` with login startup disabled
+  (`PROJECT.md`). Linux tests: `build-linux/`; listing models needs `--headless`.
+  Existing user changes to `config.example.json` and its `.last-valid` file
+  are outside this review; preserve them.
+- Open questions: other typed config reads remain
+  deferred. Qwen named-speaker/VoiceDesign scope, per-model options, and other
+  open decisions remain in `roadmap.md`. Linux Qwen runner-folder loading is
+  unverified; previous-only restoration is undesigned.
+- Discarded as noise: mixed healthy/damaged copies do not lose rollback or
+  the last-model warning (`damaged_package()` excludes loadable IDs); see
+  review verification. Port 7861 collision and persistence failure against
+  the user-edited example are environment/input issues. Windows language
+  test's matching of "fallback" in the build path remains known noise.
+  New persistence tests build their own profiles: asserting on the example
+  file breaks against the user-edited copy.

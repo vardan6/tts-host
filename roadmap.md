@@ -26,6 +26,52 @@ Evidence, measurements, and final closure are in the
 [October 16 acceptance report](docs/reviews/windows-acceptance-2026-10-16.md).
 Synthetic Copy adapter compatibility remains separate open work below.
 
+## Architecture deepening
+
+Branch `chore/improve-codebase-architecture`. Candidates and ranking are in the
+[2026-10-25 architecture review](docs/reviews/architecture-review-2026-10-25.md).
+Each refactor keeps behavior unchanged. Every candidate's interface questions
+were answered on 2026-10-26 (user accepted the recommendations) and are
+recorded in `docs/design/`, so no grilling slices remain.
+
+- [x] **Cross-provider branch review:** `main..56155ef` reviewed in
+  Codex/OpenAI after Opus/Anthropic implementation; one low-severity profile-read
+  consolidation gap recorded in the
+  [findings](docs/reviews/code-review-2026-10-26-architecture-deepening.md).
+- [x] **Review triage:** finding #1 of the
+  [branch review](docs/reviews/code-review-2026-10-26-architecture-deepening.md)
+  is valid; queued below, fix before merge.
+- [x] **AFK — Read profiles through the typed view in model selection:**
+  `with_selected_model()` reads the previous profile's fallback and idle
+  timeout, and the fallback's model, through `profile_view()`; JSON writes stay
+  in config persistence; behavior unchanged — see
+  [finding #1](docs/reviews/code-review-2026-10-26-architecture-deepening.md#1--finish-moving-profile-reads-behind-the-typed-view)
+  and [profile resolution](docs/design/architecture.md#profile-resolution).
+- [x] **HITL — Settle the interfaces of candidates 1–4:** recorded in
+  [action eligibility](docs/design/architecture.md#model-removal-repair-and-maintenance-actions),
+  [speech queue](docs/design/architecture.md#speech-queue), and
+  [profile resolution](docs/design/architecture.md#profile-resolution). Candidate 4's profile reads
+  fold into candidate 3; its other typed reads are deferred.
+- [x] **AFK — Move model-action eligibility into the model list module:**
+  Settings buttons and the More menu render the row's actions; the rules are
+  covered by `model_list_tests` on Linux — see
+  [action eligibility](docs/design/architecture.md#model-removal-repair-and-maintenance-actions) and
+  [candidate 1](docs/reviews/architecture-review-2026-10-25.md#1--model-action-eligibility-in-the-model-list-module).
+- [ ] **HITL — Desktop click-through of the model rows:** Settings has no
+  Linux test, so check the buttons and More ▾ on installed, bundled, damaged,
+  catalogue, and previous-only rows; also covers the damaged-row actions (#6).
+- [x] **AFK — Extract the speech queue module from `main.cpp`:** queue modes,
+  warm-up cancellation, idle unload, and profile-change reload tested through
+  the in-process fake engine; playback-status JSON moves to the local API —
+  see [speech queue](docs/design/architecture.md#speech-queue) and
+  [candidate 2](docs/reviews/architecture-review-2026-10-25.md#2--speech-queue-module-out-of-maincpp).
+- [x] **AFK — One profile resolution module:** language, profile, fallback, idle
+  override, eager pick, and the profile reads behind one interface with one
+  `RunnerSelection`; unchanged
+  [load rejection](docs/design/architecture.md#load-rejection) behavior — see
+  [profile resolution](docs/design/architecture.md#profile-resolution) and
+  [candidate 3](docs/reviews/architecture-review-2026-10-25.md#3--one-profile-resolution-module).
+
 ## Product
 
 - [x] **AFK — Qwen end-to-end synthesis (evaluation):** local package discovery,
@@ -217,7 +263,9 @@ Synthetic Copy adapter compatibility remains separate open work below.
     closed 2026-10-24 with no change: bundled Q4_K_M, the catalogue variants and
     the LJ Speech voice stay; ADR 0009 stands. User verdict: every variant is
     poor quality and about 5× too slow, with waits between sentences; possibly
-    worse than Chrome's built-in voice (removal is an open decision). User listens to Q4_K_M/Q8_0/bf16 at speed 1.0 with the LJ Speech clip and
+    worse than Chrome's built-in voice. Decided 2026-10-26: Qwen and all its
+    catalogue variants stay — it is already built and no variant is yet known
+    to be best; revisit removal only if a second quality option arrives. User listens to Q4_K_M/Q8_0/bf16 at speed 1.0 with the LJ Speech clip and
     at least one cleaner, licensed reference clip the user approves, against
     Kokoro; decide whether bundled Qwen stays Q4_K_M, changes, or becomes
     catalogue-only, and whether the reference voice changes (a superseding
@@ -307,12 +355,6 @@ the runner layout is decided by
 
 ## Open decisions
 
-- Whether to drop Qwen entirely (user, 2026-10-24: considering, not decided).
-  The listening comparison found every variant poor and about 5× too slow.
-  Removing it would supersede
-  [ADR 0009](docs/adr/0009-qwen-release-selection-without-bake-off.md) and
-  make the named-speaker and per-model Qwen option slices moot; decide this
-  before investing in them.
 - Whether and when Qwen becomes the quality-profile default: it misses the
   RTF ≤ 1.0 hard limit (≈1.5 warm on Linux) and peak VRAM is unmeasured; the
   user may measure it against, or change, the

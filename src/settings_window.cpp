@@ -424,7 +424,7 @@ BOOL CALLBACK apply_shell_ui_font(HWND child, LPARAM font) {
 // Fills the combo box with every profile name from config's "profiles" map,
 // preselecting whichever one languageDefaults.en currently names. English is
 // the only language surfaced end to end so far (see roadmap and
-// resolve_default_runner_selection in src/main.cpp).
+// resolve_selection in src/profile_resolution.cpp).
 // Refills `combo`: selection indexes the new rows, so old ones go first.
 void populate_default_profile_combo(HWND combo, const ConfigDocument &document) {
   SendMessageW(combo, CB_RESETCONTENT, 0, 0);
@@ -703,16 +703,23 @@ const ModelListRow *selected_model_row(const SettingsState &state) {
   return &state.model_rows[static_cast<std::size_t>(index)];
 }
 
-// Load, Download, and Update apply to the selected row; the registry-changing
-// ones also wait for a running model task. Cancel is enabled only for a task
-// that can stop early (a download or a hash).
+// The model list decides whether an action applies to the selected row;
+// Settings adds only its own state: registry-changing actions wait for a
+// running model task.
+bool model_action_enabled(const SettingsState &state, const ModelListRow *row, ModelActionKind kind) {
+  if (row == nullptr) return false;
+  const auto &action = model_action(*row, kind);
+  return action.applies && (!action.changes_registry || !state.model_task.joinable());
+}
+
+// Cancel is enabled only for a task that can stop early (a download or a hash).
 void update_model_buttons(SettingsState &state, HWND window) {
   const auto *row = selected_model_row(state);
   const bool idle = !state.model_task.joinable();
   const auto enable = [&](int id, bool enabled) { EnableWindow(GetDlgItem(window, id), enabled ? TRUE : FALSE); };
-  enable(kLoadModelButtonId, row != nullptr && row->installed);
-  enable(kDownloadModelButtonId, idle && row != nullptr && !row->installed && !row->damaged && row->in_catalogue);
-  enable(kUpdateModelButtonId, idle && row != nullptr && row->update_available);
+  enable(kLoadModelButtonId, model_action_enabled(state, row, ModelActionKind::load));
+  enable(kDownloadModelButtonId, model_action_enabled(state, row, ModelActionKind::download));
+  enable(kUpdateModelButtonId, model_action_enabled(state, row, ModelActionKind::update));
   enable(kImportModelButtonId, idle);
   enable(kCancelModelTaskButtonId, !idle && state.model_task_cancellable);
 }
@@ -1296,19 +1303,11 @@ void open_in_explorer(SettingsState &state, HWND window, const std::filesystem::
 
 void on_open_model_folder_clicked(SettingsState &state, HWND window) {
   const auto model_id = selected_model_id(state, L"open the folder of");
-  // A row with only a kept previous version opens that copy.
-  const auto find = [&](const std::vector<ModelPackageCandidate> &packages) -> const ModelPackageCandidate * {
-    const auto found = std::find_if(packages.begin(), packages.end(),
-                                    [&](const ModelPackageCandidate &package) { return package.id == model_id; });
-    return found == packages.end() ? nullptr : &*found;
-  };
-  const auto *found = find(state.last_scan.discovered_packages);
-  if (found == nullptr) found = find(state.last_scan.damaged_packages);
-  if (found == nullptr) found = find(state.last_scan.previous_packages);
-  if (found == nullptr) {
+  const auto *row = selected_model_row(state);
+  if (row == nullptr || !model_action(*row, ModelActionKind::open_folder).applies) {
     return;
   }
-  open_in_explorer(state, window, found->package_path);
+  open_in_explorer(state, window, model_action(*row, ModelActionKind::open_folder).target);
   const auto &status = state.sessions.status();
   if (status.loaded && status.model_id == model_id) {
     append_activity_log(state, utf8_to_wide(model_id) +
@@ -1330,56 +1329,24 @@ void on_open_models_folder_clicked(SettingsState &state, HWND window) {
 // apply to it now; registry-changing ones wait for a running model task.
 void on_more_model_actions_clicked(SettingsState &state, HWND window, HWND button) {
   const auto *row = selected_model_row(state);
-  const auto model_id = row != nullptr ? row->id : std::string();
-  const auto &scan = state.last_scan;
-  const auto *installed = [&]() -> const ModelPackageCandidate * {
-    for (const auto &package : scan.discovered_packages) {
-      if (package.id == model_id) return &package;
-    }
-    return nullptr;
-  }();
-  // A package whose files no longer load is reachable for Verify and repair.
-  const auto *damaged = damaged_package(model_id, scan);
-  const bool idle = !state.model_task.joinable();
-  const bool writable = installed != nullptr && !installed->bundled && idle;
-
-  const auto in_directory = [&](const ModelPackageCandidate &package) {
-    return package.package_path.parent_path().parent_path() == installed->package_path.parent_path();
-  };
-  bool has_previous = false;
-  bool revertible = false;
-  for (const auto &package : scan.previous_packages) {
-    if (package.id != model_id) continue;
-    has_previous = true;
-    revertible = revertible || (installed != nullptr && in_directory(package));
-  }
-  const bool catalogued = std::any_of(model_catalogue().begin(), model_catalogue().end(),
-                                      [&](const CatalogueEntry &entry) { return entry.id == model_id; });
-  // Verify compares against the catalogue revision; an older one is updated instead.
-  const auto *maintained = installed != nullptr ? installed : damaged;
-  const bool verifiable =
-      maintained != nullptr && idle && catalogued && package_status(*maintained) == PackageStatus::current;
-  bool removable_superseded = false;
-  for (const auto &package : scan.superseded_packages) {
-    if (package.id != model_id) continue;
-    revertible = revertible || package.bundled;
-    removable_superseded = removable_superseded || !package.bundled;
-  }
-
   const HMENU menu = CreatePopupMenu();
-  const auto add = [&](int command, const wchar_t *text, bool enabled) {
-    AppendMenuW(menu, MF_STRING | (enabled ? MF_ENABLED : MF_GRAYED), command, text);
+  const auto add = [&](int command, ModelActionKind kind, const wchar_t *text) {
+    std::wstring label = text;
+    if (row != nullptr) {
+      if (const auto &reason = model_action(*row, kind).reason) label += L" (" + utf8_to_wide(*reason) + L")";
+    }
+    AppendMenuW(menu, MF_STRING | (model_action_enabled(state, row, kind) ? MF_ENABLED : MF_GRAYED), command,
+                label.c_str());
   };
-  add(kRevertModelCommandId, L"Revert", writable && revertible);
-  add(kDeletePreviousModelCommandId, L"Delete previous", idle && has_previous);
-  add(kRemoveSupersededModelCommandId, L"Remove superseded", idle && removable_superseded);
+  add(kRevertModelCommandId, ModelActionKind::revert, L"Revert");
+  add(kDeletePreviousModelCommandId, ModelActionKind::delete_previous, L"Delete previous");
+  add(kRemoveSupersededModelCommandId, ModelActionKind::remove_superseded, L"Remove superseded");
   AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-  add(kRemoveModelCommandId, maintained != nullptr && maintained->bundled ? L"Remove… (Bundled with the app)" : L"Remove…",
-      maintained != nullptr && !maintained->bundled && idle);
-  add(kVerifyModelCommandId, L"Verify and repair…", verifiable);
+  add(kRemoveModelCommandId, ModelActionKind::remove, L"Remove…");
+  add(kVerifyModelCommandId, ModelActionKind::verify, L"Verify and repair…");
   AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-  add(kOpenModelFolderCommandId, L"Open folder", maintained != nullptr || has_previous);
-  add(kOpenModelsFolderCommandId, L"Open models folder", true);
+  add(kOpenModelFolderCommandId, ModelActionKind::open_folder, L"Open folder");
+  AppendMenuW(menu, MF_STRING | MF_ENABLED, kOpenModelsFolderCommandId, L"Open models folder");
 
   RECT rect{};
   GetWindowRect(button, &rect);

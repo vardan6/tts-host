@@ -5,7 +5,6 @@
 #include "tts_host/clipboard.hpp"
 #include "tts_host/config_loader.hpp"
 #include "tts_host/config_snapshot.hpp"
-#include "tts_host/language_selection.hpp"
 #include "tts_host/synthesis_pipeline.hpp"
 #include "tts_host/local_api_server.hpp"
 #include "tts_host/model_catalogue.hpp"
@@ -15,10 +14,12 @@
 #include "tts_host/model_update.hpp"
 #include "tts_host/playback_controller.hpp"
 #include "tts_host/playback_sink.hpp"
+#include "tts_host/profile_resolution.hpp"
 #include "tts_host/runner_launcher.hpp"
 #include "tts_host/recovering_runner.hpp"
 #include "tts_host/runner_protocol.hpp"
 #include "tts_host/settings_window.hpp"
+#include "tts_host/speech_queue.hpp"
 #include "tts_host/startup_choice.hpp"
 #ifdef _WIN32
 #include "tts_host/startup_registration.hpp"
@@ -29,19 +30,14 @@
 #include "tts_host/wav_writer.hpp"
 
 #include <algorithm>
-#include <atomic>
-#include <condition_variable>
 #include <cstdlib>
 #include <exception>
-#include <deque>
 #include <filesystem>
 #include <iostream>
 #include <memory>
-#include <mutex>
 #include <optional>
 #include <sstream>
 #include <string>
-#include <thread>
 #include <utility>
 #include <vector>
 
@@ -92,132 +88,20 @@ std::string join_languages(const std::vector<std::string> &languages) {
   return joined;
 }
 
-using tts_host::RunnerSelection;
-
-// Model-id resolution lives in model_session.cpp so the settings window's
-// Load/Unload controls and this CLI path agree on which runner and files a
-// model id means.
-RunnerSelection resolve_runner_selection_for_model(const std::string &model_id,
-                                                   const tts_host::ConfigDocument &document,
-                                                   const std::filesystem::path &argv0) {
-  const auto selection =
-      tts_host::resolve_model_runner_selection(model_id, document, executable_dir(argv0));
-  return {selection.runner_path, selection.model_path, selection.voice_path,
-          selection.model_id, selection.display_name, selection.engine, {}};
+tts_host::ModelResolver model_resolver(const tts_host::ConfigDocument &document,
+                                       const std::filesystem::path &argv0) {
+  return [&document, directory = executable_dir(argv0)](const std::string &model_id) {
+    return tts_host::resolve_model_runner_selection(model_id, document, directory);
+  };
 }
 
-// A runner selection plus the profile whose fallbackProfile may still replace
-// it if the runner rejects its load. fallback_profile is empty when no
-// fallback remains: none configured, an explicit --model/--runner, or the
-// fallback already replaced an unresolvable model.
-struct RunnerChoice {
-  RunnerSelection selection;
-  std::string profile_name;
-  std::string fallback_profile;
-};
-
-RunnerSelection resolve_profile_selection(const nlohmann::json &profile,
-                                          const tts_host::ConfigDocument &document,
-                                          const std::filesystem::path &argv0) {
-  auto selected = resolve_runner_selection_for_model(profile.at("model").get<std::string>(), document, argv0);
-  if (profile.contains("idleUnloadSeconds"))
-    selected.idle_override = std::chrono::seconds(profile.at("idleUnloadSeconds").get<int>());
-  return selected;
-}
-
-// Replaces profile_name's model, unavailable for `reason`, with its
-// fallbackProfile and logs why (docs/design/architecture.md#configuration).
-RunnerSelection resolve_fallback_selection(const std::string &profile_name, const std::string &reason,
-                                           const tts_host::ConfigDocument &document,
-                                           const std::filesystem::path &argv0) {
-  const auto &profiles = document.value.at("profiles");
-  const auto fallback_profile_name = profiles.at(profile_name).at("fallbackProfile").get<std::string>();
-  if (fallback_profile_name == profile_name) {
-    throw std::runtime_error("profiles." + profile_name +
-                             ".fallbackProfile must name a different profile");
+// Prints the resolver's messages; a fallback's also goes to the Activity log.
+void report_selection(const tts_host::ProfileSelection &choice) {
+  if (!choice.language_message.empty()) std::cout << choice.language_message << '\n';
+  for (const auto &message : choice.fallback_messages) {
+    std::cout << message << '\n';
+    tts_host::record_activity(message);
   }
-  if (!profiles.contains(fallback_profile_name)) {
-    throw std::runtime_error("profiles." + profile_name + ".fallbackProfile names unknown profile: " +
-                             fallback_profile_name);
-  }
-
-  const auto &fallback_profile = profiles.at(fallback_profile_name);
-  const auto message = "Profile " + profile_name + " is unavailable (" + reason +
-                       "); using fallback profile " + fallback_profile_name + ", model " +
-                       fallback_profile.at("model").get<std::string>();
-  std::cout << message << '\n';
-  tts_host::record_activity(message);
-  try {
-    return resolve_profile_selection(fallback_profile, document, argv0);
-  } catch (const std::exception &fallback_error) {
-    throw std::runtime_error("Profile " + profile_name + " is unavailable (" + reason +
-                             "); fallback profile " + fallback_profile_name + " is also unavailable (" +
-                             fallback_error.what() + ")");
-  }
-}
-
-// With no --model/--runner override, synthesis follows the same path a
-// settings-window profile pick would: the request's language names a
-// languageDefaults profile, and that profile's "model" is the model id to
-// load. The language itself comes from --language, else the text's script,
-// else English (docs/design/architecture.md#speech-pipeline).
-RunnerChoice resolve_default_runner_selection(const tts_host::SelectedLanguage &language,
-                                              const tts_host::ConfigDocument &document,
-                                              const std::filesystem::path &argv0) {
-  const auto &language_defaults = document.value.at("languageDefaults");
-  if (!language_defaults.contains(language.tag)) {
-    // An explicit tag the user typed is a mistake worth naming; a fallback to
-    // English on a config that simply has no "en" entry is not, and keeps the
-    // pre-profile stub-runner behavior.
-    if (language.source == tts_host::LanguageSource::Explicit) {
-      throw std::runtime_error("languageDefaults has no entry for language: " + language.tag);
-    }
-    return {{default_runner_path(argv0), std::nullopt, std::nullopt, {}, {}, {}, {}}, {}, {}};
-  }
-  const auto profile_name = language_defaults.at(language.tag).get<std::string>();
-  const auto &profiles = document.value.at("profiles");
-  if (!profiles.contains(profile_name)) {
-    throw std::runtime_error("languageDefaults." + language.tag +
-                             " names unknown profile: " + profile_name);
-  }
-  const auto &profile = profiles.at(profile_name);
-  const auto model_id = profile.at("model").get<std::string>();
-  std::cout << "Language: " << language.tag << " ("
-            << tts_host::describe_language_source(language.source) << "), profile " << profile_name
-            << ", model " << model_id << '\n';
-  try {
-    return {resolve_profile_selection(profile, document, argv0), profile_name,
-            profile.value("fallbackProfile", std::string())};
-  } catch (const std::exception &primary_error) {
-    if (!profile.contains("fallbackProfile")) {
-      throw;
-    }
-    return {resolve_fallback_selection(profile_name, primary_error.what(), document, argv0),
-            profile_name, {}};
-  }
-}
-
-// `spoken_text` is the normalized text, so script detection sees what will
-// actually be spoken rather than the markup around it.
-RunnerChoice resolve_runner_selection(const tts_host::CliOptions &options,
-                                      const std::string &spoken_text,
-                                      const tts_host::ConfigDocument &document,
-                                      const std::filesystem::path &argv0) {
-  if (options.runner_path_override.has_value()) {
-    return {{*options.runner_path_override, std::nullopt, std::nullopt, {}, {}, {}, {}}, {}, {}};
-  }
-
-  if (options.model_id.has_value()) {
-    return {resolve_runner_selection_for_model(*options.model_id, document, argv0), {}, {}};
-  }
-
-  std::vector<std::string> configured_languages;
-  for (const auto &entry : document.value.at("languageDefaults").items()) {
-    configured_languages.push_back(entry.key());
-  }
-  const auto language =
-      tts_host::select_request_language(options.language, spoken_text, configured_languages);
-  return resolve_default_runner_selection(language, document, argv0);
 }
 
 // Resolves whichever of --synthesize/--stdin/--clipboard was given (parse_cli
@@ -249,7 +133,11 @@ void run_synthesis(const tts_host::CliOptions &options, const tts_host::ConfigDo
     throw std::runtime_error("nothing to synthesize: the text is empty once markup is removed");
   }
 
-  auto choice = resolve_runner_selection(options, spoken_text, document, argv0);
+  const auto resolve_model = model_resolver(document, argv0);
+  auto choice = tts_host::resolve_selection(
+      {options.runner_path_override, options.model_id, options.language, spoken_text}, document,
+      default_runner_path(argv0), resolve_model);
+  report_selection(choice);
   const auto cancelled = [control] { return control && control->cancelled(); };
 
   // The model loads before the first sentence, so a rejected load has emitted
@@ -261,8 +149,8 @@ void run_synthesis(const tts_host::CliOptions &options, const tts_host::ConfigDo
       return true;
     } catch (const tts_host::RunnerLoadRejected &error) {
       if (choice.fallback_profile.empty()) throw;
-      choice.selection = resolve_fallback_selection(choice.profile_name, error.what(), document, argv0);
-      choice.fallback_profile.clear();
+      choice = tts_host::resolve_fallback(choice.profile_name, error.what(), document, resolve_model);
+      report_selection(choice);
       return false;
     }
   };
@@ -270,10 +158,7 @@ void run_synthesis(const tts_host::CliOptions &options, const tts_host::ConfigDo
   for (;;) {
     const auto selection = choice.selection;
     if (sessions) {
-      const tts_host::ModelRunnerSelection model{selection.model_id, selection.display_name,
-          selection.engine, selection.runner_path, selection.model_path.value_or(std::filesystem::path{}),
-          selection.voice_path};
-      auto lease = sessions->acquire(model, cancelled, selection.idle_override);
+      auto lease = sessions->acquire(selection, cancelled);
       if (!prepared(lease.runner())) continue;
       tts_host::run_synthesis_pipeline(spoken_text, options, document, selection,
                                        control, playback_controller, nullptr, {}, &lease.runner());
@@ -291,162 +176,37 @@ void run_synthesis(const tts_host::CliOptions &options, const tts_host::ConfigDo
   }
 }
 
-// Keeps tray requests asynchronous from the Win32 message loop. A request
-// normally cancels the active utterance and replaces pending work; the Queue
-// clipboard command is the explicit opt-in path that preserves it.
-// One queued read. source labels where the text came from for Now Playing.
-struct SpeechRequest {
-  std::string text;
-  std::string source;
-};
-
-class TraySpeechScheduler {
+// The Host's speech engine (docs/design/architecture.md#speech-queue): the
+// profile chain, the shared model session, and the synthesis pipeline.
+class HostSpeechEngine final : public tts_host::SpeechEngine {
  public:
-  TraySpeechScheduler(tts_host::ConfigDocument document, std::filesystem::path argv0)
-      : config_(std::move(document)), argv0_(std::move(argv0)),
-        sessions_(executable_dir(argv0_)) {
-    tts_host::apply_playback_settings(*config_.current(), playback_controller_);
-    try { sessions_.load_eager(*config_.current()); }
-    catch (const std::exception &error) {
-      tts_host::record_activity(std::string("Eager model load failed: ") + error.what());
-      std::cerr << "Eager model load failed: " << error.what() << '\n';
-    }
-    worker_ = std::thread(&TraySpeechScheduler::run, this);
+  explicit HostSpeechEngine(std::filesystem::path argv0)
+      : argv0_(std::move(argv0)), sessions_(executable_dir(argv0_)) {}
+
+  void speak(const std::string &text, const tts_host::ConfigDocument &config, tts_host::PlaybackControl &control,
+             tts_host::PlaybackController &playback) override {
+    tts_host::CliOptions options;
+    options.synthesize_text = text;
+    options.play_audio = true;
+    run_synthesis(options, config, argv0_, &control, &playback, &sessions_);
   }
 
-  ~TraySpeechScheduler() {
-    {
-      std::lock_guard lock(mutex_);
-      stopping_ = true;
-      playback_controller_.stop();
-      pending_.clear();
+  void warm(const tts_host::ConfigDocument &config, const std::function<bool()> &cancelled) override {
+    if (const auto selection = tts_host::eager_selection(config, model_resolver(config, argv0_))) {
+      sessions_.warm(*selection, cancelled);
     }
-    condition_.notify_one();
-    worker_.join();
   }
 
-  void submit(std::string text, tts_host::SpeechQueueMode queue_mode, std::string source) {
-    {
-      std::lock_guard lock(mutex_);
-      if (queue_mode == tts_host::SpeechQueueMode::Interrupt) {
-        pending_.clear();
-        playback_controller_.stop();
-      }
-      pending_.push_back({std::move(text), std::move(source)});
-    }
-    condition_.notify_one();
+  void unload_if_idle(const tts_host::ConfigDocument &config) override {
+    sessions_.unload_if_idle(
+        std::chrono::seconds(config.value.at("modelRegistry").at("idleUnloadSeconds").get<int>()));
   }
 
   tts_host::ModelSessionManager &sessions() { return sessions_; }
 
-  tts_host::PlaybackController &playback_controller() { return playback_controller_; }
-
-  // Called on the tray thread after Settings edits its own document. The next
-  // request sees the copy; an in-flight request keeps the snapshot it took.
-  void publish_config(const tts_host::ConfigDocument &document) {
-    tts_host::apply_playback_settings(document, playback_controller_);
-    const auto previous = config_.current();
-    const bool profiles_changed = previous->value.at("profiles") != document.value.at("profiles") ||
-        previous->value.at("languageDefaults") != document.value.at("languageDefaults");
-    config_.publish(document);
-    if (profiles_changed) {
-      { std::lock_guard lock(mutex_); eager_pending_ = true; }
-      condition_.notify_one();
-    }
-  }
-
-  std::string playback_command(const std::string &command) {
-    if (command == "pause") playback_controller_.pause();
-    if (command == "resume") playback_controller_.resume();
-    if (command == "stop") stop_speech();
-    const auto status = playback_controller_.status();
-    const char *state = "idle";
-    switch (status.state) {
-      case tts_host::PlaybackState::Idle: state = "idle"; break;
-      case tts_host::PlaybackState::Preparing: state = "preparing"; break;
-      case tts_host::PlaybackState::Playing: state = "playing"; break;
-      case tts_host::PlaybackState::Paused: state = "paused"; break;
-      case tts_host::PlaybackState::Stopping: state = "stopping"; break;
-      case tts_host::PlaybackState::Error: state = "error"; break;
-    }
-    return nlohmann::json{{"state", state}, {"positionSeconds", status.position_seconds},
-                          {"generatedSeconds", status.generated_seconds},
-                          {"error", status.error}}.dump();
-  }
-
-  void stop_speech() {
-    std::lock_guard lock(mutex_);
-    pending_.clear();
-    playback_controller_.stop();
-  }
-
  private:
-  void run() {
-    while (true) {
-      SpeechRequest request;
-      std::shared_ptr<tts_host::PlaybackControl> control;
-      std::shared_ptr<const tts_host::ConfigDocument> config;
-      {
-        std::unique_lock lock(mutex_);
-        condition_.wait_for(lock, std::chrono::seconds(5),
-                            [this] { return stopping_ || !pending_.empty() || eager_pending_; });
-        if (stopping_) {
-          return;
-        }
-        if (pending_.empty()) {
-          config = config_.current();
-          const bool eager = std::exchange(eager_pending_, false);
-          lock.unlock();
-          if (eager) {
-            try {
-              sessions_.load_eager(*config, [this] {
-                std::lock_guard lock(mutex_);
-                return stopping_ || !pending_.empty();
-              });
-            } catch (const tts_host::RunnerCancelled &) {
-              // A new read or Quit cancels background warming immediately.
-            } catch (const std::exception &error) {
-              tts_host::record_activity(std::string("Eager model load failed: ") + error.what());
-              std::cerr << "Eager model load failed: " << error.what() << '\n';
-            }
-          }
-          sessions_.unload_if_idle(std::chrono::seconds(
-              config->value.at("modelRegistry").at("idleUnloadSeconds").get<int>()));
-          continue;
-        }
-        request = std::move(pending_.front());
-        pending_.pop_front();
-        control = playback_controller_.begin(std::move(request.source));
-        config = config_.current();
-      }
-
-      try {
-        tts_host::CliOptions options;
-        options.synthesize_text = std::move(request.text);
-        options.play_audio = true;
-        run_synthesis(options, *config, argv0_, control.get(), &playback_controller_, &sessions_);
-      } catch (const tts_host::RunnerCancelled &) {
-        // Stop/replacement terminates runner I/O without retry or an error state.
-      } catch (const std::exception &error) {
-        playback_controller_.fail(control, error.what());
-        tts_host::record_activity(std::string("Speech failed: ") + error.what());
-        std::cerr << "Tray speech request failed: " << error.what() << '\n';
-      }
-
-      playback_controller_.finish(control);
-    }
-  }
-
-  tts_host::ConfigSnapshot config_;
   std::filesystem::path argv0_;
   tts_host::ModelSessionManager sessions_;
-  std::mutex mutex_;
-  std::condition_variable condition_;
-  std::deque<SpeechRequest> pending_;
-  tts_host::PlaybackController playback_controller_;
-  bool stopping_ = false;
-  bool eager_pending_ = false;
-  std::thread worker_;
 };
 
 }  // namespace
@@ -510,7 +270,8 @@ int run_main(int argc, char **argv) {
       // Tray mode (docs/design/architecture.md#desktop-integration): blocks
       // until the user chooses Quit. Windows only in this slice -- see
       // docs/adr/0007-native-ui-per-platform.md.
-      TraySpeechScheduler tray_speech_scheduler(document, tts_host::path_from_utf8(argv[0]));
+      HostSpeechEngine speech_engine(tts_host::path_from_utf8(argv[0]));
+      tts_host::SpeechQueue speech_queue(document, speech_engine);
       const auto &server = document.value.at("server");
       if (server.value("authentication", "none") != "none") {
         throw std::runtime_error(
@@ -523,25 +284,27 @@ int run_main(int argc, char **argv) {
       tts_host::LocalApiServer local_api(
           server.at("host").get<std::string>(),
           static_cast<unsigned short>(server.at("port").get<int>()), std::move(allowed_origins),
-          [&tray_speech_scheduler](std::string text) {
-            tray_speech_scheduler.submit(std::move(text), tts_host::SpeechQueueMode::Interrupt,
-                                         "Local API");
+          [&speech_queue](std::string text) {
+            speech_queue.submit(std::move(text), tts_host::SpeechQueueMode::Interrupt, "Local API");
           },
-          [&tray_speech_scheduler](const std::string &command) {
-            return tray_speech_scheduler.playback_command(command);
+          [&speech_queue](const std::string &command) {
+            if (command == "pause") speech_queue.playback_controller().pause();
+            if (command == "resume") speech_queue.playback_controller().resume();
+            if (command == "stop") speech_queue.stop();
+            return speech_queue.status();
           });
       std::cout << "Local API listening on " << server.at("host") << ':' << server.at("port")
                 << '\n';
       tts_host::run_tray_icon(
           document, executable_dir(tts_host::path_from_utf8(argv[0])),
-          [&tray_speech_scheduler](const std::string &text, tts_host::SpeechQueueMode queue_mode,
-                                   const std::string &source) {
-            tray_speech_scheduler.submit(text, queue_mode, source);
-          }, tray_speech_scheduler.playback_controller(),
-          [&tray_speech_scheduler](const tts_host::ConfigDocument &edited) {
-            tray_speech_scheduler.publish_config(edited);
-          }, &tray_speech_scheduler.sessions(),
-          [&tray_speech_scheduler] { tray_speech_scheduler.stop_speech(); });
+          [&speech_queue](const std::string &text, tts_host::SpeechQueueMode queue_mode,
+                          const std::string &source) {
+            speech_queue.submit(text, queue_mode, source);
+          }, speech_queue.playback_controller(),
+          [&speech_queue](const tts_host::ConfigDocument &edited) {
+            speech_queue.publish_config(edited);
+          }, &speech_engine.sessions(),
+          [&speech_queue] { speech_queue.stop(); });
       return EXIT_SUCCESS;
     }
 
