@@ -1,13 +1,13 @@
 # Active Context
 
 - Mode: implementation (behavior-preserving refactor); branch `chore/improve-codebase-architecture` from
-  `main` at `a47ebe4`.
+  `main` at `a47ebe4`; pushed, open as PR #5 (github.com/vardan6/tts-host/pull/5).
 - State: three architecture refactors plus the fix for cross-review
   [finding #1](docs/reviews/code-review-2026-10-26-architecture-deepening.md)
   (profile reads in `with_selected_model()` via `profile_view()`); all
   review findings closed.
 - Next atomic step: HITL model-row desktop click-through in `roadmap.md`
-  (also covers the damaged-row actions #6), then merge.
+  (also covers the damaged-row actions #6), then merge PR #5.
 - Verification: Linux build passed; 53/55 CTests passed — config persistence
   fails only against the uncommitted `config.example.json` (passes on the
   committed copy), tray on busy port 7861. Windows not rebuilt since the
