@@ -128,6 +128,28 @@ text ── normalize ── split ── synthesize (lookahead) ── play or 
 A new request interrupts the current utterance by default; queueing is opt-in
 per request. Two utterances never play simultaneously.
 
+### Speech queue
+
+Agreed 2026-10-26
+([architecture review candidate 2](../reviews/architecture-review-2026-10-25.md#2--speech-queue-module-out-of-maincpp)).
+The speech queue is its own module, not a class in `main.cpp`. Its interface:
+submit (text, queue mode, source), stop, publish config, and playback status
+as a plain struct. It owns the replace-versus-queue rule, cancelling an eager
+warm-up when a read arrives, the eager reload after a profile change, and the
+idle-unload poll.
+
+Synthesis sits behind a speech engine seam with three operations: speak one
+request, warm the eager model (with a cancel check), and unload if idle. The
+production adapter wraps runner selection, the model session manager, and the
+synthesis pipeline; tests use an in-process fake that records calls and can
+block or fail, while the stub runner stays the end-to-end adapter. The queue
+never sees CLI options or `argv0`.
+
+The idle-unload poll stays 5 seconds in the Host; the interval is a
+constructor parameter so tests run in milliseconds. Turning playback status
+into JSON is the [Local API](#local-api)'s job for `/v1/playback`, not the
+queue's.
+
 Language for a request: explicit parameter, else script detection (Latin,
 Cyrillic, and Armenian scripts are mutually unambiguous for the supported
 languages), else the configured default.
@@ -373,6 +395,28 @@ be resolved or its runner is unavailable, the host uses that fallback and logs
 the reason. The initial English policy is `quality` first and CPU-only `fast`
 as the fallback; `fast` names Kokoro. A failed synthesis request does not retry
 through the fallback, because it may already have emitted audio.
+
+### Profile resolution
+
+Agreed 2026-10-26
+([architecture review candidate 3](../reviews/architecture-review-2026-10-25.md#3--one-profile-resolution-module)).
+One module turns a request plus configuration into a runner selection and the
+fallback profile still available to it: language to `languageDefaults`
+profile to model, `--model` and `--runner` overrides, `fallbackProfile`, and
+the per-profile `idleUnloadSeconds` override. It also picks the eager profile
+(`eager_selection(config)`); the session manager loads the selection it is
+given and no longer reads profiles. All reads of `model`, `fallbackProfile`,
+`loadPolicy`, and `idleUnloadSeconds`, with their defaults, live in this
+module behind a typed profile view. One `RunnerSelection` type remains, with
+an optional model path (a `--runner` override has none) and an optional idle
+override; the session manager takes it directly. The resolver returns its
+fallback messages and the caller logs them, so tests check messages without
+capturing output. Behavior is unchanged, including
+[load rejection](#load-rejection).
+
+Typed reads for the rest of the configuration (Settings, audio, registry) are
+deferred, not planned: Settings writes the same keys by name, and the
+per-model options slice will reshape the profile schema first.
 
 ### Live reload
 
@@ -633,6 +677,20 @@ re-download is Remove followed by Download, and damage is handled by Repair.
   live behind one **More ▾** menu that lists only the actions valid for the
   selected package. Actions that cannot apply are disabled, never answered
   with a refusal in the log.
+- **Action eligibility** (agreed 2026-10-26,
+  [architecture review candidate 1](../reviews/architecture-review-2026-10-25.md#1--model-action-eligibility-in-the-model-list-module)):
+  the model list module, not the platform Settings code, decides which actions
+  a row offers, so every native UI shares the rules and they are tested on
+  Linux. Each row carries its actions; each action names its kind, whether it
+  applies, the target package's folder path (a path survives a rescan; a
+  pointer into the scan does not), an optional reason it does not apply
+  ("Bundled with the app"), and whether it changes the registry. Whether a
+  model task is running stays Settings' own state: Settings enables an action
+  when it applies and either does not change the registry or no task runs.
+  `model_update` keeps its precondition throws as real runtime errors, because
+  Settings acts on the scan the list was drawn from and headless callers never
+  see a row; the eligibility and those throws call the same predicates, so the
+  menu and the operation cannot disagree.
 - **Unified model list:** the Models page is one list with a row per
   installed package, per catalogue entry not installed, and per id that has
   only a kept previous version left (reachable for Delete previous and Open
