@@ -22,6 +22,26 @@ const ModelPackageCandidate *damaged_package(const std::string &id, const ModelR
   return found == scan.damaged_packages.end() ? nullptr : &*found;
 }
 
+const ModelPackageCandidate *maintained_package(const std::string &id, const ModelRegistryScan &scan) {
+  const auto found = std::find_if(scan.discovered_packages.begin(), scan.discovered_packages.end(),
+                                  [&](const ModelPackageCandidate &package) { return package.id == id; });
+  return found != scan.discovered_packages.end() ? &*found : damaged_package(id, scan);
+}
+
+const ModelPackageCandidate *revert_source(const std::string &id, const ModelRegistryScan &scan) {
+  const auto installed = std::find_if(scan.discovered_packages.begin(), scan.discovered_packages.end(),
+                                      [&](const ModelPackageCandidate &package) { return package.id == id; });
+  if (installed == scan.discovered_packages.end() || installed->bundled) return nullptr;
+  const auto directory = installed->package_path.parent_path();
+  for (const auto &package : scan.previous_packages) {
+    if (package.id == id && package.package_path.parent_path().parent_path() == directory) return &package;
+  }
+  for (const auto &package : scan.superseded_packages) {
+    if (package.id == id && package.bundled) return &package;
+  }
+  return nullptr;
+}
+
 namespace {
 
 // Written before the old folder moves aside and removed once the staged one
@@ -59,9 +79,9 @@ const ModelPackageCandidate &installed_package(const std::string &id, const Mode
 
 // Verify, repair, update, and removal also reach a package whose files no
 // longer load.
-const ModelPackageCandidate &maintained_package(const std::string &id, const ModelRegistryScan &scan) {
-  const auto *damaged = damaged_package(id, scan);
-  return damaged != nullptr ? *damaged : installed_package(id, scan);
+const ModelPackageCandidate &require_maintained(const std::string &id, const ModelRegistryScan &scan) {
+  const auto *maintained = maintained_package(id, scan);
+  return maintained != nullptr ? *maintained : installed_package(id, scan);
 }
 
 void remove_previous_versions_in(const std::filesystem::path &directory, const std::string &id,
@@ -229,7 +249,7 @@ ImportedModelPackage update_catalogue_package(const CatalogueEntry &entry, const
                                               const ConfigDocument &config, const HttpFetchFunction &fetch,
                                               const DownloadProgressCallback &progress,
                                               const PackageSwitchGuard &guard) {
-  const auto &current = maintained_package(entry.id, scan);
+  const auto &current = require_maintained(entry.id, scan);
   const bool damaged = damaged_package(entry.id, scan) != nullptr;
   if (!current.revision) {
     throw std::runtime_error("'" + entry.id + "' is a local package; only catalogue installs are updated");
@@ -308,18 +328,11 @@ void revert_model_package(const std::string &id, const ModelRegistryScan &scan, 
   }
   const auto directory = current.package_path.parent_path();
 
-  const auto kept = std::find_if(scan.previous_packages.begin(), scan.previous_packages.end(),
-                                 [&](const ModelPackageCandidate &package) {
-                                   return package.id == id && package.package_path.parent_path().parent_path() == directory;
-                                 });
-  if (kept == scan.previous_packages.end()) {
-    const bool bundled_previous = std::any_of(scan.superseded_packages.begin(), scan.superseded_packages.end(),
-                                              [&](const ModelPackageCandidate &package) {
-                                                return package.id == id && package.bundled;
-                                              });
-    if (!bundled_previous) {
-      throw std::runtime_error("'" + id + "' has no previous version to revert to");
-    }
+  const auto *kept = revert_source(id, scan);
+  if (kept == nullptr) {
+    throw std::runtime_error("'" + id + "' has no previous version to revert to");
+  }
+  if (kept->bundled) {
     // ADR 0010: the bundled copy an update superseded is its previous version.
     run_guarded(guard, id, [&] { std::filesystem::remove_all(current.package_path); });
     return;
@@ -373,7 +386,7 @@ std::size_t remove_superseded_model_copies(const std::string &id, const ModelReg
 
 ModelRemovalPlan plan_model_removal(const std::string &id, const ModelRegistryScan &scan,
                                     const ConfigDocument &config) {
-  const auto &current = maintained_package(id, scan);
+  const auto &current = require_maintained(id, scan);
   if (current.bundled) {
     throw std::runtime_error("'" + id + "' is bundled with the app and cannot be removed");
   }
@@ -417,7 +430,7 @@ void remove_model_package(const ModelRemovalPlan &plan, bool keep_previous, cons
 
 ModelVerification verify_catalogue_package(const CatalogueEntry &entry, const ModelRegistryScan &scan,
                                            const DownloadProgressCallback &progress) {
-  const auto &current = maintained_package(entry.id, scan);
+  const auto &current = require_maintained(entry.id, scan);
   if (!current.revision) {
     throw std::runtime_error("'" + entry.id + "' is a local package; only catalogue installs can be verified");
   }

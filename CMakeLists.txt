@@ -1001,13 +1001,16 @@ if(BUILD_TESTING)
       ${CMAKE_CURRENT_BINARY_DIR}/model-registry-tier-tests
   )
 
-  # Unified Settings model list rows and details (src/model_list.cpp), built
-  # from hand-made scans so every source/status combination is covered.
+  # Unified Settings model list rows, their action eligibility, and details
+  # (src/model_list.cpp), built from hand-made scans so every source/status
+  # combination is covered.
   add_executable(
     tts-host-model-list-tests
+    src/catalogue_download.cpp
     src/model_catalogue.cpp
     src/model_list.cpp
     src/model_registry.cpp
+    src/model_update.cpp
     src/sha256.cpp
     tests/model_list_tests.cpp
   )
@@ -1018,6 +1021,9 @@ if(BUILD_TESTING)
       nlohmann_json::nlohmann_json
       ${JSON_SCHEMA_VALIDATOR_TARGET}
   )
+  if(WIN32)
+    target_link_libraries(tts-host-model-list-tests PRIVATE winhttp)
+  endif()
   if(MSVC)
     target_compile_options(tts-host-model-list-tests PRIVATE /W4 /permissive-)
   else()

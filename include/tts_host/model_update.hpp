@@ -28,6 +28,15 @@ using PackageSwitchGuard =
 // precedence first (ADR 0010).
 const ModelPackageCandidate *damaged_package(const std::string &id, const ModelRegistryScan &scan);
 
+// The copy of `id` Update, Verify, and Remove… act on: the loadable one, else
+// damaged_package(); null when neither exists.
+const ModelPackageCandidate *maintained_package(const std::string &id, const ModelRegistryScan &scan);
+
+// What Revert of the installed `id` restores: its kept previous version in the
+// same directory, else the bundled copy an update superseded (ADR 0010). Null
+// when `id` is not installed, is the bundled copy, or has neither.
+const ModelPackageCandidate *revert_source(const std::string &id, const ModelRegistryScan &scan);
+
 // The writable directory catalogue installs and updates target: the first
 // configured modelRegistry.directories entry. Throws when none is configured.
 std::filesystem::path writable_model_directory(const ConfigDocument &config);
