@@ -5,12 +5,13 @@
   only, not pushed.
 - State: the
   [architecture review](docs/reviews/architecture-review-2026-10-25.md) is
-  captured with its HTML snapshot; `roadmap.md` § Architecture deepening holds
-  the grill-then-refactor slices. The damaged-row Settings actions (#6) are
+  committed; its interface questions are answered in
+  `docs/design/architecture.md` (2026-10-26), leaving three AFK refactor slices
+  in `roadmap.md` § Architecture deepening. The damaged-row Settings actions (#6) are
   still not desktop-checked. Qwen stays with all variants (decided
   2026-10-26; recorded in `roadmap.md`).
-- Next: commit the captured review (uncommitted at session end), then grill
-  candidate 1 (model-action eligibility), the top recommendation.
+- Next: `/next-slice` — move model-action eligibility into the model list
+  module (candidate 1).
 - Blockers/environment: the running Host locks its executable; do not
   terminate it without permission, and do not link over it. Use a separate
   output folder for build checks. Developer launches use
@@ -18,8 +19,7 @@
   `tts-host --list-models` with `--headless`, or it starts the app. Windows
   PowerShell: `/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe`.
 - Open questions: Qwen named-speaker path and VoiceDesign
-  scope; per-model options; the other Open decisions in `roadmap.md`; each
-  architecture candidate's interface (its grilling slice). Linux
+  scope; per-model options; the other Open decisions in `roadmap.md`. Linux
   Qwen runner-folder loading is unverified; previous-only restoration is
   undesigned.
 - Discarded as noise:

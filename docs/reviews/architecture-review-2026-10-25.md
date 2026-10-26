@@ -8,7 +8,9 @@ the same content; where they differ, this file wins.
 
 No interfaces are proposed here. Each candidate is grilled before it is
 implemented, and the shape that comes out of the grilling goes into
-`docs/design/`.
+`docs/design/`. Outcome (2026-10-26): every question below is answered in
+`docs/design/architecture.md` — action eligibility under model maintenance,
+§ Speech queue, and § Profile resolution, which also settles candidate 4.
 
 ## Scope and method
 

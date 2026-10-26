@@ -30,38 +30,31 @@ Synthetic Copy adapter compatibility remains separate open work below.
 
 Branch `chore/improve-codebase-architecture`. Candidates and ranking are in the
 [2026-10-25 architecture review](docs/reviews/architecture-review-2026-10-25.md).
-Each refactor keeps behavior unchanged; the grilling slice before it fixes the
-deepened module's interface and records it in `docs/design/`.
+Each refactor keeps behavior unchanged. Every candidate's interface questions
+were answered on 2026-10-26 (user accepted the recommendations) and are
+recorded in `docs/design/`, so no grilling slices remain.
 
-- [ ] **HITL — Grill model-action eligibility:** settle the shape of the actions
-  a model list row carries and their target packages, using the review's
-  questions; capture the result in the design's model maintenance section — see
-  [candidate 1](docs/reviews/architecture-review-2026-10-25.md#1--model-action-eligibility-in-the-model-list-module)
-  and [ADR 0010](docs/adr/0010-model-revisions-storage-and-release-layout.md).
+- [x] **HITL — Settle the interfaces of candidates 1–4:** recorded in
+  [action eligibility](docs/design/architecture.md#model-removal-repair-and-maintenance-actions),
+  [speech queue](docs/design/architecture.md#speech-queue), and
+  [profile resolution](docs/design/architecture.md#profile-resolution). Candidate 4's profile reads
+  fold into candidate 3; its other typed reads are deferred.
 - [ ] **AFK — Move model-action eligibility into the model list module:**
   Settings buttons and the More menu render the row's actions; the rules are
   covered by `model_list_tests` on Linux — see
-  [candidate 1](docs/reviews/architecture-review-2026-10-25.md#1--model-action-eligibility-in-the-model-list-module)
-  and the design captured by the slice above.
-- [ ] **HITL — Grill the speech queue module:** settle its interface and the
-  synthesis seam — see
-  [candidate 2](docs/reviews/architecture-review-2026-10-25.md#2--speech-queue-module-out-of-maincpp).
+  [action eligibility](docs/design/architecture.md#model-removal-repair-and-maintenance-actions) and
+  [candidate 1](docs/reviews/architecture-review-2026-10-25.md#1--model-action-eligibility-in-the-model-list-module).
 - [ ] **AFK — Extract the speech queue module from `main.cpp`:** queue modes,
-  warm-up cancellation, idle unload, and profile-change reload tested with the
-  stub runner — see
+  warm-up cancellation, idle unload, and profile-change reload tested through
+  the in-process fake engine; playback-status JSON moves to the local API —
+  see [speech queue](docs/design/architecture.md#speech-queue) and
   [candidate 2](docs/reviews/architecture-review-2026-10-25.md#2--speech-queue-module-out-of-maincpp).
-- [ ] **HITL — Grill profile resolution:** decide whether to merge the selection
-  types, how the eager pick joins the module, and whether candidate 4's profile reads fold in — see
-  [candidate 3](docs/reviews/architecture-review-2026-10-25.md#3--one-profile-resolution-module)
-  and [configuration](docs/design/architecture.md#configuration).
 - [ ] **AFK — One profile resolution module:** language, profile, fallback, idle
-  override, and eager pick behind one interface, unchanged
+  override, eager pick, and the profile reads behind one interface with one
+  `RunnerSelection`; unchanged
   [load rejection](docs/design/architecture.md#load-rejection) behavior — see
+  [profile resolution](docs/design/architecture.md#profile-resolution) and
   [candidate 3](docs/reviews/architecture-review-2026-10-25.md#3--one-profile-resolution-module).
-- [ ] **HITL — Decide typed config reads:** go, fold into profile resolution, or
-  drop — see
-  [candidate 4](docs/reviews/architecture-review-2026-10-25.md#4--typed-reads-over-the-config-document)
-  and [ADR 0004](docs/adr/0004-json-canonical-config.md).
 
 ## Product
 

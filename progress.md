@@ -608,3 +608,5 @@
 - 2026-10-25: Merge model maintenance — PR #4 rebase-merged into `main` (`a47ebe4`); `feature/model-maintenance` deleted on GitHub and locally; the damaged-row Settings actions (#6) were merged without a desktop check.
 
 - 2026-10-25: Architecture review — `/improve-codebase-architecture` found four deepening candidates; captured in `docs/reviews/architecture-review-2026-10-25.md` (+ HTML snapshot) and as roadmap § Architecture deepening on `chore/improve-codebase-architecture`.
+
+- 2026-10-26: Architecture interfaces settled — the review's questions for candidates 1–4 answered (user accepted the recommendations) and recorded in `docs/design/architecture.md` (action eligibility, § Speech queue, § Profile resolution); candidate 4 folds into 3, other typed config reads deferred; grilling slices removed. Qwen kept with all variants.
