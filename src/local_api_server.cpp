@@ -163,7 +163,7 @@ class LocalApiServer::Impl {
               if (command != "status" && command != "pause" && command != "resume" && command != "stop") {
                 throw std::invalid_argument("invalid command");
               }
-              self->outgoing = self->owner.on_playback_(command);
+              self->outgoing = playback_status_json(self->owner.on_playback_(command));
             } catch (const nlohmann::json::exception &) {
               self->outgoing = R"({"error":"invalid playback command"})";
             } catch (const std::invalid_argument &) {
@@ -253,6 +253,20 @@ class LocalApiServer::Impl {
   std::set<std::string> allowed_origins_;
   std::thread worker_;
 };
+
+std::string playback_status_json(const PlaybackStatus &status) {
+  const char *state = "idle";
+  switch (status.state) {
+    case PlaybackState::Idle: state = "idle"; break;
+    case PlaybackState::Preparing: state = "preparing"; break;
+    case PlaybackState::Playing: state = "playing"; break;
+    case PlaybackState::Paused: state = "paused"; break;
+    case PlaybackState::Stopping: state = "stopping"; break;
+    case PlaybackState::Error: state = "error"; break;
+  }
+  return nlohmann::json{{"state", state}, {"positionSeconds", status.position_seconds},
+                        {"generatedSeconds", status.generated_seconds}, {"error", status.error}}.dump();
+}
 
 LocalApiServer::LocalApiServer(std::string host, unsigned short port,
                                std::vector<std::string> allowed_origins,

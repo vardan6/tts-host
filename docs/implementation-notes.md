@@ -36,7 +36,7 @@ destroying the dialog.
 
 In tray mode, `main` hands `run_tray_icon` a mutable `ConfigDocument` that
 Settings edits in place. Only the tray thread may touch it. The speech worker
-(`TraySpeechScheduler` in `main.cpp`) never reads it: each request takes
+(`SpeechQueue`, `speech_queue.hpp`) never reads it: each request takes
 `ConfigSnapshot::current()` once (`config_snapshot.hpp`) and uses that immutable
 document for the whole utterance, so a Settings edit can neither race the
 worker nor mix old and new values within one request.

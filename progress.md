@@ -1,3 +1,10 @@
+- 2026-10-26: Speech queue module — `SpeechQueue` (`speech_queue.hpp`)
+  replaces `TraySpeechScheduler` in `main.cpp`; synthesis sits behind the
+  `SpeechEngine` seam (speak, warm, unload if idle), with `HostSpeechEngine`
+  in `main.cpp` as the production adapter. `speech_queue_tests` cover
+  replace/queue, stop, warm-up cancellation, profile-change rewarm, the idle
+  poll, and failure through a fake engine. The Local API now turns
+  `PlaybackStatus` into the `/v1/playback` JSON (`playback_status_json`).
 - 2026-10-26: Model-action eligibility in the model list module — each
   `ModelListRow` carries its actions (applies, target folder, reason, changes
   registry); Settings buttons and More ▾ only render them. `model_update`

@@ -47,7 +47,7 @@ recorded in `docs/design/`, so no grilling slices remain.
 - [ ] **HITL — Desktop click-through of the model rows:** Settings has no
   Linux test, so check the buttons and More ▾ on installed, bundled, damaged,
   catalogue, and previous-only rows; also covers the damaged-row actions (#6).
-- [ ] **AFK — Extract the speech queue module from `main.cpp`:** queue modes,
+- [x] **AFK — Extract the speech queue module from `main.cpp`:** queue modes,
   warm-up cancellation, idle unload, and profile-change reload tested through
   the in-process fake engine; playback-status JSON moves to the local API —
   see [speech queue](docs/design/architecture.md#speech-queue) and
