@@ -34,6 +34,13 @@ Each refactor keeps behavior unchanged. Every candidate's interface questions
 were answered on 2026-10-26 (user accepted the recommendations) and are
 recorded in `docs/design/`, so no grilling slices remain.
 
+- [x] **Cross-provider branch review:** `main..56155ef` reviewed in
+  Codex/OpenAI after Opus/Anthropic implementation; one low-severity profile-read
+  consolidation gap recorded in the
+  [findings](docs/reviews/code-review-2026-10-26-architecture-deepening.md).
+- [ ] **Review triage:** validate finding #1 in the
+  [branch review](docs/reviews/code-review-2026-10-26-architecture-deepening.md)
+  before deciding any follow-up implementation.
 - [x] **HITL — Settle the interfaces of candidates 1–4:** recorded in
   [action eligibility](docs/design/architecture.md#model-removal-repair-and-maintenance-actions),
   [speech queue](docs/design/architecture.md#speech-queue), and

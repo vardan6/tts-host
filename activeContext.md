@@ -1,37 +1,30 @@
 # Active Context
 
-- Mode: implementation (behavior-preserving refactors); model maintenance
-  merged to `main` (PR #4, 2026-10-25).
-- Branch: `chore/improve-codebase-architecture` from `main` at `a47ebe4`, local
-  only, not pushed.
-- State: the three AFK slices of `roadmap.md` § Architecture deepening are
-  committed (2026-10-26): model-action eligibility in the model list
-  (`3ca12cb`), the speech queue module (`d34721f`), and profile resolution
-  (`0577039`). Linux: 55/55 tests pass. Windows `build-gpu-fallback` builds
-  and passes everything except the known `cli_language_selection` false
-  failure. Qwen stays with all variants (decided 2026-10-26).
-- Next: the HITL desktop click-through of the model rows (`roadmap.md`), which
-  also covers the damaged-row actions (#6); then `/cross-review` of the branch
-  before merging. Candidate 4's other typed reads stay deferred
-  (`docs/design/architecture.md#profile-resolution`).
-- Blockers/environment: the running Host locks its executable; do not
-  terminate it without permission, and do not link over it. Use a separate
-  output folder for build checks. Developer launches use
-  `config.development.json` (`PROJECT.md`). Linux tests: `build-linux/`. Run
-  `tts-host --list-models` with `--headless`, or it starts the app. Windows
-  PowerShell: `/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe`.
-- Open questions: Qwen named-speaker path and VoiceDesign
-  scope; per-model options; the other Open decisions in `roadmap.md`. Linux
-  Qwen runner-folder loading is unverified; previous-only restoration is
-  undesigned.
-- Discarded as noise:
-  - Kokoro showing `local` was a missing revision stamp from the developer
-    fetch script.
-  - The port 7861 failure was an existing Debug Host, not a test failure.
-  - `cli_language_selection` failing in `build-gpu-fallback` is its "fallback"
-    check matching the folder name, not a regression.
-  - The harness guard blocks Bash heredocs or scripts that contain "Qwen" text;
-    edit such files with the Edit tool.
-  - A source edit once vanished from `/mnt/c` between a passing build and the
-    next command (cause unknown); grep for the change before trusting a
-    revert-and-restore check.
+- Mode: review triage; branch `chore/improve-codebase-architecture` from
+  `main` at `a47ebe4`.
+- State: three architecture refactors committed through `56155ef`;
+  cross-provider review complete with one low-severity spec-delivery gap and
+  no confirmed runtime regression. See
+  [findings](docs/reviews/code-review-2026-10-26-architecture-deepening.md).
+- Next atomic step: `/review-triage` on finding #1 (remaining profile reads
+  in config persistence); decide disposition before any fix.
+- Afterwards: complete the model-row desktop click-through in `roadmap.md`
+  before merge; it also covers the older damaged-row actions (#6).
+- Verification: Linux build passed; 53/55 CTests passed, both remaining
+  checks passed with isolated inputs. Prior Windows build passed except its
+  known language-test false failure; desktop acceptance remains open.
+- Blockers/environment: do not terminate the running Host without permission
+  or link over its locked executable; use a separate build output. Developer
+  launches use `config.development.json` with login startup disabled
+  (`PROJECT.md`). Linux tests: `build-linux/`; listing models needs `--headless`.
+  Existing user changes to `config.example.json` and its `.last-valid` file
+  are outside this review; preserve them.
+- Open questions: finding #1 disposition; other typed config reads remain
+  deferred. Qwen named-speaker/VoiceDesign scope, per-model options, and other
+  open decisions remain in `roadmap.md`. Linux Qwen runner-folder loading is
+  unverified; previous-only restoration is undesigned.
+- Discarded as noise: mixed healthy/damaged copies do not lose rollback or
+  the last-model warning (`damaged_package()` excludes loadable IDs); see
+  review verification. Port 7861 collision and persistence failure against
+  the user-edited example are environment/input issues. Windows language
+  test's matching of "fallback" in the build path remains known noise.
