@@ -26,6 +26,43 @@ Evidence, measurements, and final closure are in the
 [October 16 acceptance report](docs/reviews/windows-acceptance-2026-10-16.md).
 Synthetic Copy adapter compatibility remains separate open work below.
 
+## Architecture deepening
+
+Branch `chore/improve-codebase-architecture`. Candidates and ranking are in the
+[2026-10-25 architecture review](docs/reviews/architecture-review-2026-10-25.md).
+Each refactor keeps behavior unchanged; the grilling slice before it fixes the
+deepened module's interface and records it in `docs/design/`.
+
+- [ ] **HITL — Grill model-action eligibility:** settle the shape of the actions
+  a model list row carries and their target packages, using the review's
+  questions; capture the result in the design's model maintenance section — see
+  [candidate 1](docs/reviews/architecture-review-2026-10-25.md#1--model-action-eligibility-in-the-model-list-module)
+  and [ADR 0010](docs/adr/0010-model-revisions-storage-and-release-layout.md).
+- [ ] **AFK — Move model-action eligibility into the model list module:**
+  Settings buttons and the More menu render the row's actions; the rules are
+  covered by `model_list_tests` on Linux — see
+  [candidate 1](docs/reviews/architecture-review-2026-10-25.md#1--model-action-eligibility-in-the-model-list-module)
+  and the design captured by the slice above.
+- [ ] **HITL — Grill the speech queue module:** settle its interface and the
+  synthesis seam — see
+  [candidate 2](docs/reviews/architecture-review-2026-10-25.md#2--speech-queue-module-out-of-maincpp).
+- [ ] **AFK — Extract the speech queue module from `main.cpp`:** queue modes,
+  warm-up cancellation, idle unload, and profile-change reload tested with the
+  stub runner — see
+  [candidate 2](docs/reviews/architecture-review-2026-10-25.md#2--speech-queue-module-out-of-maincpp).
+- [ ] **HITL — Grill profile resolution:** decide whether to merge the selection
+  types, how the eager pick joins the module, and whether candidate 4's profile reads fold in — see
+  [candidate 3](docs/reviews/architecture-review-2026-10-25.md#3--one-profile-resolution-module)
+  and [configuration](docs/design/architecture.md#configuration).
+- [ ] **AFK — One profile resolution module:** language, profile, fallback, idle
+  override, and eager pick behind one interface, unchanged
+  [load rejection](docs/design/architecture.md#load-rejection) behavior — see
+  [candidate 3](docs/reviews/architecture-review-2026-10-25.md#3--one-profile-resolution-module).
+- [ ] **HITL — Decide typed config reads:** go, fold into profile resolution, or
+  drop — see
+  [candidate 4](docs/reviews/architecture-review-2026-10-25.md#4--typed-reads-over-the-config-document)
+  and [ADR 0004](docs/adr/0004-json-canonical-config.md).
+
 ## Product
 
 - [x] **AFK — Qwen end-to-end synthesis (evaluation):** local package discovery,
@@ -217,7 +254,9 @@ Synthetic Copy adapter compatibility remains separate open work below.
     closed 2026-10-24 with no change: bundled Q4_K_M, the catalogue variants and
     the LJ Speech voice stay; ADR 0009 stands. User verdict: every variant is
     poor quality and about 5× too slow, with waits between sentences; possibly
-    worse than Chrome's built-in voice (removal is an open decision). User listens to Q4_K_M/Q8_0/bf16 at speed 1.0 with the LJ Speech clip and
+    worse than Chrome's built-in voice. Decided 2026-10-26: Qwen and all its
+    catalogue variants stay — it is already built and no variant is yet known
+    to be best; revisit removal only if a second quality option arrives. User listens to Q4_K_M/Q8_0/bf16 at speed 1.0 with the LJ Speech clip and
     at least one cleaner, licensed reference clip the user approves, against
     Kokoro; decide whether bundled Qwen stays Q4_K_M, changes, or becomes
     catalogue-only, and whether the reference voice changes (a superseding
@@ -307,12 +346,6 @@ the runner layout is decided by
 
 ## Open decisions
 
-- Whether to drop Qwen entirely (user, 2026-10-24: considering, not decided).
-  The listening comparison found every variant poor and about 5× too slow.
-  Removing it would supersede
-  [ADR 0009](docs/adr/0009-qwen-release-selection-without-bake-off.md) and
-  make the named-speaker and per-model Qwen option slices moot; decide this
-  before investing in them.
 - Whether and when Qwen becomes the quality-profile default: it misses the
   RTF ≤ 1.0 hard limit (≈1.5 warm on Linux) and peak VRAM is unmeasured; the
   user may measure it against, or change, the
