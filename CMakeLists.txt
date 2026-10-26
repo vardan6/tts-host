@@ -188,6 +188,7 @@ add_executable(
   src/now_playing_window.cpp
   src/playback_controller.cpp
   src/playback_sink.cpp
+  src/profile_resolution.cpp
   src/runner_protocol.cpp
   src/runner_launcher.cpp
   src/synthesis_pipeline.cpp
@@ -772,7 +773,8 @@ if(BUILD_TESTING)
     src/recovering_runner.cpp src/activity_log.cpp
     src/synthesis_pipeline.cpp src/runner_launcher.cpp src/runner_protocol.cpp
     src/playback_controller.cpp src/playback_sink.cpp src/audio_conversion.cpp
-    src/audio_history.cpp src/text_splitter.cpp src/wav_writer.cpp)
+    src/audio_history.cpp src/text_splitter.cpp src/wav_writer.cpp
+    src/profile_resolution.cpp src/language_selection.cpp)
   target_include_directories(tts-host-resident-synthesis-tests PRIVATE include)
   target_link_libraries(tts-host-resident-synthesis-tests PRIVATE
     nlohmann_json::nlohmann_json ${JSON_SCHEMA_VALIDATOR_TARGET})
@@ -1012,6 +1014,8 @@ if(BUILD_TESTING)
     src/model_list.cpp
     src/model_registry.cpp
     src/model_update.cpp
+    src/profile_resolution.cpp
+    src/language_selection.cpp
     src/sha256.cpp
     tests/model_list_tests.cpp
   )
@@ -1046,6 +1050,8 @@ if(BUILD_TESTING)
     src/model_catalogue.cpp
     src/model_registry.cpp
     src/model_update.cpp
+    src/profile_resolution.cpp
+    src/language_selection.cpp
     src/sha256.cpp
     tests/model_update_tests.cpp
   )
@@ -1203,6 +1209,24 @@ if(BUILD_TESTING)
   endif()
   add_test(NAME tts_host_local_api COMMAND tts-host-local-api-tests)
   set_tests_properties(tts_host_local_api PROPERTIES TIMEOUT 10)
+
+  # Profile resolution (src/profile_resolution.cpp) with an in-process model
+  # resolver: language to profile to model, overrides, fallbacks, and the
+  # eager pick, without runner processes.
+  add_executable(
+    tts-host-profile-resolution-tests
+    src/language_selection.cpp
+    src/profile_resolution.cpp
+    tests/profile_resolution_tests.cpp
+  )
+  target_include_directories(tts-host-profile-resolution-tests PRIVATE include)
+  target_link_libraries(tts-host-profile-resolution-tests PRIVATE nlohmann_json::nlohmann_json)
+  if(MSVC)
+    target_compile_options(tts-host-profile-resolution-tests PRIVATE /W4 /permissive-)
+  else()
+    target_compile_options(tts-host-profile-resolution-tests PRIVATE -Wall -Wextra -Wpedantic)
+  endif()
+  add_test(NAME tts_host_profile_resolution COMMAND tts-host-profile-resolution-tests)
 
   # Speech queue rules (src/speech_queue.cpp) through an in-process fake
   # engine: replace versus queue, stop, warm-up cancellation, profile-change

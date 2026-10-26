@@ -52,7 +52,7 @@ recorded in `docs/design/`, so no grilling slices remain.
   the in-process fake engine; playback-status JSON moves to the local API —
   see [speech queue](docs/design/architecture.md#speech-queue) and
   [candidate 2](docs/reviews/architecture-review-2026-10-25.md#2--speech-queue-module-out-of-maincpp).
-- [ ] **AFK — One profile resolution module:** language, profile, fallback, idle
+- [x] **AFK — One profile resolution module:** language, profile, fallback, idle
   override, eager pick, and the profile reads behind one interface with one
   `RunnerSelection`; unchanged
   [load rejection](docs/design/architecture.md#load-rejection) behavior — see

@@ -76,8 +76,8 @@ int main(int argc, char **argv) {
         tts_host::resolve_model_runner_selection("stub-package", config, runner_directory);
     require(selection.display_name == "Stub Package" && selection.engine == "stub",
             "resolved selection carries the wrong package metadata");
-    require(selection.model_path.filename() == "model.bin",
-            "resolved selection points at the wrong model file: " + selection.model_path.string());
+    require(selection.model_path->filename() == "model.bin",
+            "resolved selection points at the wrong model file: " + selection.model_path->string());
     require(!selection.voice_path.has_value(),
             "a package with no voice file reported a voice path");
 
@@ -89,7 +89,7 @@ int main(int argc, char **argv) {
       tts_host::parse_runner_initialize_response(
           session.send_request(tts_host::make_runner_initialize_request(1)));
       tts_host::parse_runner_load_response(
-          session.send_request(tts_host::make_runner_load_request(2, selection.model_path.string())));
+          session.send_request(tts_host::make_runner_load_request(2, selection.model_path->string())));
 
       const auto unload_response =
           session.send_request(tts_host::make_runner_unload_request("unload-1"));
@@ -97,7 +97,7 @@ int main(int argc, char **argv) {
               "stub runner subprocess did not answer the unload request");
 
       tts_host::parse_runner_load_response(
-          session.send_request(tts_host::make_runner_load_request(4, selection.model_path.string())));
+          session.send_request(tts_host::make_runner_load_request(4, selection.model_path->string())));
       const auto synthesize_response =
           session.send_request(tts_host::make_runner_synthesize_request(5, "after unload"));
       require(tts_host::parse_runner_synthesize_response(synthesize_response).total_sample_frames == 4,
@@ -144,7 +144,7 @@ int main(int argc, char **argv) {
                   *selected.voice_path == package / tts_host::path_from_utf8(voice_name),
               "Unicode manifest paths changed during resolution");
       const auto wire = tts_host::parse_runner_load_request(tts_host::make_runner_load_request(
-          2, tts_host::path_to_utf8(selected.model_path),
+          2, tts_host::path_to_utf8(*selected.model_path),
           tts_host::path_to_utf8(*selected.voice_path)));
       require(tts_host::path_from_utf8(wire.model_path) == selected.model_path &&
                   tts_host::path_from_utf8(*wire.voice_path) == *selected.voice_path,
@@ -162,7 +162,7 @@ int main(int argc, char **argv) {
       std::filesystem::copy_file(kokoro.parent_path() / "libonnxruntime.so.1",
                                  root / "libonnxruntime.so.1");
       std::filesystem::copy_file(std::filesystem::path(argv[2]).parent_path() /
-                                    "../kokoro_runner/placeholder.onnx", selected.model_path,
+                                    "../kokoro_runner/placeholder.onnx", *selected.model_path,
                                 std::filesystem::copy_options::overwrite_existing);
       std::vector<float> voice(256, 0.0f);
       {
@@ -173,7 +173,7 @@ int main(int argc, char **argv) {
       tts_host::parse_runner_initialize_response(
           kokoro_session.send_request(tts_host::make_runner_initialize_request(1)));
       tts_host::parse_runner_load_response(kokoro_session.send_request(
-          tts_host::make_runner_load_request(2, tts_host::path_to_utf8(selected.model_path),
+          tts_host::make_runner_load_request(2, tts_host::path_to_utf8(*selected.model_path),
                                            tts_host::path_to_utf8(*selected.voice_path))));
       require(kokoro_session.finish() == 0, "Kokoro Unicode model/voice load failed");
 #endif

@@ -3,17 +3,11 @@
 #include "tts_host/config_loader.hpp"
 #include "tts_host/playback_sink.hpp"
 #include "tts_host/runner_launcher.hpp"
+#include "tts_host/runner_selection.hpp"
 #include <optional>
 
 namespace tts_host {
 class RecoveringRunner;
-struct RunnerSelection {
-  std::filesystem::path runner_path;
-  std::optional<std::filesystem::path> model_path;
-  std::optional<std::filesystem::path> voice_path;
-  std::string model_id, display_name, engine;
-  std::optional<std::chrono::seconds> idle_override;
-};
 
 // The portable synthesis/playback coordinator. The desktop uses the system
 // sink; tests supply an endpoint without accessing audio hardware.

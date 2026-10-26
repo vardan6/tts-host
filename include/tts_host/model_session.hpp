@@ -12,21 +12,9 @@
 
 #include "tts_host/config_loader.hpp"
 #include "tts_host/runner_launcher.hpp"
+#include "tts_host/runner_selection.hpp"
 
 namespace tts_host {
-
-// Everything needed to run one registry model: the runner executable for its
-// declared engine plus the package files the runner has to load. Runner
-// binaries are installed beside tts-host, named by convention
-// tts-host-<engine>-runner[.exe].
-struct ModelRunnerSelection {
-  std::string model_id;
-  std::string display_name;
-  std::string engine;
-  std::filesystem::path runner_path;
-  std::filesystem::path model_path;
-  std::optional<std::filesystem::path> voice_path;
-};
 
 // ADR 0010 layout: <application directory>/runners/<engine>/tts-host-<engine>-runner.
 std::filesystem::path runner_path_for_engine(const std::string &engine,
@@ -35,10 +23,10 @@ std::filesystem::path runner_path_for_engine(const std::string &engine,
 // Resolves a model id against the configured registry
 // (docs/design/architecture.md#model-packages-and-discovery). Throws if the id
 // names no discovered package, or if no runner for the package's engine is
-// installed under runner_directory (the application directory).
-ModelRunnerSelection resolve_model_runner_selection(const std::string &model_id,
-                                                    const ConfigDocument &config,
-                                                    const std::filesystem::path &runner_directory);
+// installed under runner_directory (the application directory). The result
+// carries no idle override; profile resolution adds the profile's.
+RunnerSelection resolve_model_runner_selection(const std::string &model_id, const ConfigDocument &config,
+                                               const std::filesystem::path &runner_directory);
 
 struct ModelSessionStatus {
   bool loaded = false;
@@ -72,15 +60,18 @@ class ModelSessionManager {
 
   void load(const std::string &model_id, const ConfigDocument &config,
             std::optional<std::chrono::seconds> idle_override = {});
-  void load_eager(const ConfigDocument &config, std::function<bool()> cancelled = {});
+  // Loads `selection` ahead of speech: the eager profile's, picked by
+  // eager_selection() (profile_resolution.hpp).
+  void warm(const RunnerSelection &selection, std::function<bool()> cancelled = {});
   void unload();
   // Runs `switch_package` while no speech holds the runner, after releasing
   // a resident runner of `model_id` so its files are closed and the next use
   // reloads from the new folder. Throws without calling it while speech is
   // active: an utterance must finish or be stopped before replacement.
   void replace_package(const std::string &model_id, const std::function<void()> &switch_package);
-  Lease acquire(const ModelRunnerSelection &selection, std::function<bool()> cancelled = {},
-                std::optional<std::chrono::seconds> idle_override = {});
+  // The selection's idle_override replaces the registry's idle timeout while
+  // it stays resident.
+  Lease acquire(const RunnerSelection &selection, std::function<bool()> cancelled = {});
   bool unload_if_idle(std::chrono::seconds idle_unload_seconds,
                       std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now());
   ModelSessionStatus status() const;
@@ -91,13 +82,13 @@ class ModelSessionManager {
 
  private:
   void unload_locked();
-  void select_locked(const ModelRunnerSelection &selection, bool force);
+  void select_locked(const RunnerSelection &selection, bool force);
   void publish_status(ModelSessionStatus status);
   std::filesystem::path runner_directory_;
   std::mutex operation_mutex_;
   mutable std::mutex status_mutex_;
   std::unique_ptr<RecoveringRunner> session_;
-  std::optional<ModelRunnerSelection> selection_;
+  std::optional<RunnerSelection> selection_;
   ModelSessionStatus status_;
   std::map<std::string, std::string> load_failures_;
   std::chrono::steady_clock::time_point last_used_;

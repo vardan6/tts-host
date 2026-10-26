@@ -11,6 +11,7 @@
 #include <nlohmann/json.hpp>
 
 #include "tts_host/path_encoding.hpp"
+#include "tts_host/profile_resolution.hpp"
 #include "tts_host/sha256.hpp"
 
 namespace tts_host {
@@ -403,12 +404,8 @@ ModelRemovalPlan plan_model_removal(const std::string &id, const ModelRegistrySc
       plan.previous_bytes = folder_bytes(previous.package_path);
     }
   }
-  if (config.value.contains("profiles")) {
-    for (const auto &profile : config.value.at("profiles").items()) {
-      if (profile.value().value("model", "") == id) {
-        plan.profiles.push_back(profile.key());
-      }
-    }
+  for (const auto &profile : profile_views(config)) {
+    if (profile.model == id) plan.profiles.push_back(profile.name);
   }
   plan.bundled_becomes_active =
       std::any_of(scan.superseded_packages.begin(), scan.superseded_packages.end(),
