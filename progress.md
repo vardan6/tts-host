@@ -1,3 +1,9 @@
+- 2026-10-26: Model-action eligibility in the model list module — each
+  `ModelListRow` carries its actions (applies, target folder, reason, changes
+  registry); Settings buttons and More ▾ only render them. `model_update`
+  exposes `maintained_package` and `revert_source`, which both the rows and
+  its throws use. Rules covered by `model_list_tests`; Windows Host builds;
+  desktop click-through pending (HITL in `roadmap.md`).
 - 2026-10-24: Unified Settings model list — desktop checks passed on user
   confirmation: layout, Q8_0/Kokoro selection persistence, Ctrl+F8.
 - 2026-10-24: Qwen variants vs Kokoro listening comparison — user verdict:

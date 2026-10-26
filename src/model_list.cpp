@@ -4,6 +4,7 @@
 #include <system_error>
 
 #include "tts_host/model_catalogue.hpp"
+#include "tts_host/model_update.hpp"
 #include "tts_host/path_encoding.hpp"
 
 namespace tts_host {
@@ -27,6 +28,42 @@ bool has_row(const std::vector<ModelListRow> &rows, const std::string &id) {
   return std::any_of(rows.begin(), rows.end(), [&](const ModelListRow &row) { return row.id == id; });
 }
 
+// The rules behind the buttons and More menu; model_update throws on the same
+// predicates, so the menu and the operation cannot disagree.
+std::vector<ModelAction> row_actions(const ModelListRow &row, const ModelRegistryScan &scan) {
+  const auto *installed = find_package(scan.discovered_packages, row.id);
+  const auto *maintained = maintained_package(row.id, scan);
+  const auto *previous = find_package(scan.previous_packages, row.id);
+  const ModelPackageCandidate *superseded = nullptr;
+  for (const auto &package : scan.superseded_packages) {
+    if (package.id == row.id && !package.bundled) {
+      superseded = &package;
+      break;
+    }
+  }
+  const auto folder = [](const ModelPackageCandidate *package) {
+    return package != nullptr ? package->package_path : std::filesystem::path();
+  };
+  const bool bundled = maintained != nullptr && maintained->bundled;
+  // Verify compares against the catalogue revision; an older one is updated instead.
+  const bool verifiable =
+      maintained != nullptr && row.in_catalogue && package_status(*maintained) == PackageStatus::current;
+  return {
+      {ModelActionKind::load, installed != nullptr, folder(installed), std::nullopt, false},
+      {ModelActionKind::download, !row.installed && !row.damaged && row.in_catalogue, {}, std::nullopt, true},
+      {ModelActionKind::update, row.update_available, folder(maintained), std::nullopt, true},
+      {ModelActionKind::revert, revert_source(row.id, scan) != nullptr, folder(installed), std::nullopt, true},
+      {ModelActionKind::delete_previous, previous != nullptr, folder(previous), std::nullopt, true},
+      {ModelActionKind::remove_superseded, superseded != nullptr, folder(superseded), std::nullopt, true},
+      {ModelActionKind::remove, maintained != nullptr && !bundled, folder(maintained),
+       bundled ? std::optional<std::string>("Bundled with the app") : std::nullopt, true},
+      {ModelActionKind::verify, verifiable, folder(maintained), std::nullopt, true},
+      // A row with only a kept previous version opens that copy.
+      {ModelActionKind::open_folder, maintained != nullptr || previous != nullptr,
+       maintained != nullptr ? folder(maintained) : folder(previous), std::nullopt, false},
+  };
+}
+
 }  // namespace
 
 std::vector<ModelListRow> build_model_list(const ModelRegistryScan &scan, const std::string &loaded_id,
@@ -38,6 +75,7 @@ std::vector<ModelListRow> build_model_list(const ModelRegistryScan &scan, const 
     row.loaded = !loaded_id.empty() && row.id == loaded_id;
     if (const auto failure = load_failures.find(row.id); failure != load_failures.end())
       row.unavailable_reason = failure->second;
+    row.actions = row_actions(row, scan);
     rows.push_back(std::move(row));
   };
 
@@ -95,6 +133,10 @@ std::vector<ModelListRow> build_model_list(const ModelRegistryScan &scan, const 
     finish(row);
   }
   return rows;
+}
+
+const ModelAction &model_action(const ModelListRow &row, ModelActionKind kind) {
+  return row.actions.at(static_cast<std::size_t>(kind));
 }
 
 std::string describe_model_details(const ModelListRow &row, const ModelRegistryScan &scan) {

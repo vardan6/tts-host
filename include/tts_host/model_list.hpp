@@ -12,6 +12,34 @@
 
 namespace tts_host {
 
+// A per-row model action
+// (docs/design/architecture.md#model-removal-repair-and-maintenance-actions).
+enum class ModelActionKind {
+  load,
+  download,
+  update,
+  revert,
+  delete_previous,
+  remove_superseded,
+  remove,
+  verify,
+  open_folder,
+};
+
+// Whether an action applies to its row, decided here so every platform's
+// Settings shares the rules. Settings enables it when it applies and either
+// does not change the registry or no model task is running.
+struct ModelAction {
+  ModelActionKind kind = ModelActionKind::load;
+  bool applies = false;
+  // The folder the action acts on (a path survives a rescan); empty when it
+  // has none, as for Download.
+  std::filesystem::path target;
+  // Why it does not apply, shown beside its label ("Bundled with the app").
+  std::optional<std::string> reason;
+  bool changes_registry = false;
+};
+
 // One row of the Settings unified model list
 // (docs/design/architecture.md#model-removal-repair-and-maintenance-actions):
 // an installed package, a catalogue entry that is not installed, or an id
@@ -36,7 +64,12 @@ struct ModelListRow {
   bool damaged = false;
   bool in_catalogue = false;
   bool update_available = false;
+  // One entry per ModelActionKind, in declaration order.
+  std::vector<ModelAction> actions;
 };
+
+// The row's action of `kind`.
+const ModelAction &model_action(const ModelListRow &row, ModelActionKind kind);
 
 using FolderSize = std::function<std::uintmax_t(const std::filesystem::path &)>;
 
