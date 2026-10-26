@@ -424,7 +424,7 @@ BOOL CALLBACK apply_shell_ui_font(HWND child, LPARAM font) {
 // Fills the combo box with every profile name from config's "profiles" map,
 // preselecting whichever one languageDefaults.en currently names. English is
 // the only language surfaced end to end so far (see roadmap and
-// resolve_default_runner_selection in src/main.cpp).
+// resolve_selection in src/profile_resolution.cpp).
 // Refills `combo`: selection indexes the new rows, so old ones go first.
 void populate_default_profile_combo(HWND combo, const ConfigDocument &document) {
   SendMessageW(combo, CB_RESETCONTENT, 0, 0);

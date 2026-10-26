@@ -1,3 +1,14 @@
+- 2026-10-26: Profile resolution module — `profile_resolution.hpp` owns
+  language → profile → model, `--model`/`--runner`, `fallbackProfile`, the
+  per-profile idle override, and `eager_selection`; `ProfileView` is the only
+  reader of `model`, `fallbackProfile`, `loadPolicy`, and `idleUnloadSeconds`
+  (including Remove…'s profile list). `RunnerSelection` (`runner_selection.hpp`)
+  replaces `ModelRunnerSelection`; `ModelSessionManager::warm` and `acquire`
+  take it directly and no longer read profiles. Messages are returned and
+  `main.cpp` prints and logs them, so a request whose resolution throws no
+  longer prints its "Language:" or "using fallback" line first; the error
+  still names both reasons. `profile_resolution_tests` cover it without
+  processes; `cli_language_selection` still passes on Linux.
 - 2026-10-26: Speech queue module — `SpeechQueue` (`speech_queue.hpp`)
   replaces `TraySpeechScheduler` in `main.cpp`; synthesis sits behind the
   `SpeechEngine` seam (speak, warm, unload if idle), with `HostSpeechEngine`

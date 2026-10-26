@@ -21,9 +21,8 @@ std::filesystem::path runner_path_for_engine(const std::string &engine,
 #endif
 }
 
-ModelRunnerSelection resolve_model_runner_selection(
-    const std::string &model_id, const ConfigDocument &config,
-    const std::filesystem::path &runner_directory) {
+RunnerSelection resolve_model_runner_selection(const std::string &model_id, const ConfigDocument &config,
+                                               const std::filesystem::path &runner_directory) {
   const auto scan = scan_model_registry(config);
   const auto package =
       std::find_if(scan.discovered_packages.begin(), scan.discovered_packages.end(),
@@ -39,7 +38,7 @@ ModelRunnerSelection resolve_model_runner_selection(
   }
 
   const auto &files = package->manifest.at("files");
-  ModelRunnerSelection selection;
+  RunnerSelection selection;
   selection.model_id = package->id;
   selection.display_name = package->display_name;
   selection.engine = package->engine;
@@ -84,7 +83,7 @@ void ModelSessionManager::unload_locked() {
   idle_override_.reset();
 }
 
-void ModelSessionManager::select_locked(const ModelRunnerSelection &selection, bool force) {
+void ModelSessionManager::select_locked(const RunnerSelection &selection, bool force) {
   if (!force && session_ && selection_ &&
       selection_->runner_path == selection.runner_path &&
       selection_->model_path == selection.model_path &&
@@ -93,8 +92,7 @@ void ModelSessionManager::select_locked(const ModelRunnerSelection &selection, b
     return;
   }
   unload_locked();
-  session_ = std::make_unique<RecoveringRunner>(selection.runner_path,
-      selection.model_path.empty() ? std::nullopt : std::optional(selection.model_path),
+  session_ = std::make_unique<RecoveringRunner>(selection.runner_path, selection.model_path,
       selection.voice_path);
   selection_ = selection;
   session_->set_state_callback([this](bool loaded) {
@@ -132,33 +130,9 @@ void ModelSessionManager::load(const std::string &model_id, const ConfigDocument
   } catch (...) { unload_locked(); throw; }
 }
 
-void ModelSessionManager::load_eager(const ConfigDocument &config,
-    std::function<bool()> cancelled) {
-  // This manager has one resident slot. Prefer an eager language default,
-  // then the first eager profile in deterministic configuration-key order.
-  const auto &profiles = config.value.at("profiles");
-  std::string chosen;
-  for (const auto &entry : config.value.at("languageDefaults").items()) {
-    const auto name = entry.value().get<std::string>();
-    if (profiles.contains(name) && profiles.at(name).value("loadPolicy", "onDemand") == "eager") {
-      chosen = name;
-      break;
-    }
-  }
-  if (chosen.empty()) {
-    for (const auto &entry : profiles.items()) {
-      if (entry.value().value("loadPolicy", "onDemand") == "eager") { chosen = entry.key(); break; }
-    }
-  }
-  if (!chosen.empty()) {
-    const auto idle_override = profiles.at(chosen).contains("idleUnloadSeconds")
-        ? std::optional(std::chrono::seconds(profiles.at(chosen).at("idleUnloadSeconds").get<int>()))
-        : std::nullopt;
-    const auto selected = resolve_model_runner_selection(
-        profiles.at(chosen).at("model").get<std::string>(), config, runner_directory_);
-    auto lease = acquire(selected, std::move(cancelled), idle_override);
-    lease.runner().prepare();
-  }
+void ModelSessionManager::warm(const RunnerSelection &selection, std::function<bool()> cancelled) {
+  auto lease = acquire(selection, std::move(cancelled));
+  lease.runner().prepare();
 }
 
 void ModelSessionManager::unload() {
@@ -189,12 +163,12 @@ ModelSessionManager::Lease::~Lease() {
       : ModelSessionStatus{});
 }
 
-ModelSessionManager::Lease ModelSessionManager::acquire(const ModelRunnerSelection &selection,
-    std::function<bool()> cancelled, std::optional<std::chrono::seconds> idle_override) {
+ModelSessionManager::Lease ModelSessionManager::acquire(const RunnerSelection &selection,
+    std::function<bool()> cancelled) {
   std::unique_lock lock(operation_mutex_);
   select_locked(selection, false);
   session_->set_cancelled(std::move(cancelled));
-  idle_override_ = idle_override;
+  idle_override_ = selection.idle_override;
   return Lease(*this, std::move(lock));
 }
 

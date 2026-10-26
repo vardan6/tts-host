@@ -1,4 +1,5 @@
 #include "tts_host/model_session.hpp"
+#include "tts_host/profile_resolution.hpp"
 #include "tts_host/synthesis_pipeline.hpp"
 #include "tts_host/path_encoding.hpp"
 #include <cstdlib>
@@ -51,16 +52,25 @@ int main(int argc, char **argv) {
     config.value = nlohmann::json::parse(input);
     config.value["profiles"]["fast"]["loadPolicy"] = "onDemand";
     const auto selection = tts_host::resolve_model_runner_selection("stub-package", config, scratch);
-    const tts_host::RunnerSelection pipeline_selection{selection.runner_path, selection.model_path,
-        selection.voice_path, selection.model_id, selection.display_name, selection.engine, {}};
     tts_host::CliOptions options;
     tts_host::ModelSessionManager manager(scratch);
-    manager.load_eager(config);
+    // The Host's eager warm-up: profile resolution picks, the manager loads.
+    const auto load_eager = [&](std::function<bool()> cancelled = {}) {
+      const auto eager = tts_host::eager_selection(config, [&](const std::string &model_id) {
+        return tts_host::resolve_model_runner_selection(model_id, config, scratch);
+      });
+      if (eager) manager.warm(*eager, std::move(cancelled));
+    };
+    const auto with_idle = [](tts_host::RunnerSelection selected, std::chrono::seconds idle) {
+      selected.idle_override = idle;
+      return selected;
+    };
+    load_eager();
     require(!manager.status().loaded && count(events, "start") == 0,
             "onDemand started a runner before speech");
     const auto speak = [&] {
       auto lease = manager.acquire(selection);
-      tts_host::run_synthesis_pipeline("First. Second.", options, config, pipeline_selection,
+      tts_host::run_synthesis_pipeline("First. Second.", options, config, selection,
                                       nullptr, nullptr, nullptr, {}, &lease.runner());
       require(manager.status().loaded, "onDemand synthesis hid its loaded model until utterance release");
     };
@@ -101,15 +111,15 @@ int main(int argc, char **argv) {
 
     config.value["profiles"]["fast"]["loadPolicy"] = "eager";
     config.value["profiles"]["fast"]["idleUnloadSeconds"] = 0;
-    manager.load_eager(config);
+    load_eager();
     require(manager.status().loaded && count(events, "start") == 4,
             "eager profile did not load before the first read");
-    manager.load_eager(config);
+    load_eager();
     require(count(events, "start") == 4, "unchanged eager profile restarted its resident runner");
     require(!manager.unload_if_idle(1s, std::chrono::steady_clock::now() + 1h),
             "profile idle override failed to disable unloading");
     {
-      auto lease = manager.acquire(selection, {}, 0s);
+      auto lease = manager.acquire(with_idle(selection, 0s));
       lease.runner().synthesize("Eager read", 1.0);
     }
     require(count(events, "start") == 4 && count(events, "load") == 4,
@@ -134,9 +144,9 @@ int main(int argc, char **argv) {
     auto alternate = selection;
     alternate.model_id = "alternate";
     alternate.model_path = scratch / "alternate.bin";
-    { std::ofstream(alternate.model_path) << "model"; }
+    { std::ofstream(*alternate.model_path) << "model"; }
     {
-      auto lease = manager.acquire(alternate, {}, 0s);
+      auto lease = manager.acquire(with_idle(alternate, 0s));
       lease.runner().synthesize("Alternate", 1.0);
     }
     require(manager.status().model_id == "alternate", "model switching left stale metadata");
@@ -162,7 +172,7 @@ int main(int argc, char **argv) {
     env("TTS_TEST_RUNNER_MODE", "load-hang");
     std::atomic_bool cancelled{false};
     auto warming = std::async(std::launch::async, [&] {
-      try { manager.load_eager(config, [&] { return cancelled.load(); }); }
+      try { load_eager([&] { return cancelled.load(); }); }
       catch (const tts_host::RunnerCancelled &) { return true; }
       return false;
     });
