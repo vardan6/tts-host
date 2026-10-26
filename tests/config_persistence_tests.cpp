@@ -45,6 +45,21 @@ int main(int argc, char **argv) {
             "Settings choice did not change the model used by English reads");
     require(selected.value.at("profiles").at(selected_profile).at("loadPolicy") == "eager",
             "warm-up could replace the Settings choice with an older eager default");
+    // The new profile keeps the active profile's fallback and explicit zero
+    // timeout, but drops a fallback that would select the same model.
+    auto routed = document;
+    routed.value["languageDefaults"]["en"] = "quality";
+    routed.value["profiles"]["fast"] = {{"device", "cpu"}, {"loadPolicy", "eager"}, {"model", "kokoro-en-v1"}};
+    routed.value["profiles"]["quality"] = {{"device", "auto"}, {"fallbackProfile", "fast"}, {"idleUnloadSeconds", 0},
+                                           {"loadPolicy", "onDemand"}, {"model", "qwen3-tts-1.7b"}};
+    const auto kept = tts_host::with_selected_model(routed, "qwen3-tts-1.7b-q8", {"en"});
+    require(kept.value.at("profiles").at("selected-model-en").at("fallbackProfile") == "fast",
+            "the active profile's fallback was not kept");
+    require(kept.value.at("profiles").at("selected-model-en").at("idleUnloadSeconds") == 0,
+            "an explicit zero idle timeout was not kept");
+    const auto same_model = tts_host::with_selected_model(routed, "kokoro-en-v1", {"en"});
+    require(!same_model.value.at("profiles").at("selected-model-en").contains("fallbackProfile"),
+            "a fallback to the selected model was kept");
     for (const auto &entry : original.at("profiles").items())
       require(selected.value.at("profiles").at(entry.key()) == entry.value(), "named profile was changed");
     for (const auto &entry : original.at("languageDefaults").items())
@@ -56,8 +71,7 @@ int main(int argc, char **argv) {
     require(nlohmann::json::parse(read(path)) == selected.value, "model choice did not survive save");
     selected = tts_host::with_selected_model(selected, "kokoro-en-v1", {"en"});
     require(selected.value.at("profiles").at(selected_profile).at("model") == "kokoro-en-v1",
-            "the latest model selection did not win");
-    require(document.value == original, "candidate creation mutated the saved configuration");
+            "the latest model selection did not win");    require(document.value == original, "candidate creation mutated the saved configuration");
     document.value["audio"]["playbackSkipSeconds"] = 12;
     for (int failure = 0; failure < 5; ++failure) {
       write(path, original_bytes);

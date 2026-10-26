@@ -677,7 +677,8 @@ if(BUILD_TESTING)
   add_test(NAME tts_host_cli_text_sources COMMAND tts-host-config-loader-tests)
 
   add_executable(tts-host-config-persistence-tests
-    src/config_loader.cpp src/config_persistence.cpp tests/config_persistence_tests.cpp)
+    src/config_loader.cpp src/config_persistence.cpp src/profile_resolution.cpp
+    src/language_selection.cpp tests/config_persistence_tests.cpp)
   target_include_directories(tts-host-config-persistence-tests PRIVATE include)
   target_link_libraries(tts-host-config-persistence-tests PRIVATE
     nlohmann_json::nlohmann_json ${JSON_SCHEMA_VALIDATOR_TARGET})

@@ -3,6 +3,9 @@
 #include <atomic>
 #include <fstream>
 #include <stdexcept>
+
+#include "tts_host/profile_resolution.hpp"
+
 #ifdef _WIN32
 #include <windows.h>
 #else
@@ -66,15 +69,11 @@ ConfigDocument with_selected_model(const ConfigDocument &document, const std::st
     // Preserve the active profile's fallback and timeout, but let the selected
     // engine choose its device. Eager warm-up must prefer the new default.
     if (defaults.contains(language)) {
-      const auto &previous = profiles.at(defaults.at(language).get<std::string>());
-      for (const auto *key : {"fallbackProfile", "idleUnloadSeconds"}) {
-        if (previous.contains(key)) profile[key] = previous.at(key);
-      }
-      if (profile.contains("fallbackProfile")) {
-        const auto fallback = profile.at("fallbackProfile").get<std::string>();
-        if (fallback == name || profiles.at(fallback).at("model") == model_id)
-          profile.erase("fallbackProfile");
-      }
+      const auto previous = profile_view(candidate, defaults.at(language).get<std::string>());
+      if (previous.idle_unload) profile["idleUnloadSeconds"] = previous.idle_unload->count();
+      const auto &fallback = previous.fallback_profile;
+      if (fallback && *fallback != name && profile_view(candidate, *fallback).model != model_id)
+        profile["fallbackProfile"] = *fallback;
     }
     profiles[name] = std::move(profile);
     defaults[language] = name;
