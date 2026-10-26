@@ -1,17 +1,19 @@
 # Active Context
 
-- Mode: planning; model maintenance merged to `main` (PR #4, 2026-10-25).
+- Mode: implementation (behavior-preserving refactors); model maintenance
+  merged to `main` (PR #4, 2026-10-25).
 - Branch: `chore/improve-codebase-architecture` from `main` at `a47ebe4`, local
   only, not pushed.
-- State: the
-  [architecture review](docs/reviews/architecture-review-2026-10-25.md) is
-  committed; its interface questions are answered in
-  `docs/design/architecture.md` (2026-10-26), leaving three AFK refactor slices
-  in `roadmap.md` § Architecture deepening. The damaged-row Settings actions (#6) are
-  still not desktop-checked. Qwen stays with all variants (decided
-  2026-10-26; recorded in `roadmap.md`).
-- Next: `/next-slice` — move model-action eligibility into the model list
-  module (candidate 1).
+- State: the three AFK slices of `roadmap.md` § Architecture deepening are
+  committed (2026-10-26): model-action eligibility in the model list
+  (`3ca12cb`), the speech queue module (`d34721f`), and profile resolution
+  (`0577039`). Linux: 55/55 tests pass. Windows `build-gpu-fallback` builds
+  and passes everything except the known `cli_language_selection` false
+  failure. Qwen stays with all variants (decided 2026-10-26).
+- Next: the HITL desktop click-through of the model rows (`roadmap.md`), which
+  also covers the damaged-row actions (#6); then `/cross-review` of the branch
+  before merging. Candidate 4's other typed reads stay deferred
+  (`docs/design/architecture.md#profile-resolution`).
 - Blockers/environment: the running Host locks its executable; do not
   terminate it without permission, and do not link over it. Use a separate
   output folder for build checks. Developer launches use
