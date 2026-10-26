@@ -1,13 +1,14 @@
 # Active Context
 
-- Mode: review triage; branch `chore/improve-codebase-architecture` from
+- Mode: implementation (behavior-preserving refactor); branch `chore/improve-codebase-architecture` from
   `main` at `a47ebe4`.
 - State: three architecture refactors committed through `56155ef`;
-  cross-provider review complete with one low-severity spec-delivery gap and
-  no confirmed runtime regression. See
+  cross-provider review complete and triaged: one low-severity spec-delivery gap,
+  queued before merge; no confirmed runtime regression. See
   [findings](docs/reviews/code-review-2026-10-26-architecture-deepening.md).
-- Next atomic step: `/review-triage` on finding #1 (remaining profile reads
-  in config persistence); decide disposition before any fix.
+- Next atomic step: `/next-slice` — read profiles through the typed view in
+  `with_selected_model()` (review finding #1, triaged 2026-10-26 as fix
+  before merge).
 - Afterwards: complete the model-row desktop click-through in `roadmap.md`
   before merge; it also covers the older damaged-row actions (#6).
 - Verification: Linux build passed; 53/55 CTests passed, both remaining

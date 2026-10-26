@@ -38,9 +38,15 @@ recorded in `docs/design/`, so no grilling slices remain.
   Codex/OpenAI after Opus/Anthropic implementation; one low-severity profile-read
   consolidation gap recorded in the
   [findings](docs/reviews/code-review-2026-10-26-architecture-deepening.md).
-- [ ] **Review triage:** validate finding #1 in the
+- [x] **Review triage:** finding #1 of the
   [branch review](docs/reviews/code-review-2026-10-26-architecture-deepening.md)
-  before deciding any follow-up implementation.
+  is valid; queued below, fix before merge.
+- [ ] **AFK — Read profiles through the typed view in model selection:**
+  `with_selected_model()` reads the previous profile's fallback and idle
+  timeout, and the fallback's model, through `profile_view()`; JSON writes stay
+  in config persistence; behavior unchanged — see
+  [finding #1](docs/reviews/code-review-2026-10-26-architecture-deepening.md#1--finish-moving-profile-reads-behind-the-typed-view)
+  and [profile resolution](docs/design/architecture.md#profile-resolution).
 - [x] **HITL — Settle the interfaces of candidates 1–4:** recorded in
   [action eligibility](docs/design/architecture.md#model-removal-repair-and-maintenance-actions),
   [speech queue](docs/design/architecture.md#speech-queue), and
