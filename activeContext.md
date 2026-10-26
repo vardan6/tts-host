@@ -2,25 +2,24 @@
 
 - Mode: implementation (behavior-preserving refactor); branch `chore/improve-codebase-architecture` from
   `main` at `a47ebe4`.
-- State: three architecture refactors committed through `56155ef`;
-  cross-provider review complete and triaged: one low-severity spec-delivery gap,
-  queued before merge; no confirmed runtime regression. See
-  [findings](docs/reviews/code-review-2026-10-26-architecture-deepening.md).
-- Next atomic step: `/next-slice` — read profiles through the typed view in
-  `with_selected_model()` (review finding #1, triaged 2026-10-26 as fix
-  before merge).
-- Afterwards: complete the model-row desktop click-through in `roadmap.md`
-  before merge; it also covers the older damaged-row actions (#6).
-- Verification: Linux build passed; 53/55 CTests passed, both remaining
-  checks passed with isolated inputs. Prior Windows build passed except its
-  known language-test false failure; desktop acceptance remains open.
+- State: three architecture refactors plus the fix for cross-review
+  [finding #1](docs/reviews/code-review-2026-10-26-architecture-deepening.md)
+  (profile reads in `with_selected_model()` via `profile_view()`); all
+  review findings closed.
+- Next atomic step: HITL model-row desktop click-through in `roadmap.md`
+  (also covers the damaged-row actions #6), then merge.
+- Verification: Linux build passed; 53/55 CTests passed — config persistence
+  fails only against the uncommitted `config.example.json` (passes on the
+  committed copy), tray on busy port 7861. Windows not rebuilt since the
+  finding fix; prior build passed except its known language-test false
+  failure.
 - Blockers/environment: do not terminate the running Host without permission
   or link over its locked executable; use a separate build output. Developer
   launches use `config.development.json` with login startup disabled
   (`PROJECT.md`). Linux tests: `build-linux/`; listing models needs `--headless`.
   Existing user changes to `config.example.json` and its `.last-valid` file
   are outside this review; preserve them.
-- Open questions: finding #1 disposition; other typed config reads remain
+- Open questions: other typed config reads remain
   deferred. Qwen named-speaker/VoiceDesign scope, per-model options, and other
   open decisions remain in `roadmap.md`. Linux Qwen runner-folder loading is
   unverified; previous-only restoration is undesigned.
@@ -29,3 +28,5 @@
   review verification. Port 7861 collision and persistence failure against
   the user-edited example are environment/input issues. Windows language
   test's matching of "fallback" in the build path remains known noise.
+  New persistence tests build their own profiles: asserting on the example
+  file breaks against the user-edited copy.

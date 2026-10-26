@@ -41,7 +41,7 @@ recorded in `docs/design/`, so no grilling slices remain.
 - [x] **Review triage:** finding #1 of the
   [branch review](docs/reviews/code-review-2026-10-26-architecture-deepening.md)
   is valid; queued below, fix before merge.
-- [ ] **AFK — Read profiles through the typed view in model selection:**
+- [x] **AFK — Read profiles through the typed view in model selection:**
   `with_selected_model()` reads the previous profile's fallback and idle
   timeout, and the fallback's model, through `profile_view()`; JSON writes stay
   in config persistence; behavior unchanged — see
