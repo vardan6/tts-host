@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Architecture review for tts-host</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script type="module">
+      import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+      mermaid.initialize({ startOnLoad: true, theme: "neutral", securityLevel: "loose" });
+    </script>
+    <style>
+      .seam { border-style: dashed; }
+      .deep { background: linear-gradient(135deg, #0f172a, #1e293b); color: #e2e8f0; }
+      .schem { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.08em; }
+    </style>
+  </head>
+  <body class="bg-stone-50 text-slate-900 font-sans">
+    <main class="max-w-5xl mx-auto px-6 py-12 space-y-12">
+      <header class="space-y-3">
+        <h1 class="font-serif text-4xl">tts-host: deepening opportunities</h1>
+        <p class="text-sm text-slate-500">2026-10-25 · branch <code>chore/improve-codebase-architecture</code> · scope: the hot spots from recent commits (Settings model maintenance, <code>main.cpp</code>, model session) · canonical record: <a class="underline" href="architecture-review-2026-10-25.md">architecture-review-2026-10-25.md</a> (it wins where this snapshot differs)</p>
+        <div class="flex flex-wrap gap-4 text-xs text-slate-600">
+          <span class="flex items-center gap-2"><span class="inline-block w-5 h-3 border border-slate-500 bg-white"></span>module</span>
+          <span class="flex items-center gap-2"><span class="inline-block w-5 h-3 border-2 border-dashed border-slate-500"></span>seam</span>
+          <span class="flex items-center gap-2"><span class="inline-block w-5 h-0.5 bg-red-600"></span>leakage</span>
+          <span class="flex items-center gap-2"><span class="inline-block w-5 h-3 deep"></span>deep module</span>
+        </div>
+      </header>
+
+      <section id="candidates" class="space-y-10">
+
+        <!-- 1 -->
+        <article id="c1" class="rounded-xl border border-slate-200 bg-white p-6 space-y-5 shadow-sm">
+          <h2 class="font-serif text-2xl">1 · Move model-action eligibility into the model list module</h2>
+          <div class="flex gap-2 text-xs">
+            <span class="rounded-full bg-emerald-100 text-emerald-800 px-3 py-1 font-semibold">Strong</span>
+            <span class="rounded-full bg-slate-100 text-slate-700 px-3 py-1">in-process</span>
+          </div>
+          <ul class="font-mono text-sm text-slate-700">
+            <li>src/settings_window.cpp: update_model_buttons, on_more_model_actions_clicked, on_update_model_clicked, on_remove_model_clicked</li>
+            <li>include/tts_host/model_list.hpp · src/model_list.cpp</li>
+            <li>include/tts_host/model_update.hpp (damaged_package, the per-action throws)</li>
+          </ul>
+          <div class="grid grid-cols-2 gap-4">
+            <div class="rounded-lg border border-slate-200 p-3">
+              <p class="schem text-slate-500 mb-2">Before</p>
+              <pre class="mermaid">
+flowchart TB
+  S[Settings window<br/>Win32 menu + buttons]
+  L[Model list<br/>rows]
+  R[Registry scan]
+  U[Model update<br/>re-checks, throws]
+  C[Catalogue]
+  S --> L
+  S -->|walks previous / superseded /<br/>damaged / bundled| R
+  S -->|catalogued?| C
+  S -->|damaged_package| U
+  U --> R
+  linkStyle 1,2,3 stroke:#dc2626,stroke-width:2px
+              </pre>
+            </div>
+            <div class="rounded-lg border border-slate-200 p-3">
+              <p class="schem text-slate-500 mb-2">After</p>
+              <pre class="mermaid">
+flowchart TB
+  S[Settings window<br/>renders only]
+  L[Model list<br/>rows + actions + targets]
+  R[Registry scan]
+  U[Model update]
+  S --> L
+  L --> R
+  S -->|run action on target| U
+  classDef deep fill:#0f172a,color:#e2e8f0,stroke:#0f172a,stroke-width:3px
+  class L deep
+              </pre>
+            </div>
+          </div>
+          <p><span class="font-semibold">Problem:</span> the Win32 handlers decide which of Revert, Delete previous, Remove superseded, Remove…, Verify, and Update apply by walking the raw scan. That code can only run on Windows and has no tests, and review follow-ups #6–#7 (damaged rows, tier precedence) were fixed there.</p>
+          <p><span class="font-semibold">Solution:</span> each <code>ModelListRow</code> carries its available actions and the package each one acts on. Settings only enables, labels, and dispatches.</p>
+          <ul class="list-disc pl-5 text-sm text-slate-700">
+            <li>Locality: tier and damaged rules in one module</li>
+            <li>Rules tested on Linux through model_list_tests</li>
+            <li>Settings menu code shrinks to rendering</li>
+            <li>Leverage: macOS and Linux UIs reuse it</li>
+          </ul>
+          <div class="rounded-md bg-emerald-50 border border-emerald-200 px-3 py-2 text-sm">Fits ADR 0007: native UI per platform wants the rules outside the Win32 module.</div>
+        </article>
+
+        <!-- 2 -->
+        <article id="c2" class="rounded-xl border border-slate-200 bg-white p-6 space-y-5 shadow-sm">
+          <h2 class="font-serif text-2xl">2 · Pull the speech queue out of main.cpp into its own module</h2>
+          <div class="flex gap-2 text-xs">
+            <span class="rounded-full bg-emerald-100 text-emerald-800 px-3 py-1 font-semibold">Strong</span>
+            <span class="rounded-full bg-slate-100 text-slate-700 px-3 py-1">local-substitutable</span>
+          </div>
+          <ul class="font-mono text-sm text-slate-700">
+            <li>src/main.cpp: TraySpeechScheduler, SpeechRequest</li>
+            <li>include/tts_host/tray_icon.hpp (SpeechQueueMode)</li>
+            <li>src/local_api_server.cpp · src/stub_runner.cpp (test adapter)</li>
+          </ul>
+          <div class="grid grid-cols-2 gap-4">
+            <div class="rounded-lg border border-slate-200 p-3 h-80 flex flex-col">
+              <p class="schem text-slate-500 mb-2">Before: main.cpp cross-section</p>
+              <div class="flex-1 flex flex-col gap-1 text-xs">
+                <div class="border-l-4 border-slate-400 bg-slate-50 px-2 py-2">CLI parsing + run_main</div>
+                <div class="border-l-4 border-slate-400 bg-slate-50 px-2 py-2">profile + fallback resolution</div>
+                <div class="border-l-4 border-red-500 bg-red-50 px-2 py-2">interrupt vs enqueue · pending deque</div>
+                <div class="border-l-4 border-red-500 bg-red-50 px-2 py-2">eager warm-up cancelled by new read</div>
+                <div class="border-l-4 border-red-500 bg-red-50 px-2 py-2">idle unload poll · profile-change reload</div>
+                <div class="border-l-4 border-red-500 bg-red-50 px-2 py-2">playback status → JSON</div>
+                <div class="border-l-4 border-slate-400 bg-slate-50 px-2 py-2">tray + server wiring</div>
+                <p class="mt-auto text-red-700">red bands: no test reaches them</p>
+              </div>
+            </div>
+            <div class="rounded-lg border border-slate-200 p-3 h-80 flex flex-col">
+              <p class="schem text-slate-500 mb-2">After</p>
+              <div class="flex-1 flex flex-col gap-3 text-xs">
+                <div class="border border-slate-400 bg-slate-50 px-2 py-2">main.cpp: wiring only</div>
+                <div class="deep rounded-md p-3 flex-1 space-y-1 border-4 border-slate-900">
+                  <p class="schem">Speech queue module</p>
+                  <p class="font-mono">submit · stop · publish_config · status</p>
+                  <p class="text-slate-400">queue modes · warm-up cancel · idle unload · reload</p>
+                </div>
+                <div class="border-2 border-dashed border-slate-500 px-2 py-2 text-center">seam: synthesis</div>
+                <div class="grid grid-cols-2 gap-2">
+                  <div class="border border-slate-400 px-2 py-1 text-center">real runners</div>
+                  <div class="border border-slate-400 px-2 py-1 text-center">stub runner (tests)</div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <p><span class="font-semibold">Problem:</span> the rules for replace vs. queue, cancelling a warm-up load, idle unload, and reloading after a profile change live in a class inside <code>main.cpp</code>. No test reaches them.</p>
+          <p><span class="font-semibold">Solution:</span> a speech queue module with a small interface, with synthesis behind a seam. There are two adapters: the real runners and the stub runner.</p>
+          <ul class="list-disc pl-5 text-sm text-slate-700">
+            <li>Queue rules testable with stub runner</li>
+            <li>Two adapters justify the seam</li>
+            <li>main.cpp shrinks to wiring</li>
+            <li>Leverage: played-text history lands here</li>
+          </ul>
+        </article>
+
+        <!-- 3 -->
+        <article id="c3" class="rounded-xl border border-slate-200 bg-white p-6 space-y-5 shadow-sm">
+          <h2 class="font-serif text-2xl">3 · Combine profile resolution into one module</h2>
+          <div class="flex gap-2 text-xs">
+            <span class="rounded-full bg-amber-100 text-amber-800 px-3 py-1 font-semibold">Worth exploring</span>
+            <span class="rounded-full bg-slate-100 text-slate-700 px-3 py-1">in-process</span>
+          </div>
+          <ul class="font-mono text-sm text-slate-700">
+            <li>src/main.cpp: resolve_runner_selection, resolve_default_runner_selection, resolve_fallback_selection, RunnerChoice, run_synthesis (fallback on load rejection)</li>
+            <li>src/model_session.cpp: load_eager (profile choice, idleUnloadSeconds)</li>
+            <li>include/tts_host/model_session.hpp: ModelRunnerSelection vs RunnerSelection</li>
+          </ul>
+          <div class="grid grid-cols-2 gap-4">
+            <div class="rounded-lg border border-slate-200 p-3">
+              <p class="schem text-slate-500 mb-2">Before</p>
+              <pre class="mermaid">
+flowchart LR
+  T[request text /<br/>--language / --model] --> M1[main.cpp<br/>language → profile]
+  M1 --> M2[main.cpp<br/>fallbackProfile]
+  M2 --> RS[RunnerSelection]
+  RS -->|field-by-field copy| MS[ModelRunnerSelection]
+  E[load_eager<br/>own profile pick,<br/>own idle override] --> MS
+  linkStyle 3 stroke:#dc2626,stroke-width:2px
+  linkStyle 4 stroke:#dc2626,stroke-width:2px
+              </pre>
+            </div>
+            <div class="rounded-lg border border-slate-200 p-3">
+              <p class="schem text-slate-500 mb-2">After</p>
+              <pre class="mermaid">
+flowchart LR
+  T[request] --> P[Profile resolution<br/>language · profile · fallback ·<br/>idle override · eager pick]
+  P --> MS[one selection type]
+  Q[speech path] --> P
+  E[eager warm-up] --> P
+  classDef deep fill:#0f172a,color:#e2e8f0,stroke:#0f172a,stroke-width:3px
+  class P deep
+              </pre>
+            </div>
+          </div>
+          <p><span class="font-semibold">Problem:</span> the chain language → profile → model → fallback lives in <code>main.cpp</code> and is tested only through CLI CMake scripts. <code>load_eager</code> picks profiles and reads idle overrides on its own, and two selection structs are copied field by field.</p>
+          <p><span class="font-semibold">Solution:</span> one module turns a request plus config into a selection and its remaining fallback, and the eager pick moves there too.</p>
+          <ul class="list-disc pl-5 text-sm text-slate-700">
+            <li>Fallback rules tested without processes</li>
+            <li>Delete one duplicate selection struct</li>
+            <li>Leverage: per-model options slice lands here</li>
+          </ul>
+        </article>
+
+        <!-- 4 -->
+        <article id="c4" class="rounded-xl border border-slate-200 bg-white p-6 space-y-5 shadow-sm">
+          <h2 class="font-serif text-2xl">4 · Typed reads over the config document</h2>
+          <div class="flex gap-2 text-xs">
+            <span class="rounded-full bg-amber-100 text-amber-800 px-3 py-1 font-semibold">Worth exploring</span>
+            <span class="rounded-full bg-slate-100 text-slate-700 px-3 py-1">in-process</span>
+          </div>
+          <ul class="font-mono text-sm text-slate-700">
+            <li>src/settings_window.cpp (33 raw JSON paths) · src/main.cpp (17) · src/model_session.cpp (7)</li>
+            <li>include/tts_host/config_loader.hpp</li>
+          </ul>
+          <div class="grid grid-cols-2 gap-4">
+            <div class="rounded-lg border border-slate-200 p-3 h-72 flex flex-col">
+              <p class="schem text-slate-500 mb-2">Before: mass diagram</p>
+              <div class="flex-1 flex items-end gap-6 justify-center">
+                <div class="text-center text-xs"><div class="w-16 bg-red-200 border border-red-400" style="height: 170px"></div>interface<br/>(every JSON path)</div>
+                <div class="text-center text-xs"><div class="w-16 bg-slate-300 border border-slate-500" style="height: 190px"></div>config loader<br/>implementation</div>
+              </div>
+              <p class="text-xs text-slate-500 mt-2">Defaults such as <code>"loadPolicy", "onDemand"</code> repeated at call sites</p>
+            </div>
+            <div class="rounded-lg border border-slate-200 p-3 h-72 flex flex-col">
+              <p class="schem text-slate-500 mb-2">After</p>
+              <div class="flex-1 flex items-end gap-6 justify-center">
+                <div class="text-center text-xs"><div class="w-16 bg-emerald-200 border border-emerald-500" style="height: 60px"></div>typed reads</div>
+                <div class="text-center text-xs"><div class="w-16 deep border-4 border-slate-900" style="height: 200px"></div>config module<br/>(keys, defaults)</div>
+              </div>
+            </div>
+          </div>
+          <p><span class="font-semibold">Problem:</span> callers walk the JSON tree by key name and repeat the defaults, so the config module's interface ends up as wide as its schema.</p>
+          <p><span class="font-semibold">Solution:</span> the config module exposes typed reads for profiles, registry, and audio, and keeps key names and defaults inside.</p>
+          <ul class="list-disc pl-5 text-sm text-slate-700">
+            <li>Locality: one home per key</li>
+            <li>Interface shrinks; defaults stop leaking</li>
+          </ul>
+          <div class="rounded-md bg-amber-50 border border-amber-200 px-3 py-2 text-sm">ADR 0004 (JSON canonical config) still holds: the file stays JSON, and only the in-process interface changes.</div>
+        </article>
+      </section>
+
+      <section id="top-recommendation" class="rounded-xl deep p-8 space-y-3">
+        <p class="schem text-slate-400">Top recommendation</p>
+        <h2 class="font-serif text-3xl"><a href="#c1" class="underline decoration-emerald-400">1 · Model-action eligibility in the model list module</a></h2>
+        <p class="text-slate-300">It's the hottest spot (10 of the recent commits touch settings_window.cpp), the last review's bugs landed in its untested Win32 code, and the move is small and in-process with an existing test file ready to take it.</p>
+      </section>
+    </main>
+  </body>
+</html>

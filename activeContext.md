@@ -1,23 +1,25 @@
 # Active Context
 
-- Mode: implementation; the bundled two-model release block is complete.
-- Branch: `feature/model-maintenance`, pushed and clean. `86a7e43` has the four
-  review fixes; `af7c728` has the follow-up triage and the fixes for #5–#7.
-- State: all seven model-maintenance review findings are fixed and pass both
-  builds' tests. The new Settings actions for damaged rows (#6: Update on an
-  older revision, Remove… on a per-user copy) are not desktop-checked. The
-  user is considering dropping Qwen (Open decisions in `roadmap.md`).
-- Next: user checks the damaged-row actions on the desktop if
-  wanted; then merge to `main`. The UI fixes passed the user's desktop check.
-  The Qwen keep/drop decision gates the remaining Qwen slices.
+- Mode: planning; model maintenance merged to `main` (PR #4, 2026-10-25).
+- Branch: `chore/improve-codebase-architecture` from `main` at `a47ebe4`, local
+  only, not pushed.
+- State: the
+  [architecture review](docs/reviews/architecture-review-2026-10-25.md) is
+  captured with its HTML snapshot; `roadmap.md` § Architecture deepening holds
+  the grill-then-refactor slices. The damaged-row Settings actions (#6) are
+  still not desktop-checked. Qwen stays with all variants (decided
+  2026-10-26; recorded in `roadmap.md`).
+- Next: commit the captured review (uncommitted at session end), then grill
+  candidate 1 (model-action eligibility), the top recommendation.
 - Blockers/environment: the running Host locks its executable; do not
   terminate it without permission, and do not link over it. Use a separate
   output folder for build checks. Developer launches use
   `config.development.json` (`PROJECT.md`). Linux tests: `build-linux/`. Run
   `tts-host --list-models` with `--headless`, or it starts the app. Windows
   PowerShell: `/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe`.
-- Open questions: whether to drop Qwen; named-speaker path and VoiceDesign
-  scope; per-model options; the other Open decisions in `roadmap.md`. Linux
+- Open questions: Qwen named-speaker path and VoiceDesign
+  scope; per-model options; the other Open decisions in `roadmap.md`; each
+  architecture candidate's interface (its grilling slice). Linux
   Qwen runner-folder loading is unverified; previous-only restoration is
   undesigned.
 - Discarded as noise:
