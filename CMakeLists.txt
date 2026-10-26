@@ -194,6 +194,7 @@ add_executable(
   src/selection_capture.cpp
   src/settings_window.cpp
   src/sha256.cpp
+  src/speech_queue.cpp
   src/startup_choice.cpp
   src/text_normalizer.cpp
   src/text_splitter.cpp
@@ -1202,6 +1203,27 @@ if(BUILD_TESTING)
   endif()
   add_test(NAME tts_host_local_api COMMAND tts-host-local-api-tests)
   set_tests_properties(tts_host_local_api PROPERTIES TIMEOUT 10)
+
+  # Speech queue rules (src/speech_queue.cpp) through an in-process fake
+  # engine: replace versus queue, stop, warm-up cancellation, profile-change
+  # reload, and the idle-unload poll.
+  add_executable(
+    tts-host-speech-queue-tests
+    src/activity_log.cpp
+    src/config_snapshot.cpp
+    src/playback_controller.cpp
+    src/speech_queue.cpp
+    tests/speech_queue_tests.cpp
+  )
+  target_include_directories(tts-host-speech-queue-tests PRIVATE include)
+  target_link_libraries(tts-host-speech-queue-tests PRIVATE nlohmann_json::nlohmann_json)
+  if(MSVC)
+    target_compile_options(tts-host-speech-queue-tests PRIVATE /W4 /permissive-)
+  else()
+    target_compile_options(tts-host-speech-queue-tests PRIVATE -Wall -Wextra -Wpedantic)
+  endif()
+  add_test(NAME tts_host_speech_queue COMMAND tts-host-speech-queue-tests)
+  set_tests_properties(tts_host_speech_queue PROPERTIES TIMEOUT 30)
 
   find_program(TTS_HOST_NODE_EXECUTABLE NAMES node)
   if(TTS_HOST_NODE_EXECUTABLE)

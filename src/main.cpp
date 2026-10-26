@@ -19,6 +19,7 @@
 #include "tts_host/recovering_runner.hpp"
 #include "tts_host/runner_protocol.hpp"
 #include "tts_host/settings_window.hpp"
+#include "tts_host/speech_queue.hpp"
 #include "tts_host/startup_choice.hpp"
 #ifdef _WIN32
 #include "tts_host/startup_registration.hpp"
@@ -29,19 +30,14 @@
 #include "tts_host/wav_writer.hpp"
 
 #include <algorithm>
-#include <atomic>
-#include <condition_variable>
 #include <cstdlib>
 #include <exception>
-#include <deque>
 #include <filesystem>
 #include <iostream>
 #include <memory>
-#include <mutex>
 #include <optional>
 #include <sstream>
 #include <string>
-#include <thread>
 #include <utility>
 #include <vector>
 
@@ -291,162 +287,35 @@ void run_synthesis(const tts_host::CliOptions &options, const tts_host::ConfigDo
   }
 }
 
-// Keeps tray requests asynchronous from the Win32 message loop. A request
-// normally cancels the active utterance and replaces pending work; the Queue
-// clipboard command is the explicit opt-in path that preserves it.
-// One queued read. source labels where the text came from for Now Playing.
-struct SpeechRequest {
-  std::string text;
-  std::string source;
-};
-
-class TraySpeechScheduler {
+// The Host's speech engine (docs/design/architecture.md#speech-queue): the
+// profile chain, the shared model session, and the synthesis pipeline.
+class HostSpeechEngine final : public tts_host::SpeechEngine {
  public:
-  TraySpeechScheduler(tts_host::ConfigDocument document, std::filesystem::path argv0)
-      : config_(std::move(document)), argv0_(std::move(argv0)),
-        sessions_(executable_dir(argv0_)) {
-    tts_host::apply_playback_settings(*config_.current(), playback_controller_);
-    try { sessions_.load_eager(*config_.current()); }
-    catch (const std::exception &error) {
-      tts_host::record_activity(std::string("Eager model load failed: ") + error.what());
-      std::cerr << "Eager model load failed: " << error.what() << '\n';
-    }
-    worker_ = std::thread(&TraySpeechScheduler::run, this);
+  explicit HostSpeechEngine(std::filesystem::path argv0)
+      : argv0_(std::move(argv0)), sessions_(executable_dir(argv0_)) {}
+
+  void speak(const std::string &text, const tts_host::ConfigDocument &config, tts_host::PlaybackControl &control,
+             tts_host::PlaybackController &playback) override {
+    tts_host::CliOptions options;
+    options.synthesize_text = text;
+    options.play_audio = true;
+    run_synthesis(options, config, argv0_, &control, &playback, &sessions_);
   }
 
-  ~TraySpeechScheduler() {
-    {
-      std::lock_guard lock(mutex_);
-      stopping_ = true;
-      playback_controller_.stop();
-      pending_.clear();
-    }
-    condition_.notify_one();
-    worker_.join();
+  void warm(const tts_host::ConfigDocument &config, const std::function<bool()> &cancelled) override {
+    sessions_.load_eager(config, cancelled);
   }
 
-  void submit(std::string text, tts_host::SpeechQueueMode queue_mode, std::string source) {
-    {
-      std::lock_guard lock(mutex_);
-      if (queue_mode == tts_host::SpeechQueueMode::Interrupt) {
-        pending_.clear();
-        playback_controller_.stop();
-      }
-      pending_.push_back({std::move(text), std::move(source)});
-    }
-    condition_.notify_one();
+  void unload_if_idle(const tts_host::ConfigDocument &config) override {
+    sessions_.unload_if_idle(
+        std::chrono::seconds(config.value.at("modelRegistry").at("idleUnloadSeconds").get<int>()));
   }
 
   tts_host::ModelSessionManager &sessions() { return sessions_; }
 
-  tts_host::PlaybackController &playback_controller() { return playback_controller_; }
-
-  // Called on the tray thread after Settings edits its own document. The next
-  // request sees the copy; an in-flight request keeps the snapshot it took.
-  void publish_config(const tts_host::ConfigDocument &document) {
-    tts_host::apply_playback_settings(document, playback_controller_);
-    const auto previous = config_.current();
-    const bool profiles_changed = previous->value.at("profiles") != document.value.at("profiles") ||
-        previous->value.at("languageDefaults") != document.value.at("languageDefaults");
-    config_.publish(document);
-    if (profiles_changed) {
-      { std::lock_guard lock(mutex_); eager_pending_ = true; }
-      condition_.notify_one();
-    }
-  }
-
-  std::string playback_command(const std::string &command) {
-    if (command == "pause") playback_controller_.pause();
-    if (command == "resume") playback_controller_.resume();
-    if (command == "stop") stop_speech();
-    const auto status = playback_controller_.status();
-    const char *state = "idle";
-    switch (status.state) {
-      case tts_host::PlaybackState::Idle: state = "idle"; break;
-      case tts_host::PlaybackState::Preparing: state = "preparing"; break;
-      case tts_host::PlaybackState::Playing: state = "playing"; break;
-      case tts_host::PlaybackState::Paused: state = "paused"; break;
-      case tts_host::PlaybackState::Stopping: state = "stopping"; break;
-      case tts_host::PlaybackState::Error: state = "error"; break;
-    }
-    return nlohmann::json{{"state", state}, {"positionSeconds", status.position_seconds},
-                          {"generatedSeconds", status.generated_seconds},
-                          {"error", status.error}}.dump();
-  }
-
-  void stop_speech() {
-    std::lock_guard lock(mutex_);
-    pending_.clear();
-    playback_controller_.stop();
-  }
-
  private:
-  void run() {
-    while (true) {
-      SpeechRequest request;
-      std::shared_ptr<tts_host::PlaybackControl> control;
-      std::shared_ptr<const tts_host::ConfigDocument> config;
-      {
-        std::unique_lock lock(mutex_);
-        condition_.wait_for(lock, std::chrono::seconds(5),
-                            [this] { return stopping_ || !pending_.empty() || eager_pending_; });
-        if (stopping_) {
-          return;
-        }
-        if (pending_.empty()) {
-          config = config_.current();
-          const bool eager = std::exchange(eager_pending_, false);
-          lock.unlock();
-          if (eager) {
-            try {
-              sessions_.load_eager(*config, [this] {
-                std::lock_guard lock(mutex_);
-                return stopping_ || !pending_.empty();
-              });
-            } catch (const tts_host::RunnerCancelled &) {
-              // A new read or Quit cancels background warming immediately.
-            } catch (const std::exception &error) {
-              tts_host::record_activity(std::string("Eager model load failed: ") + error.what());
-              std::cerr << "Eager model load failed: " << error.what() << '\n';
-            }
-          }
-          sessions_.unload_if_idle(std::chrono::seconds(
-              config->value.at("modelRegistry").at("idleUnloadSeconds").get<int>()));
-          continue;
-        }
-        request = std::move(pending_.front());
-        pending_.pop_front();
-        control = playback_controller_.begin(std::move(request.source));
-        config = config_.current();
-      }
-
-      try {
-        tts_host::CliOptions options;
-        options.synthesize_text = std::move(request.text);
-        options.play_audio = true;
-        run_synthesis(options, *config, argv0_, control.get(), &playback_controller_, &sessions_);
-      } catch (const tts_host::RunnerCancelled &) {
-        // Stop/replacement terminates runner I/O without retry or an error state.
-      } catch (const std::exception &error) {
-        playback_controller_.fail(control, error.what());
-        tts_host::record_activity(std::string("Speech failed: ") + error.what());
-        std::cerr << "Tray speech request failed: " << error.what() << '\n';
-      }
-
-      playback_controller_.finish(control);
-    }
-  }
-
-  tts_host::ConfigSnapshot config_;
   std::filesystem::path argv0_;
   tts_host::ModelSessionManager sessions_;
-  std::mutex mutex_;
-  std::condition_variable condition_;
-  std::deque<SpeechRequest> pending_;
-  tts_host::PlaybackController playback_controller_;
-  bool stopping_ = false;
-  bool eager_pending_ = false;
-  std::thread worker_;
 };
 
 }  // namespace
@@ -510,7 +379,8 @@ int run_main(int argc, char **argv) {
       // Tray mode (docs/design/architecture.md#desktop-integration): blocks
       // until the user chooses Quit. Windows only in this slice -- see
       // docs/adr/0007-native-ui-per-platform.md.
-      TraySpeechScheduler tray_speech_scheduler(document, tts_host::path_from_utf8(argv[0]));
+      HostSpeechEngine speech_engine(tts_host::path_from_utf8(argv[0]));
+      tts_host::SpeechQueue speech_queue(document, speech_engine);
       const auto &server = document.value.at("server");
       if (server.value("authentication", "none") != "none") {
         throw std::runtime_error(
@@ -523,25 +393,27 @@ int run_main(int argc, char **argv) {
       tts_host::LocalApiServer local_api(
           server.at("host").get<std::string>(),
           static_cast<unsigned short>(server.at("port").get<int>()), std::move(allowed_origins),
-          [&tray_speech_scheduler](std::string text) {
-            tray_speech_scheduler.submit(std::move(text), tts_host::SpeechQueueMode::Interrupt,
-                                         "Local API");
+          [&speech_queue](std::string text) {
+            speech_queue.submit(std::move(text), tts_host::SpeechQueueMode::Interrupt, "Local API");
           },
-          [&tray_speech_scheduler](const std::string &command) {
-            return tray_speech_scheduler.playback_command(command);
+          [&speech_queue](const std::string &command) {
+            if (command == "pause") speech_queue.playback_controller().pause();
+            if (command == "resume") speech_queue.playback_controller().resume();
+            if (command == "stop") speech_queue.stop();
+            return speech_queue.status();
           });
       std::cout << "Local API listening on " << server.at("host") << ':' << server.at("port")
                 << '\n';
       tts_host::run_tray_icon(
           document, executable_dir(tts_host::path_from_utf8(argv[0])),
-          [&tray_speech_scheduler](const std::string &text, tts_host::SpeechQueueMode queue_mode,
-                                   const std::string &source) {
-            tray_speech_scheduler.submit(text, queue_mode, source);
-          }, tray_speech_scheduler.playback_controller(),
-          [&tray_speech_scheduler](const tts_host::ConfigDocument &edited) {
-            tray_speech_scheduler.publish_config(edited);
-          }, &tray_speech_scheduler.sessions(),
-          [&tray_speech_scheduler] { tray_speech_scheduler.stop_speech(); });
+          [&speech_queue](const std::string &text, tts_host::SpeechQueueMode queue_mode,
+                          const std::string &source) {
+            speech_queue.submit(text, queue_mode, source);
+          }, speech_queue.playback_controller(),
+          [&speech_queue](const tts_host::ConfigDocument &edited) {
+            speech_queue.publish_config(edited);
+          }, &speech_engine.sessions(),
+          [&speech_queue] { speech_queue.stop(); });
       return EXIT_SUCCESS;
     }
 

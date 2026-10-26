@@ -107,10 +107,7 @@ void playback_controls_and_connection_isolation() {
         if (command == "pause") controller.pause();
         if (command == "resume") controller.resume();
         if (command == "stop") controller.stop();
-        const auto status = controller.status();
-        return nlohmann::json{{"state", static_cast<int>(status.state)},
-                              {"positionSeconds", status.position_seconds},
-                              {"generatedSeconds", status.generated_seconds}}.dump();
+        return controller.status();
       });
   asio::io_context context;
   // CORS does not protect a WebSocket handshake: reject the actual Origin.
@@ -142,7 +139,8 @@ void playback_controls_and_connection_isolation() {
   auto status = exchange(R"({"command":"status"})");
   require(status.at("positionSeconds") == 3.0 && status.at("generatedSeconds") == 12.0,
           "status lost source-audio position");
-  exchange(R"({"command":"pause"})");
+  require(status.at("state") == "playing" && status.at("error") == "", "status names its state");
+  require(exchange(R"({"command":"pause"})").at("state") == "paused", "pause reply names the paused state");
   require(control->paused(), "browser pause did not pause active playback");
   exchange(R"({"command":"resume"})");
   require(!control->paused(), "browser resume did not resume active playback");
