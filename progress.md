@@ -640,3 +640,7 @@
 - 2026-10-26: Architecture review triage — finding #1 (profile reads left in `with_selected_model()`) confirmed against `src/config_persistence.cpp`; classified should-fix-before-merge, no must-fix; queued as roadmap slice "Read profiles through the typed view in model selection". No code or durable-doc changes.
 
 - 2026-10-26: Read profiles through the typed view in model selection — `with_selected_model()` reads the previous profile and its fallback via `profile_view()` (review finding #1); new `config_persistence_tests` cases cover fallback kept/dropped and explicit zero idle timeout, and pass on the old code too. Linux 53/55: config persistence fails only against the uncommitted `config.example.json`, tray on busy port 7861 (both known). Windows not rebuilt.
+
+- 2026-10-26: PR #5 and verification — opened PR #5 (not merged: click-through gate open); Windows Debug `build/` 54/55 after the finding fix (config persistence passes on the committed example); click-through of the installed per-user row matched the design, four row types remain.
+
+- 2026-11-02: Click-through accepted and PR #5 rebase-merged — the user accepted the four unchecked row types (bundled, damaged, catalogue, previous-only); the architecture refactor branch landed on `main`.
