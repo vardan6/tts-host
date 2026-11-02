@@ -1,18 +1,21 @@
 # Active Context
 
-- Mode: implementation (behavior-preserving refactor); branch `chore/improve-codebase-architecture` from
-  `main` at `a47ebe4`; pushed, open as PR #5 (github.com/vardan6/tts-host/pull/5).
+- Mode: implementation (behavior-preserving refactor) complete; branch
+  `chore/improve-codebase-architecture` rebase-merged into `main` as PR #5
+  (github.com/vardan6/tts-host/pull/5) on 2026-11-02.
 - State: three architecture refactors plus the fix for cross-review
   [finding #1](docs/reviews/code-review-2026-10-26-architecture-deepening.md)
   (profile reads in `with_selected_model()` via `profile_view()`); all
-  review findings closed.
-- Next atomic step: HITL model-row desktop click-through in `roadmap.md`
-  (also covers the damaged-row actions #6), then merge PR #5.
-- Verification: Linux build passed; 53/55 CTests passed — config persistence
-  fails only against the uncommitted `config.example.json` (passes on the
-  committed copy), tray on busy port 7861. Windows not rebuilt since the
-  finding fix; prior build passed except its known language-test false
-  failure.
+  review findings closed. Model-row click-through: installed per-user row
+  checked; bundled, damaged (#6), catalogue, and previous-only rows accepted
+  unchecked by the user.
+- Next atomic step: pick the next slice from `roadmap.md` (`/next-slice`).
+- Verification: installed per-user current row (Kokoro) checked on Windows
+  2026-10-26: buttons and More ▾ match the design (build identity not
+  confirmed). Windows Debug `build/` (built after the fix) 54/55 and Linux
+  53/55; config persistence fails only against the uncommitted
+  `config.example.json` and passes on the committed copy on both; Linux tray
+  failure is the busy port 7861.
 - Blockers/environment: do not terminate the running Host without permission
   or link over its locked executable; use a separate build output. Developer
   launches use `config.development.json` with login startup disabled

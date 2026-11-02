@@ -57,9 +57,11 @@ recorded in `docs/design/`, so no grilling slices remain.
   covered by `model_list_tests` on Linux — see
   [action eligibility](docs/design/architecture.md#model-removal-repair-and-maintenance-actions) and
   [candidate 1](docs/reviews/architecture-review-2026-10-25.md#1--model-action-eligibility-in-the-model-list-module).
-- [ ] **HITL — Desktop click-through of the model rows:** Settings has no
+- [x] **HITL — Desktop click-through of the model rows:** Settings has no
   Linux test, so check the buttons and More ▾ on installed, bundled, damaged,
   catalogue, and previous-only rows; also covers the damaged-row actions (#6).
+  Installed per-user row checked on Windows; the user accepted the rest
+  unchecked on 2026-11-02.
 - [x] **AFK — Extract the speech queue module from `main.cpp`:** queue modes,
   warm-up cancellation, idle unload, and profile-change reload tested through
   the in-process fake engine; playback-status JSON moves to the local API —
