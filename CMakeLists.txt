@@ -11,6 +11,9 @@ if(TTS_HOST_VERSION_PRERELEASE)
   set(TTS_HOST_VERSION "${PROJECT_VERSION}-${TTS_HOST_VERSION_PRERELEASE}")
 endif()
 file(WRITE "${CMAKE_BINARY_DIR}/tts-host-version.txt" "${TTS_HOST_VERSION}")
+# The Settings title shows it; every target compiling this file needs it.
+set_source_files_properties(src/settings_window.cpp PROPERTIES
+  COMPILE_DEFINITIONS TTS_HOST_VERSION="${TTS_HOST_VERSION}")
 
 include(CTest)
 include(FetchContent)
@@ -386,8 +389,7 @@ if(WIN32)
 endif()
 
 target_include_directories(tts-host PRIVATE include ${boost_headers_SOURCE_DIR})
-target_compile_definitions(tts-host PRIVATE BOOST_ERROR_CODE_HEADER_ONLY
-  TTS_HOST_VERSION="${TTS_HOST_VERSION}")
+target_compile_definitions(tts-host PRIVATE BOOST_ERROR_CODE_HEADER_ONLY)
 # Building the Host alone (an IDE startup project) also refreshes its runners.
 add_dependencies(tts-host tts-host-kokoro-onnx-runner)
 if(TARGET tts-host-qwen3-gguf-runner)
