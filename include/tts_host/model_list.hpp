@@ -64,6 +64,9 @@ struct ModelListRow {
   bool damaged = false;
   bool in_catalogue = false;
   bool update_available = false;
+  // This installation has no runner for the row's engine (ADR 0011), unlike
+  // an installed runner that rejects the hardware (unavailable_reason only).
+  bool runner_absent = false;
   // One entry per ModelActionKind, in declaration order.
   std::vector<ModelAction> actions;
 };
@@ -72,13 +75,21 @@ struct ModelListRow {
 const ModelAction &model_action(const ModelListRow &row, ModelActionKind kind);
 
 using FolderSize = std::function<std::uintmax_t(const std::filesystem::path &)>;
+// Whether this installation has a runner for an engine ID.
+using RunnerAvailable = std::function<bool(const std::string &engine)>;
 
 // Installed packages in scan order, then damaged ones, then not-installed catalogue entries in
 // catalogue order, then ids with only a previous version. `loaded_id` is
-// empty when nothing is resident.
+// empty when nothing is resident. A row whose engine has no runner offers no
+// Load, Download, or Update and carries the reason (ADR 0011); an empty
+// `runner_available` treats every runner as present.
 std::vector<ModelListRow> build_model_list(const ModelRegistryScan &scan, const std::string &loaded_id,
                                            const std::map<std::string, std::string> &load_failures,
-                                           const FolderSize &folder_size);
+                                           const FolderSize &folder_size,
+                                           const RunnerAvailable &runner_available = {});
+
+// Why a model of `engine` cannot run without its runner.
+std::string describe_runner_absent(const std::string &engine);
 
 // The details pane text for a row: identity, folder, licence, load result,
 // and the superseded copies and previous versions carrying its id. Lines are

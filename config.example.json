@@ -9,7 +9,7 @@
     "readSelection": "Ctrl + F8"
   },
   "languageDefaults": {
-    "en": "quality"
+    "en": "fast"
   },
   "modelRegistry": {
     "directories": [
@@ -34,7 +34,7 @@
   },
   "schemaVersion": 1,
   "selection": {
-    "capturePolicy": "clipboardOnly"
+    "capturePolicy": "automatic"
   },
   "server": {
     "allowedOrigins": [

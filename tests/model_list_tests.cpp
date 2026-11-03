@@ -309,6 +309,44 @@ void test_details_describe_the_selected_model() {
   require(tts_host::describe_unsupported_entries({}).empty(), "no unsupported folders, no section");
 }
 
+// ADR 0011: the standard variant has no Qwen runner, so a Qwen row offers
+// nothing that would run or fetch it and says why; an installed runner that
+// rejects the hardware is a different state and keeps Load.
+void test_runner_absent_rows_offer_no_run_or_fetch() {
+  using tts_host::ModelActionKind;
+  const auto without_qwen = [](const std::string &engine) { return engine != "qwen3-gguf"; };
+  const auto rows = tts_host::build_model_list({}, "", {}, fake_size, without_qwen);
+  const auto qwen = row_for(rows, "qwen3-tts-1.7b");
+  require(qwen.runner_absent && qwen.unavailable_reason == std::string("Needs the NVIDIA variant of TTS Host"),
+          "a catalogue row without its runner names the NVIDIA variant");
+  for (const auto kind : {ModelActionKind::download, ModelActionKind::load, ModelActionKind::update}) {
+    const auto &action = tts_host::model_action(qwen, kind);
+    require(!action.applies && action.reason == qwen.unavailable_reason,
+            "a runner-absent row offers no Load, Download, or Update and carries the reason");
+  }
+  const auto kokoro = row_for(rows, "kokoro-en-v1");
+  require(!kokoro.runner_absent && tts_host::model_action(kokoro, ModelActionKind::download).applies,
+          "a row whose runner is present is still offered");
+
+  const auto &id = tts_host::model_catalogue()[0].id;
+  ModelRegistryScan scan;
+  scan.discovered_packages.push_back(package(id, "/user/" + id, false, std::nullopt));
+  const auto no_stub = [](const std::string &engine) { return engine != "stub"; };
+  const auto installed = row_for(tts_host::build_model_list(scan, "", {}, fake_size, no_stub), id);
+  require(installed.runner_absent && !tts_host::model_action(installed, ModelActionKind::load).applies,
+          "an installed package without its runner cannot load");
+  require(tts_host::model_action(installed, ModelActionKind::remove).applies &&
+              tts_host::model_action(installed, ModelActionKind::open_folder).applies,
+          "an installed package without its runner can still be removed and opened");
+
+  const auto every_runner = [](const std::string &) { return true; };
+  const auto rejected =
+      row_for(tts_host::build_model_list(scan, "", {{id, "no usable GPU"}}, fake_size, every_runner), id);
+  require(!rejected.runner_absent && rejected.unavailable_reason == std::string("no usable GPU") &&
+              tts_host::model_action(rejected, ModelActionKind::load).applies,
+          "a runner that rejects the hardware is not a runner-absent row");
+}
+
 void test_folder_size_on_disk(const std::filesystem::path &work) {
   std::filesystem::remove_all(work);
   std::filesystem::create_directories(work / "nested");
@@ -328,6 +366,7 @@ int main(int argc, char **argv) {
   }
   try {
     test_empty_scan_offers_every_catalogue_entry();
+    test_runner_absent_rows_offer_no_run_or_fetch();
     test_installed_rows_replace_catalogue_rows();
     test_damaged_rows_offer_their_recovery();
     test_previous_versions_stay_reachable();

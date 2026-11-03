@@ -6,13 +6,41 @@ sound card or writes it to a WAV file, and manages installed model packages from
 a native Windows tray icon and settings window. Nothing leaves the machine and
 no cloud service is involved.
 
-**Maturity.** Speech works end to end today and the desktop UI is usable, but
-this is not a packaged consumer release: playback and the UI are Windows-only,
-there is no installer (the release artifact is a zip), and native browser and
-desktop acceptance checks remain. See
-"What works today" below for the exact line, and `roadmap.md` for the sequence.
+**Maturity.** Alpha. Speech, the desktop UI, model management, and the offline
+Windows installer work and passed Windows acceptance, but no release has been
+published yet. Playback and the UI are Windows-only. See "What works today"
+below for the exact line, and `roadmap.md` for the sequence.
 
-## Quick start (Windows)
+## Install (Windows)
+
+Download from the
+[GitHub Releases](https://github.com/vardan6/tts-host/releases) page and run it.
+It needs no administrator rights and no network: everything it needs, models
+included, is in the download.
+
+- **Which file.** `tts-host-<version>-setup.exe` (Kokoro, English, any 64-bit
+  Windows PC, about 0.4 GB) is the recommended download, and
+  `tts-host-<version>-portable.zip` is the same without installing. Choose
+  `tts-host-<version>-nvidia-setup.exe` (about 2.1 GB) only to try Qwen3-TTS on
+  an NVIDIA GPU. It also installs over the standard version.
+- **"Windows protected your PC".** Alpha builds are not code-signed. Click
+  **More info**, then **Run anyway**.
+- **Problems.** Report them in
+  [GitHub Issues](https://github.com/vardan6/tts-host/issues).
+- **Start at sign-in.** The installer offers it, ticked by default. You can
+  change it later in Settings.
+- **Use it.** TTS Host runs in the tray. Select text in any application and
+  press **Ctrl+F8** to hear it. If an application does not expose its
+  selection, TTS Host says so and asks you to copy the text. Right-click the tray icon for Settings and
+  Now Playing. Settings can download, import, verify, and remove models.
+- **Browser.** To read web pages in Chrome or Edge, open the extensions page,
+  turn on **Developer mode**, choose **Load unpacked**, and pick the `extension`
+  folder in the install folder (`%LOCALAPPDATA%\Programs\TTS Host\extension`).
+  See "Browser playback controls" below.
+- **Your data.** Configuration and added models live in
+  `%LOCALAPPDATA%\TTS Host` and are kept on upgrade and uninstall.
+
+## Quick start (development, Windows)
 
 ```powershell
 git clone <this repo> && cd tts
@@ -360,31 +388,50 @@ server and has no effect yet.
 
 ## Package a release
 
-The Windows release is a zip of the tree in `docs/design/architecture.md`'s
-"Distribution" section: `tts-host.exe`, `runners/kokoro-onnx/` (runner, ONNX
-Runtime, espeak-ng), `runners/qwen3-gguf/` (runner, llama.cpp, ggml, CUDA
-runtime), the MSVC runtime beside each executable, `schemas/`, `licenses/`,
-`config.json`, `portable.marker`, and both bundled models. One script builds
-and checks it:
+A release is cut by one script, on Windows, from a clean `main` that matches
+`origin`:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts/release-win.ps1
+powershell -ExecutionPolicy Bypass -File scripts/release.ps1 -Version 0.1.0-alpha.1 -Variants standard -DryRun
+powershell -ExecutionPolicy Bypass -File scripts/release.ps1 -Version 0.1.0-alpha.1 -Variants standard
 ```
 
-It reuses or fetches the pinned Qwen runtime, configures `build-release` with
-`TTS_HOST_RELEASE=ON`, builds Release, stages `kokoro-en-v1` and
-`qwen3-tts-1.7b` once into `cache/release-models` through the download
-catalogue (about 1.7 GB), and packages them into `build-release/dist/`.
-A staged package is reused only while `--verify-model <id>` finds it at the
-compiled catalogue's revision with every file hash matching; otherwise it is
-downloaded again. Packaging fails if any runner, library, licence, or model
-file is missing, or if a bundled package differs from the catalogue.
-Then it extracts the zip into a temporary folder and has each model synthesize
-a sentence there. Last, it compiles the per-user installer
-`build-release/dist/tts-host-<version>-setup.exe` from the same tree with
-[Inno Setup 6](https://jrsoftware.org/isinfo.php) (`winget install
-JRSoftware.InnoSetup`). `-SkipVerify` skips the extracted-copy check and
-`-SkipInstaller` the installer.
+It needs Visual Studio 2022, [Inno Setup 6](https://jrsoftware.org/isinfo.php)
+(`winget install JRSoftware.InnoSetup`), a logged-in `gh`, and the
+hand-written notes `docs/releases/v<version>.md`. It builds in a temporary
+worktree, writes and commits the version there, runs every test, builds each
+variant in `-Variants` (`standard`, `nvidia`, or both; standard is always
+required), and refuses any artifact of 2 GiB or more. `-DryRun` stops there,
+with the artifacts in `build-release/dist/dry-run/` and this checkout
+untouched; rerun it as often as needed. A real run then tags the commit,
+pushes the commit and tag together, and creates a draft GitHub pre-release with
+the artifacts. You test the draft and publish it. The procedure and its
+conditions are in the script's comments.
+
+Each variant is built by `scripts/release-win.ps1 -Variant standard|nvidia`,
+which `release.ps1` calls and which also runs on its own:
+
+- **standard:** `tts-host.exe`, `runners/kokoro-onnx/` (runner, ONNX Runtime,
+  espeak-ng), and `kokoro-en-v1`. Needs no Qwen asset and no NVIDIA GPU.
+  Produces `tts-host-<version>-setup.exe` and `tts-host-<version>-portable.zip`.
+- **nvidia:** the same plus `runners/qwen3-gguf/` (runner, llama.cpp, ggml,
+  CUDA runtime) and `qwen3-tts-1.7b`. Produces
+  `tts-host-<version>-nvidia-setup.exe`; its zip is over GitHub's 2 GiB limit
+  and is not published.
+
+The script configures `build-release/<variant>` with `TTS_HOST_RELEASE=ON` and
+`TTS_HOST_RELEASE_VARIANT`, stages the variant's models once into
+`cache/release-models` through the download catalogue, and packages them into
+`build-release/<variant>/dist/`. A staged package is reused only while
+`--verify-model <id>` finds it at the compiled catalogue's revision with every
+file hash matching; otherwise it is downloaded again. Packaging fails if any
+runner, library, licence, or model file of the variant is missing, if a
+bundled package differs from the catalogue, or if the standard tree contains
+any Qwen file. Then it extracts the zip into a temporary folder and has each of
+the variant's models synthesize a sentence there, and compiles the installer
+from the same tree. Both installers share one `AppId`, so either upgrades the
+other. `-SkipVerify` skips the extracted-copy check and `-SkipInstaller` the
+installer.
 
 The installer needs no administrator rights. It installs into
 `%LOCALAPPDATA%\Programs\TTS Host`, creates `%LOCALAPPDATA%\TTS Host\config.json`
@@ -465,21 +512,25 @@ Working end to end:
 - Windows tray icon and settings window: output device, server host/port,
   default profile, installed-model status and licences, load/unload, import,
   idle unload
-- The compiled-in download catalogue (listing only)
+- The curated download catalogue: download with progress and checksum
+  verification, manual updates with Revert, verify and repair, and removal
+- Qwen3-TTS 1.7B through llama.cpp on NVIDIA GPUs (bundled, not a default —
+  ADR 0009), with speech-speed control
+- The global read-selection hotkey (Ctrl+F8 by default), reading the UI
+  Automation selection or the clipboard per `selection.capturePolicy`. New reads interrupt by default and queueing is opt-in
+- Start at sign-in, the Now Playing window, and Pause/Resume/Stop
 - Browser selection/article submission through the loopback API, plus browser
   playback state and Pause/Resume/Stop controls through WebSocket
-- Zip release packaging via CPack
+- The two-model release zip and the per-user offline Windows installer
 
 Not built yet:
 
-- Downloading from the catalogue (listing works; the fetch does not)
-- Global hotkeys and Windows selection reading
-- Interrupt and queue semantics for playback
+- Synthetic Copy fallback for applications without UI Automation selection
+  (those ask for a manual copy)
+- The Kokoro-only release variant and the extension folder in release artifacts
 - Playback and the desktop UI on Linux and macOS — both are Windows-only, and
   other platforms fail with a clear not-implemented error
-- An installer
 - Russian and Armenian models; promoting Qwen3-TTS to a fast/quality default
-  (it is bundled but not a default — ADR 0009)
 
 ## Documentation
 

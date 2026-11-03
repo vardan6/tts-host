@@ -2,6 +2,16 @@ cmake_minimum_required(VERSION 3.28)
 
 project(tts_host VERSION 0.1.0 LANGUAGES CXX)
 
+# The release version (docs/design/architecture.md#versions-and-releases):
+# project(VERSION) holds the numbers, this the SemVer suffix ("alpha.1"), empty
+# for a stable release. scripts/release.ps1 writes both.
+set(TTS_HOST_VERSION_PRERELEASE "" CACHE STRING "SemVer pre-release suffix, empty for a stable release")
+set(TTS_HOST_VERSION "${PROJECT_VERSION}")
+if(TTS_HOST_VERSION_PRERELEASE)
+  set(TTS_HOST_VERSION "${PROJECT_VERSION}-${TTS_HOST_VERSION_PRERELEASE}")
+endif()
+file(WRITE "${CMAKE_BINARY_DIR}/tts-host-version.txt" "${TTS_HOST_VERSION}")
+
 include(CTest)
 include(FetchContent)
 
@@ -237,10 +247,27 @@ add_executable(
 # the runner, which loads them from its own directory. A model manifest never
 # supplies the runtime.
 set(TTS_HOST_QWEN_RUNTIME_DIR "" CACHE PATH "Pinned llama.cpp b11029 runtime copied beside the Qwen runner")
+# The shipping variant (ADR 0011). Standard ships Kokoro only and builds no
+# Qwen runner; nvidia adds the Qwen package and its CUDA runtime.
+option(TTS_HOST_RELEASE "Package a release variant; fail if any part of it is missing" OFF)
+set(TTS_HOST_RELEASE_VARIANT "standard" CACHE STRING "Release variant: standard or nvidia")
+set_property(CACHE TTS_HOST_RELEASE_VARIANT PROPERTY STRINGS standard nvidia)
+if(NOT TTS_HOST_RELEASE_VARIANT MATCHES "^(standard|nvidia)$")
+  message(FATAL_ERROR "TTS_HOST_RELEASE_VARIANT must be standard or nvidia, not '${TTS_HOST_RELEASE_VARIANT}'")
+endif()
+set(TTS_HOST_STANDARD_RELEASE OFF)
+if(TTS_HOST_RELEASE AND TTS_HOST_RELEASE_VARIANT STREQUAL "standard")
+  set(TTS_HOST_STANDARD_RELEASE ON)
+endif()
 # An unset directory falls back to the fetch tool's repo-local output, so a
-# clean Windows configure does not silently drop the runner.
+# clean Windows configure does not silently drop the runner. The standard
+# release never takes it.
 set(TTS_HOST_QWEN_DEFAULT_RUNTIME_DIR "${CMAKE_CURRENT_SOURCE_DIR}/cache/qwen-evaluation/b11029/runtime")
-if(WIN32 AND NOT TTS_HOST_QWEN_RUNTIME_DIR
+if(TTS_HOST_STANDARD_RELEASE AND TTS_HOST_QWEN_RUNTIME_DIR)
+  message(FATAL_ERROR "The standard release variant ships no Qwen runtime; "
+    "leave TTS_HOST_QWEN_RUNTIME_DIR unset (use a separate build directory per variant)")
+endif()
+if(WIN32 AND NOT TTS_HOST_STANDARD_RELEASE AND NOT TTS_HOST_QWEN_RUNTIME_DIR
    AND EXISTS "${TTS_HOST_QWEN_DEFAULT_RUNTIME_DIR}/tts-qwen-runtime.txt")
   set(TTS_HOST_QWEN_RUNTIME_DIR "${TTS_HOST_QWEN_DEFAULT_RUNTIME_DIR}" CACHE PATH
       "Pinned llama.cpp b11029 runtime copied beside the Qwen runner" FORCE)
@@ -428,28 +455,33 @@ add_custom_target(
   USES_TERMINAL
 )
 
-# Packaging: the two-model release tree of docs/design/architecture.md's
-# "Distribution" section and ADR 0010, zipped by CPack's `package` target. Each
-# runner sits in runners/<engine>/ with its private libraries, matching the
-# build tree. Build Release first (`cpack -C Release`); the Debug CRT is not
-# redistributable.
+# Packaging: the release tree of docs/design/architecture.md's "Distribution"
+# section and ADR 0010, zipped by CPack's `package` target. Each runner sits in
+# runners/<engine>/ with its private libraries, matching the build tree. Build
+# Release first (`cpack -C Release`); the Debug CRT is not redistributable.
 #
-# TTS_HOST_RELEASE=ON is the shipping configuration: it requires the Qwen
-# runtime and TTS_HOST_RELEASE_MODELS_DIR, a directory holding catalogue
-# installs of both bundled packages (scripts/release-win.ps1 stages them with
-# tts-host --download-model, so each carries its catalogue revision). The
-# install step fails on any missing file rather than ship one model.
-option(TTS_HOST_RELEASE "Package the two-model release; fail if any part is missing" OFF)
+# TTS_HOST_RELEASE=ON is the shipping configuration of TTS_HOST_RELEASE_VARIANT
+# (ADR 0011). It requires TTS_HOST_RELEASE_MODELS_DIR, a directory holding
+# catalogue installs of the variant's bundled packages (scripts/release-win.ps1
+# stages them with tts-host --download-model, so each carries its catalogue
+# revision); nvidia also requires the Qwen runtime. The install step fails on
+# any missing file of the variant rather than ship less than it.
 set(TTS_HOST_RELEASE_MODELS_DIR "" CACHE PATH
-  "Catalogue installs of kokoro-en-v1 and qwen3-tts-1.7b to bundle")
-set(TTS_HOST_BUNDLED_MODELS kokoro-en-v1 qwen3-tts-1.7b)
+  "Catalogue installs of the release variant's bundled packages")
+if(TTS_HOST_STANDARD_RELEASE)
+  set(TTS_HOST_BUNDLED_MODELS kokoro-en-v1)
+else()
+  set(TTS_HOST_BUNDLED_MODELS kokoro-en-v1 qwen3-tts-1.7b)
+endif()
 if(TTS_HOST_RELEASE)
   if(NOT WIN32)
     message(FATAL_ERROR "TTS_HOST_RELEASE packages the Windows release only")
   endif()
-  if(NOT TTS_HOST_QWEN_RUNTIME_DIR OR NOT TTS_HOST_RELEASE_MODELS_DIR)
-    message(FATAL_ERROR
-      "TTS_HOST_RELEASE needs TTS_HOST_QWEN_RUNTIME_DIR and TTS_HOST_RELEASE_MODELS_DIR")
+  if(NOT TTS_HOST_RELEASE_MODELS_DIR)
+    message(FATAL_ERROR "TTS_HOST_RELEASE needs TTS_HOST_RELEASE_MODELS_DIR")
+  endif()
+  if(NOT TTS_HOST_STANDARD_RELEASE AND NOT TTS_HOST_QWEN_RUNTIME_DIR)
+    message(FATAL_ERROR "The nvidia release variant needs TTS_HOST_QWEN_RUNTIME_DIR")
   endif()
 endif()
 
@@ -519,20 +551,36 @@ if(TTS_HOST_RELEASE)
     tts-host.exe
     runners/kokoro-onnx/tts-host-kokoro-onnx-runner.exe runners/kokoro-onnx/onnxruntime.dll
     runners/kokoro-onnx/espeak-ng.exe runners/kokoro-onnx/libespeak-ng.dll
-    runners/qwen3-gguf/tts-host-qwen3-gguf-runner.exe runners/qwen3-gguf/llama.dll
-    runners/qwen3-gguf/mtmd.dll runners/qwen3-gguf/ggml.dll runners/qwen3-gguf/ggml-base.dll
-    runners/qwen3-gguf/ggml-cuda.dll runners/qwen3-gguf/ggml-cpu-x64.dll
-    runners/qwen3-gguf/libomp.dll runners/qwen3-gguf/cudart64_12.dll
-    runners/qwen3-gguf/cublas64_12.dll runners/qwen3-gguf/cublasLt64_12.dll
-    vcruntime140.dll runners/kokoro-onnx/msvcp140.dll runners/qwen3-gguf/vcruntime140_1.dll
+    vcruntime140.dll runners/kokoro-onnx/msvcp140.dll
     schemas/model.schema.json schemas/config.schema.json config.json
-    licenses/TTS-Host-LICENSE.txt licenses/onnxruntime/LICENSE licenses/espeak-ng-GPL-3.0.txt
+    licenses/TTS-Host-LICENSE.txt licenses/onnxruntime/LICENSE licenses/espeak-ng-GPL-3.0.txt)
+  # Present only in nvidia; the standard tree must not carry them.
+  set(TTS_HOST_RELEASE_NVIDIA_ONLY
+    runners/qwen3-gguf models/qwen3-tts-1.7b
     licenses/llama.cpp-LICENSE.txt licenses/nvidia-cuda-NOTICE.txt)
+  if(TTS_HOST_STANDARD_RELEASE)
+    set(TTS_HOST_RELEASE_ABSENT ${TTS_HOST_RELEASE_NVIDIA_ONLY})
+  else()
+    set(TTS_HOST_RELEASE_ABSENT "")
+    list(APPEND TTS_HOST_RELEASE_REQUIRED
+      runners/qwen3-gguf/tts-host-qwen3-gguf-runner.exe runners/qwen3-gguf/llama.dll
+      runners/qwen3-gguf/mtmd.dll runners/qwen3-gguf/ggml.dll runners/qwen3-gguf/ggml-base.dll
+      runners/qwen3-gguf/ggml-cuda.dll runners/qwen3-gguf/ggml-cpu-x64.dll
+      runners/qwen3-gguf/libomp.dll runners/qwen3-gguf/cudart64_12.dll
+      runners/qwen3-gguf/cublas64_12.dll runners/qwen3-gguf/cublasLt64_12.dll
+      runners/qwen3-gguf/vcruntime140_1.dll
+      licenses/llama.cpp-LICENSE.txt licenses/nvidia-cuda-NOTICE.txt)
+  endif()
   install(CODE "
     set(prefix \"\${CMAKE_INSTALL_PREFIX}\")
     foreach(file ${TTS_HOST_RELEASE_REQUIRED})
       if(NOT EXISTS \"\${prefix}/\${file}\")
         message(FATAL_ERROR \"Release package is missing \${file}\")
+      endif()
+    endforeach()
+    foreach(file ${TTS_HOST_RELEASE_ABSENT})
+      if(EXISTS \"\${prefix}/\${file}\")
+        message(FATAL_ERROR \"The ${TTS_HOST_RELEASE_VARIANT} release must not contain \${file}\")
       endif()
     endforeach()
     foreach(model ${TTS_HOST_BUNDLED_MODELS})
@@ -577,9 +625,18 @@ if(TTS_HOST_RELEASE)
 endif()
 
 set(CPACK_PACKAGE_NAME "tts-host")
-set(CPACK_PACKAGE_VERSION ${PROJECT_VERSION})
+set(CPACK_PACKAGE_VERSION ${TTS_HOST_VERSION})
 set(CPACK_GENERATOR "ZIP")
-set(CPACK_PACKAGE_FILE_NAME "tts-host-${PROJECT_VERSION}-${CMAKE_SYSTEM_NAME}-${CMAKE_SYSTEM_PROCESSOR}")
+# Release artifact names (docs/design/architecture.md#versions-and-releases):
+# only the standard variant publishes a zip.
+if(TTS_HOST_RELEASE)
+  set(CPACK_PACKAGE_FILE_NAME "tts-host-${TTS_HOST_VERSION}-portable")
+  if(NOT TTS_HOST_STANDARD_RELEASE)
+    set(CPACK_PACKAGE_FILE_NAME "tts-host-${TTS_HOST_VERSION}-nvidia-portable")
+  endif()
+else()
+  set(CPACK_PACKAGE_FILE_NAME "tts-host-${PROJECT_VERSION}-${CMAKE_SYSTEM_NAME}-${CMAKE_SYSTEM_PROCESSOR}")
+endif()
 set(CPACK_PACKAGE_DIRECTORY "${CMAKE_BINARY_DIR}/dist")
 include(CPack)
 
@@ -1435,11 +1492,13 @@ if(BUILD_TESTING)
   if(NOT WIN32)
     add_test(
       NAME tts_host_tray_not_implemented_on_this_platform
-      COMMAND $<TARGET_FILE:tts-host> --config ${CMAKE_SOURCE_DIR}/config.example.json
-    )
-    set_tests_properties(
-      tts_host_tray_not_implemented_on_this_platform PROPERTIES
-      PASS_REGULAR_EXPRESSION "tray icon is not implemented on this platform yet"
+      COMMAND
+        ${CMAKE_COMMAND}
+        -Dexe=$<TARGET_FILE:tts-host>
+        -Dexample=${CMAKE_SOURCE_DIR}/config.example.json
+        -Dschemas=${CMAKE_SOURCE_DIR}/schemas
+        -Dwork=${CMAKE_CURRENT_BINARY_DIR}/tray-unavailable
+        -P ${CMAKE_SOURCE_DIR}/tests/assert_tray_unavailable.cmake
     )
   endif()
 
