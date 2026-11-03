@@ -383,7 +383,7 @@ Illustrative shape, not yet a frozen schema:
     }
   },
   "languageDefaults": {
-    "en": "quality",
+    "en": "fast",
     "ru": "quality",
     "hy": "armenian"
   }
@@ -392,8 +392,10 @@ Illustrative shape, not yet a frozen schema:
 
 A profile can set `fallbackProfile` to one other profile. If its model cannot
 be resolved or its runner is unavailable, the host uses that fallback and logs
-the reason. The initial English policy is `quality` first and CPU-only `fast`
-as the fallback; `fast` names Kokoro. A failed synthesis request does not retry
+the reason. English defaults to `fast`, which names Kokoro on the CPU:
+bundling Qwen does not make it a default
+([ADR 0009](../adr/0009-qwen-release-selection-without-bake-off.md)).
+`quality` names Qwen, is selectable, and falls back to `fast`. A failed synthesis request does not retry
 through the fallback, because it may already have emitted audio.
 
 ### Profile resolution
@@ -690,7 +692,12 @@ re-download is Remove followed by Download, and damage is handled by Repair.
   `model_update` keeps its precondition throws as real runtime errors, because
   Settings acts on the scan the list was drawn from and headless callers never
   see a row; the eligibility and those throws call the same predicates, so the
-  menu and the operation cannot disagree.
+  menu and the operation cannot disagree. The same module owns the
+  runner-absent rule ([ADR 0011](../adr/0011-standard-and-nvidia-release-variants.md)):
+  a row whose engine has no runner folder offers no Download, Update, or Load,
+  and its reason says the model needs the NVIDIA variant. That differs from an
+  installed runner that rejects the hardware, which keeps the existing
+  unavailable-with-reason state.
 - **Unified model list:** the Models page is one list with a row per
   installed package, per catalogue entry not installed, and per id that has
   only a kept previous version left (reachable for Delete previous and Open
@@ -1031,15 +1038,19 @@ tts-host/
   tts-host.exe
   runners/
     kokoro-onnx/   runner + ONNX Runtime + espeak-ng
-    qwen3-gguf/    runner + llama.cpp, ggml, CUDA libraries
+    qwen3-gguf/    runner + llama.cpp, ggml, CUDA libraries  (NVIDIA variant)
   schemas/
   models/
     kokoro-en-v1/
-    qwen3-tts-1.7b/
+    qwen3-tts-1.7b/                                          (NVIDIA variant)
+  extension/       browser extension, loaded unpacked by the user
   licenses/
   config.json
   portable.marker  (portable archive only)
 ```
+
+Releases ship a standard (Kokoro-only) and an NVIDIA variant of this tree —
+see [ADR 0011](../adr/0011-standard-and-nvidia-release-variants.md).
 
 Each runner finds its private libraries beside itself (Windows
 executable-directory DLL search, Linux rpath `$ORIGIN`); no runner carries a
@@ -1055,20 +1066,24 @@ app-local beside every executable, because each runner resolves its imports
 from its own folder and a clean machine may lack the VC++ redistributable.
 
 CMake's `package` target (CPack, `ZIP`) produces the zip from a Release build.
-`TTS_HOST_RELEASE=ON` makes it the shipping package: it needs the pinned
-llama.cpp runtime and a staging directory of catalogue installs of both bundled
-packages, so each carries its catalogue revision. Its last install step fails
-on any missing runner, runtime library, licence, or package file, and on a
-staged package whose revision or files differ from the compiled catalogue; the
-persistent stage is restaged rather than reused when stale.
-`scripts/release-win.ps1` stages the packages, builds, packages, and has both
-models synthesize from a freshly extracted copy.
+`TTS_HOST_RELEASE=ON` makes it the shipping package of the variant named by
+the `TTS_HOST_RELEASE_VARIANT` cache string (`standard` or `nvidia`). It needs
+a staging directory of catalogue installs of that variant's bundled packages,
+so each carries its catalogue revision; only `nvidia` needs the pinned
+llama.cpp runtime. Its last install step fails on any missing runner, runtime
+library, licence, or package file of that variant, and on a staged package
+whose revision or files differ from the compiled catalogue; the persistent
+stage is restaged rather than reused when stale.
+`scripts/release-win.ps1 -Variant standard|nvidia` builds one variant: it
+stages that variant's packages, builds, packages, and has each of its models
+synthesize from a freshly extracted copy. The standard variant needs no Qwen
+asset and no NVIDIA GPU at any step; only the NVIDIA speech check needs one.
 
-The portable zip remains a release format. The Windows installer must also
-ship both Kokoro and the ADR 0009 Qwen package plus their complete
-runtimes; installation and first synthesis are offline. Packaging must fail
-if either required package or dependency is missing rather than silently ship a
-single-model distribution. The installer is per-user, into
+The portable zip remains a release format. Each variant's installer ships
+every model and runtime of that variant; installation and first synthesis are
+offline. Packaging must fail if any package or dependency of the variant being
+built is missing, rather than silently ship less than that variant. The
+installer is per-user, into
 `%LOCALAPPDATA%\Programs\TTS Host` without elevation, and installs the same
 tree minus `portable.marker`. Its startup choice
 follows [Login startup](#login-startup): pre-ticked from
@@ -1089,10 +1104,87 @@ is worse for a non-developer than a folder they double-click.
 
 Application updates are manual replacement. The host checks for a newer release and links to
 it; it does not swap its own files while holding loaded models and a live
-service.
+service. Alpha releases omit the check: testers find new versions on the
+GitHub releases page, and the check is required from the first beta.
 
 If a Python-only model is ever needed, its compatibility runner can be built
 with Nuitka standalone mode so the user still never installs Python.
+
+### Versions and releases
+
+Versions follow [Semantic Versioning 2.0.0](https://semver.org):
+`MAJOR.MINOR.PATCH[-PRERELEASE]`. While the major version is 0, the
+configuration, API, and package formats may still change between minor
+versions. 1.0.0 marks the first release the user considers complete for
+general users.
+
+| Stage | Example | Meaning |
+|---|---|---|
+| alpha | `0.1.0-alpha.1` | First tester builds; features and formats may change |
+| beta | `0.1.0-beta.1` | Features frozen for this version; fixes only |
+| release candidate | `0.1.0-rc.1` | The final build unless testing finds a blocker |
+| stable | `0.1.0` | Published as the latest release |
+| patch | `0.1.1` | Fixes to a stable release, no new features |
+
+The pre-release counter restarts at 1 for each stage and each new
+`MAJOR.MINOR.PATCH`. Pre-releases sort before their stable version
+(`0.1.0-alpha.2` < `0.1.0-beta.1` < `0.1.0`). Do not invent other forms such
+as `0.1.0.A`: tools would neither sort nor recognise them.
+
+One version is defined once, in `CMakeLists.txt`. `project(tts_host VERSION
+X.Y.Z)` holds the numeric part, because CMake's `VERSION` accepts numbers only,
+and the `TTS_HOST_VERSION_PRERELEASE` cache string holds the suffix (`alpha.1`,
+or empty for a stable release). CMake combines them into `TTS_HOST_VERSION`
+(`0.1.0-alpha.1`), which names the artifacts and is the installer's
+`AppVersion`. Windows file-version fields take four numbers, so they use
+`X.Y.Z.0`.
+
+A release is a Git tag `v` + `TTS_HOST_VERSION` (`v0.1.0-alpha.1`), annotated,
+on the exact commit its artifacts were built from. Nothing is tagged ahead of
+the build. A GitHub release whose version has a suffix is marked as a
+pre-release. Each release is created as a draft, and the user publishes it after
+testing.
+
+Artifacts are `tts-host-<version>-setup.exe` and
+`tts-host-<version>-portable.zip` (standard), and
+`tts-host-<version>-nvidia-setup.exe`. A file of 2 GiB or more stops the
+release.
+
+`scripts/release.ps1 -Version <version> [-Variants <list>] [-DryRun]` runs
+locally on Windows. GitHub's hosted runners have no GPU for the NVIDIA speech
+check and would re-download the models on every run. `-Variants` takes
+`standard`, `nvidia`, or both (the default); `standard` is required in every
+release, and an omitted `nvidia` is not a failure. Its own comments own the
+procedure:
+1. Refuse to run unless the tree is clean and on `main`, matching `origin`,
+   and the tag `v<version>` exists neither locally nor on `origin`.
+2. Create a temporary detached worktree of that commit outside the source
+   tree. Write the version there and commit it; when the version is already
+   written, that commit is the release commit and no empty commit is made.
+3. Build in the worktree, and require every test to pass.
+4. Build each selected variant and run its extracted-copy speech check. Model
+   stages, runtimes, and FetchContent sources come from the source checkout's
+   caches, so the worktree downloads nothing already cached.
+5. Check the size limit.
+6. `-DryRun` stops here: it keeps the artifacts in
+   `build-release/dist/dry-run/` and removes the worktree.
+7. Tag the release commit, then push it to `main` and push the tag in one
+   atomic push. A rejected push deletes the local tag and stops. On success
+   the source checkout's `main` fast-forwards to the release commit.
+8. Create the draft with its notes and upload the artifacts.
+
+Through step 6 the source checkout's branches and tags are untouched and the
+worktree is removed, so a dry run, or any failure, is retried by running the
+script again; a real run rebuilds everything rather than reusing a rehearsal.
+The tag therefore names the commit its artifacts were built from, and nothing
+unverified is pushed. A failure in step 8 leaves the pushed tag; the script
+keeps the artifacts in `build-release/dist/<version>/` and prints the `gh`
+commands that finish the draft.
+
+Release notes are written by hand until releases come from merged pull
+requests; then they come from GitHub's generated notes. They always cover
+installation, the SmartScreen warning for unsigned builds, the variants, loading
+the extension, and where to report problems (GitHub Issues).
 
 ### Data locations
 

@@ -90,4 +90,6 @@ Runtime and the CUDA/ggml stack apart without runtime search-path code.
 - One Windows package carries the CUDA libraries. It is not split into CPU and
   NVIDIA variants unless its size proves unreasonable, as the
   [distribution requirements](../requirements/product.md#distribution-and-usability)
-  allow.
+  allow. Amended 2026-11-03: the size proved unreasonable, and releases ship
+  standard and NVIDIA variants — see
+  [ADR 0011](0011-standard-and-nvidia-release-variants.md).

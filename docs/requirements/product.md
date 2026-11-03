@@ -226,10 +226,17 @@ connected prose and sentence transitions.
   licence explicitly permits bundling.
 - The application can download supported models with progress, resumability,
   checksum verification, licence disclosure, and a destination choice.
-- The Windows installer includes Kokoro and one Qwen3-TTS variant, their
-  voices, and all required inference runtimes. With networking disabled,
-  installation leaves both models discoverable and selectable, and each can
-  synthesize speech on supported hardware without downloading dependencies.
+- Windows releases come in two variants (user decision, 2026-11-03): a
+  standard variant with Kokoro only and its CPU runtime, the recommended
+  download, and an NVIDIA variant that adds one Qwen3-TTS package and its CUDA
+  runtime. Each installer includes its models, their voices, and all required
+  inference runtimes. With networking disabled, installation leaves every
+  bundled model discoverable and selectable, and each can synthesize speech on
+  supported hardware without downloading dependencies. The installers download
+  nothing; further models come from Settings. The standard variant never offers
+  a download for a model whose runner it lacks: Settings shows that the model
+  needs the NVIDIA variant, which upgrades the standard installation in place
+  — see [ADR 0011](../adr/0011-standard-and-nvidia-release-variants.md).
   The bundled Qwen package is fixed by
   [ADR 0009](../adr/0009-qwen-release-selection-without-bake-off.md); it becomes
   a fast/quality profile default only by meeting the
@@ -255,16 +262,22 @@ connected prose and sentence transitions.
   register it in the same OS entry the application uses, and remove that entry on
   uninstall; the application and the system page can change it afterward.
   Portable users get the same choice on first launch.
-- Windows releases should distinguish CPU/generic and NVIDIA-capable packages if
-  bundling every acceleration runtime would make one distribution unreasonably
-  large.
+- Every Windows release artifact includes the browser extension as an
+  `extension` folder that the user loads unpacked in Chrome or Edge. Browsers do
+  not let an installer add an unpacked extension, and store publication is
+  deferred.
+- Each release states where to report problems (GitHub Issues).
+- Release versions follow Semantic Versioning, starting at `v0.1.0-alpha.1`
+  — see [versions and releases](../design/architecture.md#versions-and-releases).
 - The application runs in the background and is reachable at a stable local
   address without the user starting it manually.
 - The local API binds to loopback and requires no credential; it must not be
   exposed beyond the machine without explicit configuration and a warning. See
   `docs/adr/0003-no-authentication.md`.
 - Updates are performed by replacing the installed files. The application checks
-  for a newer release and links to it; it does not update itself.
+  for a newer release and links to it; it does not update itself. Alpha
+  releases may omit the check, because testers follow the GitHub releases
+  page; it is required from the first beta.
 - Core tray and settings workflows are keyboard-operable and expose names,
   roles, state, and status through each platform's accessibility APIs.
 
