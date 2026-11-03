@@ -111,11 +111,10 @@ October 19 artifacts are stale.
   into every release artifact. Its manifest `key` pins the ID that
   `config.example.json` already allows. Not an optional installer component —
   see [distribution design](docs/design/architecture.md#distribution).
-- [ ] **AFK — Release version:** `TTS_HOST_VERSION_PRERELEASE` plus the numeric
+- [x] **AFK — Release version:** `TTS_HOST_VERSION_PRERELEASE` plus the numeric
   `project(VERSION)` gives `TTS_HOST_VERSION`, which feeds the artifact names,
-  Inno `AppVersion`, a numeric `VersionInfoVersion` (`X.Y.Z.0`), and a new
-  version line in Settings. Done: the CMake version, artifact names, and
-  `VersionInfoVersion`; remaining: the Settings version line — see
+  Inno `AppVersion`, a numeric `VersionInfoVersion` (`X.Y.Z.0`), and the
+  version in the Settings window title — see
   [versions and releases](docs/design/architecture.md#versions-and-releases).
 - [x] **AFK — Standard (Kokoro-only) release variant:** `TTS_HOST_RELEASE_VARIANT`
   selects the variant's required files; `scripts/release-win.ps1 -Variant`

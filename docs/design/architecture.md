@@ -895,7 +895,10 @@ Three UI surfaces, divided by task:
   loop, which stays responsive; registry-changing buttons are disabled
   meanwhile. Cancel stops a download at its next read and keeps the partial
   file for resume. Closing Settings mid-operation cancels a download, or waits
-  for an import's copy, before the window goes. Restart-requiring settings are marked. It opens independently of the tray (`tts-host --settings`), so a
+  for an import's copy, before the window goes. Restart-requiring settings are
+  marked. The window title carries `TTS_HOST_VERSION`
+  ([versions and releases](#versions-and-releases)). It opens independently
+  of the tray (`tts-host --settings`), so a
   platform with no usable tray still has a full path to configuration.
 
 The global hotkey and selection capture belong to the host: it is already

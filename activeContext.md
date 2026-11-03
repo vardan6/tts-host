@@ -1,13 +1,13 @@
 # Active Context
 
 - Mode: release preparation on `release-prep/v0.1.0-alpha.1`; release
-  variant, script, defaults, and the extension in the release tree are
-  committed (2026-11-03).
+  variant, script, defaults, extension in the release tree, and the
+  Settings version title are committed (2026-11-03).
 - Phase: "First public alpha (Windows)" in `roadmap.md`, a draft
   standard-only `v0.1.0-alpha.1`.
-- Next atomic step: `/next-slice` → the Settings version line.
-- Next after that: a Windows CTest run on a clean checkout, then PR → `main`
-  and the HITL dry run.
+- Next atomic step: Windows CTest run on a clean checkout of `HEAD`
+  (temporary worktree, separate build folder).
+- Next after that: PR → `main`, then the HITL dry run.
 - Verification: Linux suite passes except `config_persistence` and
   `unicode_cli_paths`, which fail only on the user-edited example and pass on
   the committed one. Windows standard variant, with `extension/`, built and

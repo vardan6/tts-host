@@ -386,7 +386,8 @@ if(WIN32)
 endif()
 
 target_include_directories(tts-host PRIVATE include ${boost_headers_SOURCE_DIR})
-target_compile_definitions(tts-host PRIVATE BOOST_ERROR_CODE_HEADER_ONLY)
+target_compile_definitions(tts-host PRIVATE BOOST_ERROR_CODE_HEADER_ONLY
+  TTS_HOST_VERSION="${TTS_HOST_VERSION}")
 # Building the Host alone (an IDE startup project) also refreshes its runners.
 add_dependencies(tts-host tts-host-kokoro-onnx-runner)
 if(TARGET tts-host-qwen3-gguf-runner)

@@ -1731,12 +1731,14 @@ void run_settings_window(ConfigDocument &document,
 
   // A tabbed top-level window: General, Playback, Models, and Server pages
   // above the always-visible activity log
-  // (docs/design/architecture.md#desktop-integration).
+  // (docs/design/architecture.md#desktop-integration). The title carries the
+  // release version, so a tester can quote it in a report.
   RECT initial_bounds{0, 0, 504, 680};
   AdjustWindowRectEx(&initial_bounds, WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN, FALSE, 0);
   const HWND window =
-      CreateWindowExW(0, kClassName, L"TTS Host Settings", WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN, CW_USEDEFAULT,
-                      CW_USEDEFAULT, initial_bounds.right - initial_bounds.left,
+      CreateWindowExW(0, kClassName, L"TTS Host Settings \u2014 " TTS_HOST_VERSION,
+                      WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN, CW_USEDEFAULT, CW_USEDEFAULT,
+                      initial_bounds.right - initial_bounds.left,
                       initial_bounds.bottom - initial_bounds.top, nullptr, nullptr, instance, nullptr);
   if (!window) {
     throw std::runtime_error("failed to create the settings window");
