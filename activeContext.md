@@ -1,24 +1,22 @@
 # Active Context
 
-- Mode: release preparation on `release-prep/v0.1.0-alpha.1`; plan-review
-  must-fix code and test fixes implemented, uncommitted (2026-11-03).
+- Mode: release preparation on `release-prep/v0.1.0-alpha.1`; release
+  variant, script, defaults, and the extension in the release tree are
+  committed (2026-11-03).
 - Phase: "First public alpha (Windows)" in `roadmap.md`, a draft
   standard-only `v0.1.0-alpha.1`.
-- Next atomic step: user reviews and commits the branch (the
-  `config.example.json` release defaults are staged in the index; the user's
-  own edits to that file stay unstaged), then `/next-slice` → "Browser
-  extension in the release tree".
-- Next after that: the Settings version line, then a Windows CTest run on a
-  clean checkout, then PR → `main` and the HITL dry run.
+- Next atomic step: `/next-slice` → the Settings version line.
+- Next after that: a Windows CTest run on a clean checkout, then PR → `main`
+  and the HITL dry run.
 - Verification: Linux suite passes except `config_persistence` and
   `unicode_cli_paths`, which fail only on the user-edited example and pass on
-  the committed one. Windows standard variant built and spoke from its
-  extracted zip (`build-release/standard-check`, log in `logs/`). Windows
+  the committed one. Windows standard variant, with `extension/`, built and
+  spoke from its extracted zip (`build-release/standard-check`, log in `logs/`). Windows
   CTest, the NVIDIA variant, and `release.ps1` itself are not yet run.
 - Blockers/environment: a release run needs a clean tree, Windows VS 2022,
   Inno Setup 6, and authenticated `gh`. Never `git add -A` or `commit -a`
   while the user's `config.example.json` edits are in the working copy: that
-  replaces the staged release defaults. Windows builds run from WSL through
+  commits them over the release defaults. Windows builds run from WSL through
   `/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe`; use a
   separate build folder. Do not stop the running Host without permission or
   overwrite its locked exe. Developer launches use `config.development.json`

@@ -527,7 +527,6 @@ Not built yet:
 
 - Synthetic Copy fallback for applications without UI Automation selection
   (those ask for a manual copy)
-- The Kokoro-only release variant and the extension folder in release artifacts
 - Playback and the desktop UI on Linux and macOS — both are Windows-only, and
   other platforms fail with a clear not-implemented error
 - Russian and Armenian models; promoting Qwen3-TTS to a fast/quality default

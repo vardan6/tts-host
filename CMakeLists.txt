@@ -533,6 +533,7 @@ if(TTS_HOST_QWEN_RUNTIME_DIR)
   endif()
 endif()
 install(DIRECTORY schemas DESTINATION .)
+install(DIRECTORY extension DESTINATION .)
 install(FILES config.example.json DESTINATION . RENAME config.json)
 install(CODE "file(TOUCH \"\${CMAKE_INSTALL_PREFIX}/portable.marker\")")
 if(TTS_HOST_RELEASE_MODELS_DIR)
@@ -553,6 +554,7 @@ if(TTS_HOST_RELEASE)
     runners/kokoro-onnx/espeak-ng.exe runners/kokoro-onnx/libespeak-ng.dll
     vcruntime140.dll runners/kokoro-onnx/msvcp140.dll
     schemas/model.schema.json schemas/config.schema.json config.json
+    extension/manifest.json extension/service_worker.js
     licenses/TTS-Host-LICENSE.txt licenses/onnxruntime/LICENSE licenses/espeak-ng-GPL-3.0.txt)
   # Present only in nvidia; the standard tree must not carry them.
   set(TTS_HOST_RELEASE_NVIDIA_ONLY

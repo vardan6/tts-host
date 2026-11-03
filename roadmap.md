@@ -107,7 +107,7 @@ October 19 artifacts are stale.
   [desktop integration](docs/design/architecture.md#desktop-integration),
   [configuration](docs/design/architecture.md#configuration), and
   [ADR 0009](docs/adr/0009-qwen-release-selection-without-bake-off.md).
-- [ ] **AFK — Browser extension in the release tree:** install `extension/`
+- [x] **AFK — Browser extension in the release tree:** install `extension/`
   into every release artifact. Its manifest `key` pins the ID that
   `config.example.json` already allows. Not an optional installer component —
   see [distribution design](docs/design/architecture.md#distribution).

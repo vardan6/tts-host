@@ -1093,7 +1093,7 @@ The installer is an Inno Setup 6 script, `installer/tts-host.iss`, compiled
 by `scripts/release-win.ps1` from the same release tree. It seeds the per-user
 `config.json` once, so an upgrade keeps the user's settings, and refreshes the
 `schemas/` beside it on every install. An upgrade replaces `runners/`,
-`models/`, `schemas/`, and `licenses/` in the application folder wholesale.
+`models/`, `schemas/`, `extension/`, and `licenses/` in the application folder wholesale.
 The per-user data directory, with its downloaded, updated, and imported
 packages, is never touched by an upgrade or an uninstall. The startup answer
 writes the same Run command the Host writes and the first-run marker, so the

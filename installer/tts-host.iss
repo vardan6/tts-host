@@ -69,6 +69,7 @@ Name: startup; Description: "Start TTS Host when I sign in to Windows"; Flags: u
 Type: filesandordirs; Name: "{app}\runners"
 Type: filesandordirs; Name: "{app}\models"
 Type: filesandordirs; Name: "{app}\schemas"
+Type: filesandordirs; Name: "{app}\extension"
 Type: filesandordirs; Name: "{app}\licenses"
 
 [Files]
