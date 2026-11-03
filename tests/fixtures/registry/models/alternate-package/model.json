@@ -1,0 +1,17 @@
+{
+  "$schema": "../../../../../schemas/model.schema.json",
+  "schemaVersion": 1,
+  "id": "alternate-package",
+  "displayName": "Alternate Package",
+  "engine": "kokoro-onnx",
+  "languages": [
+    "en"
+  ],
+  "files": {
+    "model": "alternate.onnx"
+  },
+  "license": {
+    "name": "Apache-2.0",
+    "url": "https://example.com/alternate-package"
+  }
+}

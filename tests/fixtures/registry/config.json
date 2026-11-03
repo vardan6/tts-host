@@ -1,0 +1,32 @@
+{
+  "$schema": "../../../schemas/config.schema.json",
+  "schemaVersion": 1,
+  "server": {
+    "host": "127.0.0.1",
+    "port": 7861,
+    "authentication": "none",
+    "allowedOrigins": []
+  },
+  "audio": {
+    "outputDevice": "system-default"
+  },
+  "modelRegistry": {
+    "directories": [
+      "./models",
+      "./missing-registry"
+    ],
+    "watchForChanges": true,
+    "idleUnloadSeconds": 600,
+    "maximumLoadedGpuModels": 1
+  },
+  "profiles": {
+    "fast": {
+      "model": "demo-package",
+      "device": "cpu",
+      "loadPolicy": "eager"
+    }
+  },
+  "languageDefaults": {
+    "en": "fast"
+  }
+}

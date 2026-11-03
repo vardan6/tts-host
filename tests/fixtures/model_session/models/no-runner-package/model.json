@@ -1,0 +1,17 @@
+{
+  "$schema": "../../../../../schemas/model.schema.json",
+  "schemaVersion": 1,
+  "id": "no-runner-package",
+  "displayName": "No Runner Package",
+  "engine": "no-such-engine",
+  "languages": [
+    "en"
+  ],
+  "files": {
+    "model": "model.bin"
+  },
+  "license": {
+    "name": "Apache-2.0",
+    "url": "https://example.com/no-runner-package"
+  }
+}

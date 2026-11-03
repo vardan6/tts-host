@@ -1,0 +1,17 @@
+{
+  "$schema": "../../../../../schemas/model.schema.json",
+  "schemaVersion": 1,
+  "id": "escaping-file-path",
+  "displayName": "Escaping File Path",
+  "engine": "kokoro-onnx",
+  "languages": [
+    "en"
+  ],
+  "files": {
+    "model": "../outside.onnx"
+  },
+  "license": {
+    "name": "Apache-2.0",
+    "url": "https://example.com/escaping-file-path"
+  }
+}
