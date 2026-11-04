@@ -1,5 +1,6 @@
 #include "tts_host/model_update.hpp"
 
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -7,6 +8,8 @@
 #include <map>
 #include <stdexcept>
 #include <string>
+#include <system_error>
+#include <thread>
 
 #include <nlohmann/json.hpp>
 
@@ -23,6 +26,23 @@ using json = nlohmann::json;
 void require(bool condition, const std::string &message) {
   if (!condition) {
     throw std::runtime_error(message);
+  }
+}
+
+// A fixture rename made right after the test wrote the files. On Windows a
+// scanner may still hold them for a few milliseconds (in %TEMP%, where the
+// release gate's clean worktree lives), failing the rename with "Access is
+// denied" though no process has them open; retry briefly before failing.
+void rename_fixture(const std::filesystem::path &from, const std::filesystem::path &to) {
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+  std::error_code ec;
+  for (;;) {
+    std::filesystem::rename(from, to, ec);
+    if (ec != std::errc::permission_denied || std::chrono::steady_clock::now() >= deadline) break;
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  if (ec) {
+    throw std::filesystem::filesystem_error("rename", from, to, ec);
   }
 }
 
@@ -234,7 +254,7 @@ int main(int argc, char **argv) {
           tts_host::stage_catalogue_entry(v2, user, config, network.fetcher(), nullptr);
         }
         std::filesystem::create_directories(user / ".previous");
-        std::filesystem::rename(user / "demo-update", user / ".previous" / ("demo-update@" + r1));
+        rename_fixture(user / "demo-update", user / ".previous" / ("demo-update@" + r1));
         std::ofstream(user / ".demo-update.updating") << "demo-update@" + r1;
 
         const auto messages = tts_host::recover_interrupted_model_updates(config);
@@ -251,7 +271,7 @@ int main(int argc, char **argv) {
       FakeNetwork network;
       tts_host::download_catalogue_entry(v1, user, config, network.fetcher(), nullptr);
       std::filesystem::create_directories(user / ".previous");
-      std::filesystem::rename(user / "demo-update", user / ".previous" / ".demo-update.reverting");
+      rename_fixture(user / "demo-update", user / ".previous" / ".demo-update.reverting");
       require(tts_host::recover_interrupted_model_updates(config).size() == 1 && installed_revision(config) == r1,
               "an interrupted revert was not restored");
     }
@@ -279,10 +299,10 @@ int main(int argc, char **argv) {
           std::ofstream(kept / "model.json", std::ios::trunc) << manifest.dump(2);
         }
         const auto parking = user / ".previous" / ".demo-update.reverting";
-        std::filesystem::rename(user / "demo-update", parking);
-        std::filesystem::rename(kept, user / "demo-update");
+        rename_fixture(user / "demo-update", parking);
+        rename_fixture(kept, user / "demo-update");
         if (stage == "finished") {
-          std::filesystem::rename(parking, user / ".previous" / ("demo-update@" + r2));
+          rename_fixture(parking, user / ".previous" / ("demo-update@" + r2));
         }
 
         const auto messages = tts_host::recover_interrupted_model_updates(config);
@@ -729,9 +749,9 @@ int main(int argc, char **argv) {
 
         if (stage == "moving") {
           std::filesystem::remove(staging / "voices" / "af.bin");
-          std::filesystem::rename(package / "voices" / "af.bin", staging / "voices" / "af.bin");
+          rename_fixture(package / "voices" / "af.bin", staging / "voices" / "af.bin");
         } else {
-          std::filesystem::rename(package, user / ".demo-update.damaged");
+          rename_fixture(package, user / ".demo-update.damaged");
           if (stage == "swapped-invalid") std::filesystem::remove(staging / "model.json");
         }
 
@@ -758,7 +778,7 @@ int main(int argc, char **argv) {
         FakeNetwork network;
         tts_host::download_catalogue_entry(multi, user, config, network.fetcher(), nullptr);
         const auto package = user / "renamed-demo";
-        std::filesystem::rename(user / "demo-update", package);
+        rename_fixture(user / "demo-update", package);
         write_file(package / "model.onnx", "xeights-multi");
 
         if (stage == "complete") {
@@ -775,7 +795,7 @@ int main(int argc, char **argv) {
         const auto staging = tts_host::stage_catalogue_entry(multi, user, config, network.fetcher(), nullptr);
         std::filesystem::remove(staging / "model.json");
         std::filesystem::remove(staging / "voices" / "af.bin");
-        std::filesystem::rename(package / "voices" / "af.bin", staging / "voices" / "af.bin");
+        rename_fixture(package / "voices" / "af.bin", staging / "voices" / "af.bin");
         const auto journal = user / ".demo-update.repairing";
         write_file(journal, stage == "moving" ? "repair\nrenamed-demo" : "repair");
 

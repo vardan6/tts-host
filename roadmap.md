@@ -87,7 +87,7 @@ October 19 artifacts are stale.
 - [x] **Plan review and triage, HITL:** all alpha planning reviewed on `main`;
   [six findings](docs/reviews/plan-review-2026-11-03-first-public-alpha.md) accepted and reconciled into the plan below — see
   [triage](docs/reviews/plan-review-2026-11-03-first-public-alpha.md#triage--2026-11-03).
-- [ ] **AFK — Make the Windows test suite pass on a developer machine:** the
+- [x] **AFK — Make the Windows test suite pass on a developer machine:** the
   release gate requires every Windows CTest test to pass. Known Windows
   failure: `cli_language_selection` matches "fallback" anywhere in the
   rejected-load output, including the build folder's name. Close on a fresh
@@ -97,7 +97,9 @@ October 19 artifacts are stale.
   `tts_host_tray_not_implemented_on_this_platform`, a non-Windows test, so it
   is fixed here only as Linux test maintenance. Both test fixes are in and
   pass on Linux; only the clean-checkout Windows run remains (`release.ps1`
-  step 3 performs it). Fix the tests, not the gate —
+  step 3 performs it). The first clean runs found fixtures hidden by
+  `.gitignore`, now tracked, and a scanner lock on fresh files in `%TEMP%`
+  that the model update fixtures now retry; 55/55. Fix the tests, not the gate —
   see [finding 5](docs/reviews/plan-review-2026-11-03-first-public-alpha.md#5--identify-test-failures-by-platform-and-actual-test-name).
 - [x] **AFK — Ship the release defaults:** in `config.example.json` set
   `selection.capturePolicy` to `automatic` and `languageDefaults.en` to

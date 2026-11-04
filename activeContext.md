@@ -1,18 +1,18 @@
 # Active Context
 
-- Mode: release preparation on `release-prep/v0.1.0-alpha.1`; release
-  variant, script, defaults, extension in the release tree, and the
-  Settings version title are committed (2026-11-03).
+- Mode: release preparation on `release-prep/v0.1.0-alpha.1`; all alpha
+  implementation slices committed (2026-11-03); the Windows test gate passes (2026-11-04).
 - Phase: "First public alpha (Windows)" in `roadmap.md`, a draft
   standard-only `v0.1.0-alpha.1`.
-- Next atomic step: Windows CTest run on a clean checkout of `HEAD`
-  (temporary worktree, separate build folder).
-- Next after that: PR → `main`, then the HITL dry run.
+- Next atomic step: `/cross-review` of `main..HEAD` in another provider's
+  session (the user launches it), then `/review-triage`, PR → `main`, then
+  the HITL dry run.
 - Verification: Linux suite passes except `config_persistence` and
-  `unicode_cli_paths`, which fail only on the user-edited example and pass on
-  the committed one. Windows standard variant, with `extension/`, built and
-  spoke from its extracted zip (`build-release/standard-check`, log in `logs/`). Windows
-  CTest, the NVIDIA variant, and `release.ps1` itself are not yet run.
+  `unicode_cli_paths`, which fail only on the user-edited example. Windows
+  standard variant, with `extension/`, built and spoke from its extracted
+  zip; Settings title shows the version. Windows CTest in the clean worktree
+  (`62de181` plus the `tts_host_model_update` fixture fix): 55/55; that test
+  alone 40/40 passing, from 0/40 before the fix.
 - Blockers/environment: a release run needs a clean tree, Windows VS 2022,
   Inno Setup 6, and authenticated `gh`. Never `git add -A` or `commit -a`
   while the user's `config.example.json` edits are in the working copy: that
