@@ -403,7 +403,7 @@ worktree, writes and commits the version there, runs every test, builds each
 variant in `-Variants` (`standard`, `nvidia`, or both; standard is always
 required), and refuses any artifact of 2 GiB or more. `-DryRun` stops there,
 with the artifacts in `build-release/dist/dry-run/` and this checkout
-untouched; rerun it as often as needed. A real run then tags the commit,
+untouched; rerun it as often as needed, from any branch with a clean tree. A real run then tags the commit,
 pushes the commit and tag together, and creates a draft GitHub pre-release with
 the artifacts. You test the draft and publish it. The procedure and its
 conditions are in the script's comments.

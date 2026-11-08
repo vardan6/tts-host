@@ -28,3 +28,6 @@
 - Discarded as noise: Linux `config_persistence` and `unicode_cli_paths`
   failures come from the user-edited example (both pass on the committed
   one); personal Kokoro selection does not establish shipping defaults.
+  `tts_host_model_update` is not a leaked handle: a scanner locks fresh
+  files in `%TEMP%` (probe: `%TEMP%\tts-rename-probe.ps1`). MSVC's MSB8029
+  warning about building under `%TEMP%` is harmless for the gate.

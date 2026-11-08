@@ -1160,7 +1160,9 @@ check and would re-download the models on every run. `-Variants` takes
 release, and an omitted `nvidia` is not a failure. Its own comments own the
 procedure:
 1. Refuse to run unless the tree is clean and on `main`, matching `origin`,
-   and the tag `v<version>` exists neither locally nor on `origin`.
+   and the tag `v<version>` exists neither locally nor on `origin`. `-DryRun`
+   skips the `main` and `origin` checks, so a release branch is rehearsed
+   before it merges.
 2. Create a temporary detached worktree of that commit outside the source
    tree. Write the version there and commit it; when the version is already
    written, that commit is the release commit and no empty commit is made.
