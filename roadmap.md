@@ -136,8 +136,9 @@ October 19 artifacts are stale.
   conditions live in the script's comments. Add a hand-written alpha.1 notes
   file covering installation, SmartScreen, the variants, the extension, and
   GitHub Issues, plus a README "Package a release" update. Script, notes
-  draft, and README are written; the script is parse-checked only, first run
-  is the HITL dry run — see
+  draft, and README are written. `-DryRun` rehearses the release branch before
+  merge; the dry run on this branch must pass before `/cross-review` and the
+  PR — see
   [versions and releases](docs/design/architecture.md#versions-and-releases).
 - [ ] **HITL — Release `v0.1.0-alpha.1`:** run
   `scripts/release.ps1 -Version 0.1.0-alpha.1 -Variants standard -DryRun`,
