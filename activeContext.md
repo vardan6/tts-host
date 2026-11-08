@@ -7,12 +7,11 @@
   triaged and all three findings are fixed (2026-11-08): no repair download
   without the runner, no fetch on a dry run, and the
   `tts_host_release_script` Windows CTest.
-- Next atomic step: dry run 4 of the branch
-  (`scripts/release.ps1 -Version 0.1.0-alpha.1 -Variants standard -DryRun`,
-  user's `config.example.json` stashed), then PR → `main`.
+- Next atomic step: PR `release-prep/v0.1.0-alpha.1` → `main`.
 - Next after: real standard-only alpha run from `main`, isolated Windows
   acceptance, user publication.
-- Verification: Linux model-list and model-update tests pass; the new
+- Verification: dry run 4 (`8edb990`) passed: Windows CTest 56/56 including
+  `tts_host_release_script`, setup exe and portable zip built. Linux model-list and model-update tests pass; the new
   model-list case fails with the fix reverted. `tests/release_script_tests.ps1`
   passes on Windows and fails its dry-run checks with the old fetch restored.
   Linux `local_api` fails only because WSL loopback connects are refused right
