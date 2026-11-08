@@ -25,11 +25,14 @@ if (-not $BuildDir) { $BuildDir = "build-release\$Variant" }
 $models = if ($Variant -eq "nvidia") { @("kokoro-en-v1", "qwen3-tts-1.7b") } else { @("kokoro-en-v1") }
 
 # tts-host.exe is a GUI-subsystem program: PowerShell waits for it, and sets
-# $LASTEXITCODE, only when its output is piped.
+# $LASTEXITCODE, only when its output is piped. Exit codes decide failure:
+# Windows PowerShell turns stderr into a terminating error under "Stop" once
+# the script's output is redirected.
 function Invoke-Checked {
     param([string]$File, [string[]]$Arguments, [switch]$Quiet)
-    if ($Quiet) { & $File @Arguments | Select-Object -Last 2 | Out-Host }
-    else { & $File @Arguments | Out-Host }
+    $ErrorActionPreference = "Continue"
+    if ($Quiet) { & $File @Arguments 2>&1 | ForEach-Object { "$_" } | Select-Object -Last 2 | Out-Host }
+    else { & $File @Arguments 2>&1 | ForEach-Object { "$_" } | Out-Host }
     if ($LASTEXITCODE -ne 0) { throw "$File failed with exit code $LASTEXITCODE" }
 }
 
@@ -65,8 +68,10 @@ foreach ($model in $models) {
     # an earlier release's stage, or a damaged file, is downloaded again.
     $staged = Join-Path $stageModels $model
     if (Test-Path -LiteralPath (Join-Path $staged "model.json")) {
-        & $host_exe --headless --config $stageConfig --data-dir $stagePath --verify-model $model |
-            Select-Object -Last 3 | Out-Host
+        $ErrorActionPreference = "Continue"
+        & $host_exe --headless --config $stageConfig --data-dir $stagePath --verify-model $model 2>&1 |
+            ForEach-Object { "$_" } | Select-Object -Last 3 | Out-Host
+        $ErrorActionPreference = "Stop"
         if ($LASTEXITCODE -ne 0) {
             Write-Host "Restaging ${model}: the staged copy differs from the catalogue"
             Remove-Item -Recurse -Force -LiteralPath $staged

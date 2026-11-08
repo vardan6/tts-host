@@ -43,13 +43,22 @@ $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
 
+# Exit codes decide failure. Windows PowerShell turns a native command's stderr
+# into a terminating error under "Stop" once the script's output is redirected,
+# and git, cmake, and MSBuild report progress there.
+function Invoke-Native {
+    param([string]$File, [string[]]$Arguments)
+    $ErrorActionPreference = "Continue"
+    & $File @Arguments 2>&1 | ForEach-Object { "$_" } | Out-Host
+}
 function Invoke-Checked {
     param([string]$File, [string[]]$Arguments)
-    & $File @Arguments | Out-Host
+    Invoke-Native $File $Arguments
     if ($LASTEXITCODE -ne 0) { throw "$File $($Arguments -join ' ') failed with exit code $LASTEXITCODE" }
 }
 function Get-GitOutput {
     param([string[]]$Arguments)
+    $ErrorActionPreference = "Continue"
     $output = & git @Arguments
     if ($LASTEXITCODE -ne 0) { throw "git $($Arguments -join ' ') failed with exit code $LASTEXITCODE" }
     return ($output -join "`n").Trim()
@@ -134,8 +143,8 @@ try {
     $artifacts = @($artifacts | ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination $dist -PassThru })
 } finally {
     Set-Location $root
-    if (Test-Path -LiteralPath $work) { & git worktree remove --force $work }
-    & git worktree prune
+    if (Test-Path -LiteralPath $work) { Invoke-Native git @("worktree", "remove", "--force", $work) }
+    Invoke-Native git @("worktree", "prune")
 }
 
 # 6. The rehearsal ends before anything is tagged or pushed.
@@ -147,9 +156,9 @@ if ($DryRun) {
 
 # 7. Tag the built commit; publish it and the tag together or not at all.
 Invoke-Checked git @("tag", "-a", $tag, $commit, "-m", "TTS Host $Version")
-& git push --atomic origin "${commit}:refs/heads/main" "refs/tags/$tag" | Out-Host
+Invoke-Native git @("push", "--atomic", "origin", "${commit}:refs/heads/main", "refs/tags/$tag")
 if ($LASTEXITCODE -ne 0) {
-    & git tag -d $tag | Out-Host
+    Invoke-Native git @("tag", "-d", $tag)
     throw "Push of $tag was rejected; the local tag was deleted and origin is unchanged"
 }
 Invoke-Checked git @("merge", "--ff-only", "--quiet", $commit)
@@ -158,7 +167,7 @@ Invoke-Checked git @("merge", "--ff-only", "--quiet", $commit)
 $create = @("release", "create", $tag, "--draft", "--verify-tag", "--title", "TTS Host $Version", "--notes-file", $notes)
 if ($prerelease) { $create += "--prerelease" }
 $create += @($artifacts | ForEach-Object { $_.FullName })
-& gh @create | Out-Host
+Invoke-Native gh $create
 if ($LASTEXITCODE -ne 0) {
     Write-Host "Tag $tag is pushed, but the draft was not completed. Finish it with:"
     Write-Host "  gh $($create -join ' ')"
