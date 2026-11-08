@@ -46,10 +46,12 @@ Set-Location $root
 # Exit codes decide failure. Windows PowerShell turns a native command's stderr
 # into a terminating error under "Stop" once the script's output is redirected,
 # and git, cmake, and MSBuild report progress there.
+# A stderr line arrives as an ErrorRecord whose TargetObject is the line itself.
+filter Format-NativeLine { if ($_ -is [System.Management.Automation.ErrorRecord]) { "$($_.TargetObject)" } else { "$_" } }
 function Invoke-Native {
     param([string]$File, [string[]]$Arguments)
     $ErrorActionPreference = "Continue"
-    & $File @Arguments 2>&1 | ForEach-Object { "$_" } | Out-Host
+    & $File @Arguments 2>&1 | Format-NativeLine | Out-Host
 }
 function Invoke-Checked {
     param([string]$File, [string[]]$Arguments)

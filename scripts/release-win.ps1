@@ -28,11 +28,13 @@ $models = if ($Variant -eq "nvidia") { @("kokoro-en-v1", "qwen3-tts-1.7b") } els
 # $LASTEXITCODE, only when its output is piped. Exit codes decide failure:
 # Windows PowerShell turns stderr into a terminating error under "Stop" once
 # the script's output is redirected.
+# A stderr line arrives as an ErrorRecord whose TargetObject is the line itself.
+filter Format-NativeLine { if ($_ -is [System.Management.Automation.ErrorRecord]) { "$($_.TargetObject)" } else { "$_" } }
 function Invoke-Checked {
     param([string]$File, [string[]]$Arguments, [switch]$Quiet)
     $ErrorActionPreference = "Continue"
-    if ($Quiet) { & $File @Arguments 2>&1 | ForEach-Object { "$_" } | Select-Object -Last 2 | Out-Host }
-    else { & $File @Arguments 2>&1 | ForEach-Object { "$_" } | Out-Host }
+    if ($Quiet) { & $File @Arguments 2>&1 | Format-NativeLine | Select-Object -Last 2 | Out-Host }
+    else { & $File @Arguments 2>&1 | Format-NativeLine | Out-Host }
     if ($LASTEXITCODE -ne 0) { throw "$File failed with exit code $LASTEXITCODE" }
 }
 
@@ -70,7 +72,7 @@ foreach ($model in $models) {
     if (Test-Path -LiteralPath (Join-Path $staged "model.json")) {
         $ErrorActionPreference = "Continue"
         & $host_exe --headless --config $stageConfig --data-dir $stagePath --verify-model $model 2>&1 |
-            ForEach-Object { "$_" } | Select-Object -Last 3 | Out-Host
+            Format-NativeLine | Select-Object -Last 3 | Out-Host
         $ErrorActionPreference = "Stop"
         if ($LASTEXITCODE -ne 0) {
             Write-Host "Restaging ${model}: the staged copy differs from the catalogue"
