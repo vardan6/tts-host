@@ -49,8 +49,9 @@ std::vector<ModelAction> row_actions(const ModelListRow &row, const ModelRegistr
   const bool runnable = !row.runner_absent;
   const auto absent_reason = row.runner_absent ? row.unavailable_reason : std::nullopt;
   // Verify compares against the catalogue revision; an older one is updated instead.
-  const bool verifiable =
-      maintained != nullptr && row.in_catalogue && package_status(*maintained) == PackageStatus::current;
+  // Its repair downloads, so it too needs the runner.
+  const bool verifiable = runnable && maintained != nullptr && row.in_catalogue &&
+                          package_status(*maintained) == PackageStatus::current;
   return {
       {ModelActionKind::load, runnable && installed != nullptr, folder(installed), absent_reason, false},
       {ModelActionKind::download, runnable && !row.installed && !row.damaged && row.in_catalogue, {},
@@ -61,7 +62,7 @@ std::vector<ModelAction> row_actions(const ModelListRow &row, const ModelRegistr
       {ModelActionKind::remove_superseded, superseded != nullptr, folder(superseded), std::nullopt, true},
       {ModelActionKind::remove, maintained != nullptr && !bundled, folder(maintained),
        bundled ? std::optional<std::string>("Bundled with the app") : std::nullopt, true},
-      {ModelActionKind::verify, verifiable, folder(maintained), std::nullopt, true},
+      {ModelActionKind::verify, verifiable, folder(maintained), absent_reason, true},
       // A row with only a kept previous version opens that copy.
       {ModelActionKind::open_folder, maintained != nullptr || previous != nullptr,
        maintained != nullptr ? folder(maintained) : folder(previous), std::nullopt, false},

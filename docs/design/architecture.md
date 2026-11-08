@@ -694,8 +694,9 @@ re-download is Remove followed by Download, and damage is handled by Repair.
   see a row; the eligibility and those throws call the same predicates, so the
   menu and the operation cannot disagree. The same module owns the
   runner-absent rule ([ADR 0011](../adr/0011-standard-and-nvidia-release-variants.md)):
-  a row whose engine has no runner folder offers no Download, Update, or Load,
-  and its reason says the model needs the NVIDIA variant. That differs from an
+  a row whose engine has no runner folder offers no Download, Update, Load, or
+  Verify and repair… (its repair downloads), and its reason says the model
+  needs the NVIDIA variant. That differs from an
   installed runner that rejects the hardware, which keeps the existing
   unavailable-with-reason state.
 - **Unified model list:** the Models page is one list with a row per

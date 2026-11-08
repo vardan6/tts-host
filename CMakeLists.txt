@@ -1319,6 +1319,14 @@ if(BUILD_TESTING)
         ${CMAKE_SOURCE_DIR}/tests/extension_playback_tests.js)
   endif()
 
+  # scripts/release.ps1 against a temporary bare remote with stubbed builds.
+  if(WIN32)
+    add_test(NAME tts_host_release_script
+      COMMAND powershell -NoProfile -ExecutionPolicy Bypass
+        -File ${CMAKE_SOURCE_DIR}/tests/release_script_tests.ps1)
+    set_tests_properties(tts_host_release_script PROPERTIES TIMEOUT 300)
+  endif()
+
   add_executable(
     tts-host-kokoro-phoneme-mapping-tests
     src/kokoro_phoneme_mapping.cpp

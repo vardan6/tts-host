@@ -339,6 +339,17 @@ void test_runner_absent_rows_offer_no_run_or_fetch() {
               tts_host::model_action(installed, ModelActionKind::open_folder).applies,
           "an installed package without its runner can still be removed and opened");
 
+  // Repair downloads the damaged files, so a damaged current copy without its
+  // runner is not offered Verify and repair.
+  ModelRegistryScan damaged_scan;
+  damaged_scan.damaged_packages.push_back(package(id, "/user/" + id, false, tts_host::catalogue_revision_for(id)));
+  const auto damaged = row_for(tts_host::build_model_list(damaged_scan, "", {}, fake_size, no_stub), id);
+  const auto &verify = tts_host::model_action(damaged, ModelActionKind::verify);
+  require(damaged.runner_absent && !verify.applies && verify.reason == damaged.unavailable_reason,
+          "a damaged current copy without its runner offers no repair download and says why");
+  require(tts_host::model_action(damaged, ModelActionKind::remove).applies,
+          "a damaged copy without its runner can still be removed");
+
   const auto every_runner = [](const std::string &) { return true; };
   const auto rejected =
       row_for(tts_host::build_model_list(scan, "", {{id, "no usable GPU"}}, fake_size, every_runner), id);

@@ -140,6 +140,27 @@ October 19 artifacts are stale.
   merge; dry run 3 on this branch passed (`1e09659`, 55/55 CTest, setup and
   portable zip built) — see
   [versions and releases](docs/design/architecture.md#versions-and-releases).
+- [x] **Cross-provider release-preparation review:** `main..48bcf32`
+  reviewed in Codex/OpenAI after Opus 5.5/Anthropic implementation; two defect
+  candidates and one enhancement recorded in the
+  [findings](docs/reviews/code-review-2026-11-08-release-preparation.md).
+- [x] **Review triage:** all three
+  [release-preparation findings](docs/reviews/code-review-2026-11-08-release-preparation.md)
+  accepted and fixed (2026-11-08).
+- [x] **AFK — No repair download without the runner:** Verify and repair…
+  requires the runner, like Download and Update; add a damaged
+  current-revision runner-absent case to the model-list tests — see
+  [finding 1](docs/reviews/code-review-2026-11-08-release-preparation.md#1--keep-verification-separate-from-runner-absent-repair-downloads).
+- [x] **AFK — Dry run fetches nothing:** `release.ps1` runs `git fetch origin`
+  only on a real run — see
+  [finding 2](docs/reviews/code-review-2026-11-08-release-preparation.md#2--avoid-fetching-into-caller-refs-during-rehearsal).
+- [x] **AFK — Release script failure-path tests:** a temporary bare remote and
+  stubbed build, packaging, and `gh` commands; assert a rejected atomic push
+  leaves origin unchanged and deletes the local tag, success tags the built
+  commit and fast-forwards `main`, a draft failure keeps the artifacts and
+  prints recovery, and a dry run leaves every ref unchanged; Windows CTest
+  `tts_host_release_script` — see
+  [finding 3](docs/reviews/code-review-2026-11-08-release-preparation.md#3--exercise-publication-recovery-without-making-a-real-release).
 - [ ] **HITL — Release `v0.1.0-alpha.1`:** run
   `scripts/release.ps1 -Version 0.1.0-alpha.1 -Variants standard -DryRun`,
   then the same without `-DryRun`. On an isolated Windows machine (not this

@@ -9,7 +9,8 @@
 # 1. Refuse unless the tree is clean, on main, main matches origin/main, the
 #    tag v<version> exists neither locally nor on origin, and the notes file
 #    docs/releases/v<version>.md exists. -DryRun skips the main and origin/main
-#    checks, so a release branch is rehearsed before it merges.
+#    checks and the fetch, so a release branch is rehearsed before it merges
+#    and no ref moves.
 # 2. Create a temporary detached worktree of that commit outside the source
 #    tree. Write the version there and commit it; when the version is already
 #    written, that commit is the release commit and no empty commit is made.
@@ -79,7 +80,8 @@ if ($Variants -notcontains "standard") { throw "Every release ships the standard
 if (Get-GitOutput @("status", "--porcelain")) { throw "The tree is not clean; commit or set aside every change first" }
 $branch = Get-GitOutput @("rev-parse", "--abbrev-ref", "HEAD")
 if (-not $DryRun -and $branch -ne "main") { throw "Releases are made from main, not '$branch'" }
-Invoke-Checked git @("fetch", "--quiet", "origin")
+# A fetch moves remote-tracking refs and follows tags, so a dry run skips it.
+if (-not $DryRun) { Invoke-Checked git @("fetch", "--quiet", "origin") }
 $base = Get-GitOutput @("rev-parse", "HEAD")
 if (-not $DryRun -and $base -ne (Get-GitOutput @("rev-parse", "origin/main"))) { throw "main does not match origin/main" }
 & git rev-parse --quiet --verify "refs/tags/$tag" *> $null
