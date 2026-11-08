@@ -12,12 +12,10 @@
 - Verification: dry run 3 (`1e09659`) passed end to end: release commit,
   Windows CTest 55/55, setup exe and portable zip in
   `build-release/dist/dry-run/`; no tag or ref kept.
-  Linux suite passes except `config_persistence` and `unicode_cli_paths`, which fail only on the user-edited example. Windows
-  standard variant, with `extension/`, built and spoke from its extracted
-  zip; Settings title shows the version. Windows CTest in the clean worktree
-  (`62de181` plus the `tts_host_model_update` fixture fix): 55/55; that test
-  alone 40/40 passing, from 0/40 before the fix.
-- Blockers/environment: a release run needs a clean tree, Windows VS 2022,
+  Linux suite passes except `config_persistence` and `unicode_cli_paths`,
+  which fail only on the user-edited example.
+- Blockers/environment: a release run needs a clean tree (stash the user's
+  `config.example.json` edits before the real run, pop after), Windows VS 2022,
   Inno Setup 6, and authenticated `gh`. Never `git add -A` or `commit -a`
   while the user's `config.example.json` edits are in the working copy: that
   commits them over the release defaults. Windows builds run from WSL through
@@ -26,7 +24,9 @@
   overwrite its locked exe. Developer launches use `config.development.json`
   with startup disabled; follow `PROJECT.md`. Linux build: `build-linux/`;
   model listing: `--headless`.
-- Open questions: none for the alpha; deferred product choices remain in
+- Open questions: whether `.gitignore` should also ignore
+  `config.example.json.last-valid` (the app's save backup; one was found
+  untracked and removed). Otherwise none for the alpha; deferred product choices remain in
   `roadmap.md`. Linux Qwen runner-folder loading is unverified; previous-only
   restoration is undesigned.
 - Discarded as noise: Linux `config_persistence` and `unicode_cli_paths`
