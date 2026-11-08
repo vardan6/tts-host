@@ -2,20 +2,16 @@
 
 - Mode: release preparation on `release-prep/v0.1.0-alpha.1`; all alpha
   implementation slices committed (2026-11-03); the Windows test gate passes
-  (2026-11-04); release-script dry runs under way (2026-11-08).
+  (2026-11-04); standard dry run passed (2026-11-08).
 - Phase: "First public alpha (Windows)" in `roadmap.md`, a draft
   standard-only `v0.1.0-alpha.1`.
-- Next atomic step: the user gives Windows `git.exe` an identity (it has none;
-  WSL's is `vardan6`), then rerun from a clean tree:
-  `scripts/release.ps1 -Version 0.1.0-alpha.1 -Variants standard -DryRun`
-  (logged; runs from WSL fail on bugs a console run hides). Fix and commit
-  what it finds until it passes.
-- Next after: `git stash pop` the user's `config.example.json` edits
-  (stash "user config.example.json edits (release dry run)"); `/cross-review`
-  of `main..HEAD` in another provider's session, `/review-triage`, PR → `main`,
-  then the real run.
-- Verification: dry run 2 (`dfc5d56`) passed preconditions and the worktree,
-  stopped at the release commit; build, CTest, packaging not yet reached.
+- Next atomic step: `/cross-review` of `main..HEAD` in another provider's
+  session, then `/review-triage`.
+- Next after: PR → `main`, then the real run
+  `scripts/release.ps1 -Version 0.1.0-alpha.1 -Variants standard` from `main`.
+- Verification: dry run 3 (`1e09659`) passed end to end: release commit,
+  Windows CTest 55/55, setup exe and portable zip in
+  `build-release/dist/dry-run/`; no tag or ref kept.
   Linux suite passes except `config_persistence` and `unicode_cli_paths`, which fail only on the user-edited example. Windows
   standard variant, with `extension/`, built and spoke from its extracted
   zip; Settings title shows the version. Windows CTest in the clean worktree
@@ -38,6 +34,4 @@
   one); personal Kokoro selection does not establish shipping defaults.
   `tts_host_model_update` is not a leaked handle: a scanner locks fresh
   files in `%TEMP%` (probe: `%TEMP%\tts-rename-probe.ps1`). MSVC's MSB8029
-  warning about building under `%TEMP%` is harmless for the gate. A dry-run
-  "Author identity unknown" is the missing Windows git identity, not the
-  script.
+  warning about building under `%TEMP%` is harmless for the gate.

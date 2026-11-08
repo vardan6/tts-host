@@ -129,7 +129,7 @@ October 19 artifacts are stale.
   see [ADR 0011](docs/adr/0011-standard-and-nvidia-release-variants.md),
   [distribution design](docs/design/architecture.md#distribution), and
   [action eligibility](docs/design/architecture.md#model-removal-repair-and-maintenance-actions).
-- [ ] **AFK — Release script:** `scripts/release.ps1 -Version <v> [-Variants <list>] [-DryRun]`
+- [x] **AFK — Release script:** `scripts/release.ps1 -Version <v> [-Variants <list>] [-DryRun]`
   following the procedure in the design: build in a temporary detached
   worktree, `-DryRun` leaves the caller's refs and tags untouched, refuse an
   existing tag, one atomic push of the commit and tag. The procedure and its
@@ -137,8 +137,8 @@ October 19 artifacts are stale.
   file covering installation, SmartScreen, the variants, the extension, and
   GitHub Issues, plus a README "Package a release" update. Script, notes
   draft, and README are written. `-DryRun` rehearses the release branch before
-  merge; the dry run on this branch must pass before `/cross-review` and the
-  PR — see
+  merge; dry run 3 on this branch passed (`1e09659`, 55/55 CTest, setup and
+  portable zip built) — see
   [versions and releases](docs/design/architecture.md#versions-and-releases).
 - [ ] **HITL — Release `v0.1.0-alpha.1`:** run
   `scripts/release.ps1 -Version 0.1.0-alpha.1 -Variants standard -DryRun`,
