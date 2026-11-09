@@ -5,7 +5,7 @@ project(tts_host VERSION 0.1.0 LANGUAGES CXX)
 # The release version (docs/design/architecture.md#versions-and-releases):
 # project(VERSION) holds the numbers, this the SemVer suffix ("alpha.1"), empty
 # for a stable release. scripts/release.ps1 writes both.
-set(TTS_HOST_VERSION_PRERELEASE "" CACHE STRING "SemVer pre-release suffix, empty for a stable release")
+set(TTS_HOST_VERSION_PRERELEASE "alpha.1" CACHE STRING "SemVer pre-release suffix, empty for a stable release")
 set(TTS_HOST_VERSION "${PROJECT_VERSION}")
 if(TTS_HOST_VERSION_PRERELEASE)
   set(TTS_HOST_VERSION "${PROJECT_VERSION}-${TTS_HOST_VERSION_PRERELEASE}")
