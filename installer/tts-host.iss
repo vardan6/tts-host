@@ -5,7 +5,11 @@
 ; live in %LOCALAPPDATA%\TTS Host\models and survive upgrades and uninstall.
 ; scripts/release-win.ps1 compiles it:
 ;   ISCC /DSourceDir=<release tree> /DAppVersion=<x.y.z> /DOutputDir=<dir>
-;        /DLaunchOnLoginDefault=<0|1> installer\tts-host.iss
+;        /DNumericVersion=<x.y.z.0> /DOutputBaseFilename=<artifact name>
+;        /DLaunchOnLoginDefault=<0|1>
+;        installer\tts-host.iss
+; Both release variants (ADR 0011) share this AppId, so either installer
+; upgrades the other in place.
 
 #ifndef SourceDir
   #error Define SourceDir as the installed release tree
@@ -16,6 +20,13 @@
 #ifndef OutputDir
   #define OutputDir "."
 #endif
+; Windows file versions take four numbers: X.Y.Z.0 of AppVersion.
+#ifndef NumericVersion
+  #define NumericVersion "0.0.0.0"
+#endif
+#ifndef OutputBaseFilename
+  #define OutputBaseFilename "tts-host-" + AppVersion + "-setup"
+#endif
 ; config.json's startup.launchOnLogin, the pre-ticked default (Login startup).
 #ifndef LaunchOnLoginDefault
   #define LaunchOnLoginDefault 1
@@ -25,6 +36,7 @@
 AppId={{6F1D3A52-8C4B-4E57-9B0E-2D7A41C9E8B3}
 AppName=TTS Host
 AppVersion={#AppVersion}
+VersionInfoVersion={#NumericVersion}
 AppPublisher=TTS Host
 DefaultDirName={userpf}\TTS Host
 DefaultGroupName=TTS Host
@@ -33,7 +45,7 @@ PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 OutputDir={#OutputDir}
-OutputBaseFilename=tts-host-{#AppVersion}-setup
+OutputBaseFilename={#OutputBaseFilename}
 SetupIconFile=..\resources\tts-host.ico
 UninstallDisplayIcon={app}\tts-host.exe
 LicenseFile={#SourceDir}\licenses\TTS-Host-LICENSE.txt
@@ -57,6 +69,7 @@ Name: startup; Description: "Start TTS Host when I sign in to Windows"; Flags: u
 Type: filesandordirs; Name: "{app}\runners"
 Type: filesandordirs; Name: "{app}\models"
 Type: filesandordirs; Name: "{app}\schemas"
+Type: filesandordirs; Name: "{app}\extension"
 Type: filesandordirs; Name: "{app}\licenses"
 
 [Files]

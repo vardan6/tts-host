@@ -45,19 +45,24 @@ std::vector<ModelAction> row_actions(const ModelListRow &row, const ModelRegistr
     return package != nullptr ? package->package_path : std::filesystem::path();
   };
   const bool bundled = maintained != nullptr && maintained->bundled;
+  // Without its runner a model can be neither run nor fetched (ADR 0011).
+  const bool runnable = !row.runner_absent;
+  const auto absent_reason = row.runner_absent ? row.unavailable_reason : std::nullopt;
   // Verify compares against the catalogue revision; an older one is updated instead.
-  const bool verifiable =
-      maintained != nullptr && row.in_catalogue && package_status(*maintained) == PackageStatus::current;
+  // Its repair downloads, so it too needs the runner.
+  const bool verifiable = runnable && maintained != nullptr && row.in_catalogue &&
+                          package_status(*maintained) == PackageStatus::current;
   return {
-      {ModelActionKind::load, installed != nullptr, folder(installed), std::nullopt, false},
-      {ModelActionKind::download, !row.installed && !row.damaged && row.in_catalogue, {}, std::nullopt, true},
-      {ModelActionKind::update, row.update_available, folder(maintained), std::nullopt, true},
+      {ModelActionKind::load, runnable && installed != nullptr, folder(installed), absent_reason, false},
+      {ModelActionKind::download, runnable && !row.installed && !row.damaged && row.in_catalogue, {},
+       absent_reason, true},
+      {ModelActionKind::update, runnable && row.update_available, folder(maintained), absent_reason, true},
       {ModelActionKind::revert, revert_source(row.id, scan) != nullptr, folder(installed), std::nullopt, true},
       {ModelActionKind::delete_previous, previous != nullptr, folder(previous), std::nullopt, true},
       {ModelActionKind::remove_superseded, superseded != nullptr, folder(superseded), std::nullopt, true},
       {ModelActionKind::remove, maintained != nullptr && !bundled, folder(maintained),
        bundled ? std::optional<std::string>("Bundled with the app") : std::nullopt, true},
-      {ModelActionKind::verify, verifiable, folder(maintained), std::nullopt, true},
+      {ModelActionKind::verify, verifiable, folder(maintained), absent_reason, true},
       // A row with only a kept previous version opens that copy.
       {ModelActionKind::open_folder, maintained != nullptr || previous != nullptr,
        maintained != nullptr ? folder(maintained) : folder(previous), std::nullopt, false},
@@ -66,15 +71,25 @@ std::vector<ModelAction> row_actions(const ModelListRow &row, const ModelRegistr
 
 }  // namespace
 
+std::string describe_runner_absent(const std::string &engine) {
+  if (engine == "qwen3-gguf") return "Needs the NVIDIA variant of TTS Host";
+  return "This installation has no runner for engine " + engine;
+}
+
 std::vector<ModelListRow> build_model_list(const ModelRegistryScan &scan, const std::string &loaded_id,
                                            const std::map<std::string, std::string> &load_failures,
-                                           const FolderSize &folder_size) {
+                                           const FolderSize &folder_size,
+                                           const RunnerAvailable &runner_available) {
   std::vector<ModelListRow> rows;
-  const auto finish = [&](ModelListRow &row) {
+  const auto finish = [&](ModelListRow &row, const std::string &engine) {
     row.in_catalogue = catalogue_entry_for(row.id) != nullptr;
     row.loaded = !loaded_id.empty() && row.id == loaded_id;
-    if (const auto failure = load_failures.find(row.id); failure != load_failures.end())
+    if (runner_available && !engine.empty() && !runner_available(engine)) {
+      row.runner_absent = true;
+      row.unavailable_reason = describe_runner_absent(engine);
+    } else if (const auto failure = load_failures.find(row.id); failure != load_failures.end()) {
       row.unavailable_reason = failure->second;
+    }
     row.actions = row_actions(row, scan);
     rows.push_back(std::move(row));
   };
@@ -89,7 +104,7 @@ std::vector<ModelListRow> build_model_list(const ModelRegistryScan &scan, const 
     row.update_available = status == PackageStatus::update_available;
     row.size_bytes = folder_size(package.package_path);
     row.installed = true;
-    finish(row);
+    finish(row, package.engine);
   }
   for (const auto &package : scan.damaged_packages) {
     if (has_row(rows, package.id)) continue;
@@ -102,7 +117,7 @@ std::vector<ModelListRow> build_model_list(const ModelRegistryScan &scan, const 
     row.update_available = package_status(package) == PackageStatus::update_available;
     row.size_bytes = folder_size(package.package_path);
     row.damaged = true;
-    finish(row);
+    finish(row, package.engine);
   }
   for (const auto &entry : model_catalogue()) {
     if (has_row(rows, entry.id)) continue;
@@ -112,7 +127,7 @@ std::vector<ModelListRow> build_model_list(const ModelRegistryScan &scan, const 
     row.source = "catalogue";
     row.status = "not installed";
     row.size_bytes = catalogue_entry_size_bytes(entry);
-    finish(row);
+    finish(row, entry.engine);
   }
   // A Remove… that kept the previous version leaves nothing installed; the
   // row keeps that copy reachable for Delete previous and Open folder.
@@ -130,7 +145,7 @@ std::vector<ModelListRow> build_model_list(const ModelRegistryScan &scan, const 
     row.source = "per-user";
     row.status = "previous version only";
     row.size_bytes = folder_size(package.package_path);
-    finish(row);
+    finish(row, package.engine);
   }
   return rows;
 }

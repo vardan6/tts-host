@@ -128,7 +128,7 @@ struct ModelTaskCancelled : std::runtime_error {
 struct SettingsState {
   SettingsState(ConfigDocument &config, const std::filesystem::path &runner_directory,
                 ModelSessionManager *shared_sessions)
-      : document(config), saved_value(config.value),
+      : document(config), saved_value(config.value), runner_directory(runner_directory),
         owned_sessions(shared_sessions ? nullptr : std::make_unique<ModelSessionManager>(runner_directory)),
         sessions(shared_sessions ? *shared_sessions : *owned_sessions) {}
   // A tray quit can end the window mid-task: stop the worker before the state
@@ -142,6 +142,8 @@ struct SettingsState {
   std::function<void(const ConfigDocument &)> publish_config;
   std::function<void(bool)> probe_hotkey;
   nlohmann::json saved_value;
+  // Where runners/<engine>/ lives; a row whose runner is absent cannot run.
+  std::filesystem::path runner_directory;
   std::unique_ptr<ModelSessionManager> owned_sessions;
   ModelSessionManager &sessions;
   // The unified model list's rows in display order.
@@ -751,7 +753,10 @@ void refresh_model_list(SettingsState &state, HWND window) {
   state.shown_load_failures = state.sessions.load_failures();
   state.shown_loaded_id = status.loaded ? status.model_id : std::string();
   state.model_rows =
-      build_model_list(state.last_scan, state.shown_loaded_id, state.shown_load_failures, folder_size_on_disk);
+      build_model_list(state.last_scan, state.shown_loaded_id, state.shown_load_failures, folder_size_on_disk,
+                       [&state](const std::string &engine) {
+                         return std::filesystem::exists(runner_path_for_engine(engine, state.runner_directory));
+                       });
 
   state.populating_model_list = true;
   SendMessageW(state.model_list, LVM_DELETEALLITEMS, 0, 0);
@@ -1726,12 +1731,14 @@ void run_settings_window(ConfigDocument &document,
 
   // A tabbed top-level window: General, Playback, Models, and Server pages
   // above the always-visible activity log
-  // (docs/design/architecture.md#desktop-integration).
+  // (docs/design/architecture.md#desktop-integration). The title carries the
+  // release version, so a tester can quote it in a report.
   RECT initial_bounds{0, 0, 504, 680};
   AdjustWindowRectEx(&initial_bounds, WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN, FALSE, 0);
   const HWND window =
-      CreateWindowExW(0, kClassName, L"TTS Host Settings", WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN, CW_USEDEFAULT,
-                      CW_USEDEFAULT, initial_bounds.right - initial_bounds.left,
+      CreateWindowExW(0, kClassName, L"TTS Host Settings \u2014 " TTS_HOST_VERSION,
+                      WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN, CW_USEDEFAULT, CW_USEDEFAULT,
+                      initial_bounds.right - initial_bounds.left,
                       initial_bounds.bottom - initial_bounds.top, nullptr, nullptr, instance, nullptr);
   if (!window) {
     throw std::runtime_error("failed to create the settings window");

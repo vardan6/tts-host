@@ -120,7 +120,9 @@ expect_output("${rejected_output}"
 
 synthesize("${work}/latin.txt" FALSE rejected_model_output --model gpu-package)
 expect_output("${rejected_model_output}" "no usable GPU")
-string(FIND "${rejected_model_output}" "fallback" fallback_at)
+# Match the fallback notice itself: the output also carries paths, and a build
+# folder's name may contain "fallback".
+string(FIND "${rejected_model_output}" "using fallback profile" fallback_at)
 if(NOT fallback_at EQUAL -1)
   message(FATAL_ERROR "An explicit --model fell back after a rejected load:\n${rejected_model_output}")
 endif()

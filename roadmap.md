@@ -74,6 +74,109 @@ recorded in `docs/design/`, so no grilling slices remain.
   [profile resolution](docs/design/architecture.md#profile-resolution) and
   [candidate 3](docs/reviews/architecture-review-2026-10-25.md#3--one-profile-resolution-module).
 
+## First public alpha (Windows)
+
+Goal: a draft GitHub pre-release `v0.1.0-alpha.1` that exercises the whole
+release process. It requires the standard (Kokoro-only) variant; the NVIDIA
+installer ships only if it is ready. Decisions are captured in the
+[distribution requirements](docs/requirements/product.md#distribution-and-usability),
+[versions and releases](docs/design/architecture.md#versions-and-releases), and
+[ADR 0011](docs/adr/0011-standard-and-nvidia-release-variants.md). The
+October 19 artifacts are stale.
+
+- [x] **Plan review and triage, HITL:** all alpha planning reviewed on `main`;
+  [six findings](docs/reviews/plan-review-2026-11-03-first-public-alpha.md) accepted and reconciled into the plan below — see
+  [triage](docs/reviews/plan-review-2026-11-03-first-public-alpha.md#triage--2026-11-03).
+- [x] **AFK — Make the Windows test suite pass on a developer machine:** the
+  release gate requires every Windows CTest test to pass. Known Windows
+  failure: `cli_language_selection` matches "fallback" anywhere in the
+  rejected-load output, including the build folder's name. Close on a fresh
+  Windows CTest run from a clean checkout of the release source, not on the
+  user-edited `config.example.json` (persistence tests assert on it). The
+  fixed-port 7861 collision is in
+  `tts_host_tray_not_implemented_on_this_platform`, a non-Windows test, so it
+  is fixed here only as Linux test maintenance. Both test fixes are in and
+  pass on Linux; only the clean-checkout Windows run remains (`release.ps1`
+  step 3 performs it). The first clean runs found fixtures hidden by
+  `.gitignore`, now tracked, and a scanner lock on fresh files in `%TEMP%`
+  that the model update fixtures now retry; 55/55. Fix the tests, not the gate —
+  see [finding 5](docs/reviews/plan-review-2026-11-03-first-public-alpha.md#5--identify-test-failures-by-platform-and-actual-test-name).
+- [x] **AFK — Ship the release defaults:** in `config.example.json` set
+  `selection.capturePolicy` to `automatic` and `languageDefaults.en` to
+  `fast` (Kokoro). Commit only those two lines against the committed file: the
+  user's other uncommitted edits stay uncommitted. Check the result from a
+  clean checkout, not the running developer install — see
+  [desktop integration](docs/design/architecture.md#desktop-integration),
+  [configuration](docs/design/architecture.md#configuration), and
+  [ADR 0009](docs/adr/0009-qwen-release-selection-without-bake-off.md).
+- [x] **AFK — Browser extension in the release tree:** install `extension/`
+  into every release artifact. Its manifest `key` pins the ID that
+  `config.example.json` already allows. Not an optional installer component —
+  see [distribution design](docs/design/architecture.md#distribution).
+- [x] **AFK — Release version:** `TTS_HOST_VERSION_PRERELEASE` plus the numeric
+  `project(VERSION)` gives `TTS_HOST_VERSION`, which feeds the artifact names,
+  Inno `AppVersion`, a numeric `VersionInfoVersion` (`X.Y.Z.0`), and the
+  version in the Settings window title — see
+  [versions and releases](docs/design/architecture.md#versions-and-releases).
+- [x] **AFK — Standard (Kokoro-only) release variant:** `TTS_HOST_RELEASE_VARIANT`
+  selects the variant's required files; `scripts/release-win.ps1 -Variant`
+  builds one variant with the design's artifact names and one installer
+  `AppId`. The standard variant builds, packages, and passes its speech check
+  with no Qwen asset or NVIDIA GPU. The model list module marks runner-absent
+  rows (no Download, Update, or Load; "needs the NVIDIA variant"), distinct
+  from unsupported hardware, with automated model-list tests for both states
+  and a packaging check that the standard tree has no Qwen runner or package —
+  see [ADR 0011](docs/adr/0011-standard-and-nvidia-release-variants.md),
+  [distribution design](docs/design/architecture.md#distribution), and
+  [action eligibility](docs/design/architecture.md#model-removal-repair-and-maintenance-actions).
+- [x] **AFK — Release script:** `scripts/release.ps1 -Version <v> [-Variants <list>] [-DryRun]`
+  following the procedure in the design: build in a temporary detached
+  worktree, `-DryRun` leaves the caller's refs and tags untouched, refuse an
+  existing tag, one atomic push of the commit and tag. The procedure and its
+  conditions live in the script's comments. Add a hand-written alpha.1 notes
+  file covering installation, SmartScreen, the variants, the extension, and
+  GitHub Issues, plus a README "Package a release" update. Script, notes
+  draft, and README are written. `-DryRun` rehearses the release branch before
+  merge; dry run 3 on this branch passed (`1e09659`, 55/55 CTest, setup and
+  portable zip built) — see
+  [versions and releases](docs/design/architecture.md#versions-and-releases).
+- [x] **Cross-provider release-preparation review:** `main..48bcf32`
+  reviewed in Codex/OpenAI after Opus 5.5/Anthropic implementation; two defect
+  candidates and one enhancement recorded in the
+  [findings](docs/reviews/code-review-2026-11-08-release-preparation.md).
+- [x] **Review triage:** all three
+  [release-preparation findings](docs/reviews/code-review-2026-11-08-release-preparation.md)
+  accepted and fixed (2026-11-08).
+- [x] **AFK — No repair download without the runner:** Verify and repair…
+  requires the runner, like Download and Update; add a damaged
+  current-revision runner-absent case to the model-list tests — see
+  [finding 1](docs/reviews/code-review-2026-11-08-release-preparation.md#1--keep-verification-separate-from-runner-absent-repair-downloads).
+- [x] **AFK — Dry run fetches nothing:** `release.ps1` runs `git fetch origin`
+  only on a real run — see
+  [finding 2](docs/reviews/code-review-2026-11-08-release-preparation.md#2--avoid-fetching-into-caller-refs-during-rehearsal).
+- [x] **AFK — Release script failure-path tests:** a temporary bare remote and
+  stubbed build, packaging, and `gh` commands; assert a rejected atomic push
+  leaves origin unchanged and deletes the local tag, success tags the built
+  commit and fast-forwards `main`, a draft failure keeps the artifacts and
+  prints recovery, and a dry run leaves every ref unchanged; Windows CTest
+  `tts_host_release_script` — see
+  [finding 3](docs/reviews/code-review-2026-11-08-release-preparation.md#3--exercise-publication-recovery-without-making-a-real-release).
+- [ ] **HITL — Release `v0.1.0-alpha.1`:** run
+  `scripts/release.ps1 -Version 0.1.0-alpha.1 -Variants standard -DryRun`,
+  then the same without `-DryRun`. On an isolated Windows machine (not this
+  developer machine, per `PROJECT.md`), the user tests the draft: a fresh
+  standard install works offline with Kokoro, and every Qwen catalogue row
+  shows the NVIDIA guidance with no download. Then the user publishes it —
+  see [finding 6](docs/reviews/plan-review-2026-11-03-first-public-alpha.md#6--exercise-variant-transitions-not-only-fresh-installation).
+- [ ] **HITL — Variant transitions, with the first NVIDIA installer:** on an
+  isolated Windows machine. Standard → NVIDIA: configuration and downloaded
+  models survive, and Qwen is selectable with no download. NVIDIA → standard
+  with Qwen selected or downloaded: the Qwen and CUDA files are removed,
+  per-user data survives, the runner-absent row stays actionable, and Kokoro
+  still speaks. Not required for a standard-only release — see
+  [ADR 0011](docs/adr/0011-standard-and-nvidia-release-variants.md) and
+  [finding 6](docs/reviews/plan-review-2026-11-03-first-public-alpha.md#6--exercise-variant-transitions-not-only-fresh-installation).
+
 ## Product
 
 - [x] **AFK — Qwen end-to-end synthesis (evaluation):** local package discovery,
@@ -322,6 +425,12 @@ recorded in `docs/design/`, so no grilling slices remain.
   offline Armenian candidate with native-speaker samples; confirm best-effort
   quality is adequate and that English defaults are unaffected.
 
+- [ ] **HITL — Plan one lightweight installer with on-demand runtimes:** user
+  request (2026-11-03). Adding a model downloads its runner and runtime when
+  needed, the installer says so, and the NVIDIA variant goes away. Needs a
+  runtime-download design and an ADR via `/planning-capture` — see
+  [ADR 0011](docs/adr/0011-standard-and-nvidia-release-variants.md#consequences).
+
 ## Cross-platform releases
 
 Native Linux and Apple Silicon macOS artifacts plus a Windows installer, using
@@ -377,5 +486,14 @@ the runner layout is decided by
 - Token authentication and LAN serving. The config vocabulary is reserved;
   see `docs/adr/0003-no-authentication.md`.
 - Self-updating.
+- Code signing of Windows builds (removes the SmartScreen warning); revisit
+  before a non-alpha release.
+- Chrome Web Store and Edge Add-ons publication of the extension, which would
+  allow one-click install.
+- Kokoro GPU inference, via DirectML rather than CUDA if ever needed — see
+  [ADR 0011](docs/adr/0011-standard-and-nvidia-release-variants.md#rejected-alternatives).
+- An in-app "newer release available" link (the design's manual-update link):
+  alpha releases omit it; required from the first beta — see the
+  [distribution requirements](docs/requirements/product.md#distribution-and-usability).
 - Spool recovery (October 3 finding 14): rejected without a use case — see
   [validation](docs/reviews/code-review-2026-10-03-roadmap-slices-branch.md#finding-14).

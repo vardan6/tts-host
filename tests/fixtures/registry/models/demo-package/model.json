@@ -1,0 +1,17 @@
+{
+  "$schema": "../../../../../schemas/model.schema.json",
+  "schemaVersion": 1,
+  "id": "demo-package",
+  "displayName": "Demo Package",
+  "engine": "kokoro-onnx",
+  "languages": [
+    "en"
+  ],
+  "files": {
+    "model": "demo.onnx"
+  },
+  "license": {
+    "name": "Apache-2.0",
+    "url": "https://example.com/demo-package"
+  }
+}

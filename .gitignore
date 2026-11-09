@@ -89,3 +89,6 @@ CLAUDE.md
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# Test fixtures are source, whatever their file names.
+!tests/fixtures/**

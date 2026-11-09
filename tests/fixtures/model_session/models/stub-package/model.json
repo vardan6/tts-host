@@ -1,0 +1,17 @@
+{
+  "$schema": "../../../../../schemas/model.schema.json",
+  "schemaVersion": 1,
+  "id": "stub-package",
+  "displayName": "Stub Package",
+  "engine": "stub",
+  "languages": [
+    "en"
+  ],
+  "files": {
+    "model": "model.bin"
+  },
+  "license": {
+    "name": "Apache-2.0",
+    "url": "https://example.com/stub-package"
+  }
+}
